@@ -10,4 +10,8 @@ export default class UsuarioService {
     async getUsuarioById(id) {
         return await this.usuarioRepository.findById(id);
     }
+
+    async deleteUsuarios(id) {
+        return await this.usuarioRepository.remove(id);
+    }
 }

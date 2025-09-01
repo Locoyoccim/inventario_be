@@ -19,9 +19,12 @@ const empresaRepo = new EmpresaRepository();
 const empresaService = new EmpresaService(empresaRepo);
 const empresaController = new EmpresaController(empresaService);
 
-// EndPoints
+// EndPoints Usuarios
 router.get("/usuarios/", usuarioController.listar);
 router.get("/usuarios/:id", usuarioController.listarPorId);
+router.delete("/usuarios/:id", usuarioController.eliminar);
+
+// EndPoints Empresas
 router.get("/empresas/", empresaController.listar);
 router.get("/empresas/:id", empresaController.listarPorId);
 

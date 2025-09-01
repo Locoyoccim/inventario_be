@@ -23,4 +23,14 @@ export default class UsuarioController {
             res.status(500).json({ error: "Error al obtener el usuario" });
         }
     };
+
+    eliminar = async (req, res) => {
+        const { id } = req.params;
+        try {
+            await this.usuarioService.deleteUsuarios(id);
+            res.status(200).json({ message: "Usuario eliminado exitosamente" });
+        } catch (error) {
+            res.status(500).json({ error: "Error al eliminar el usuario" });
+        }
+    };
 }
