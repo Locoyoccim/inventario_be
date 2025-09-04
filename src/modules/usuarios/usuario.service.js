@@ -1,7 +1,7 @@
 export default class UsuarioService {
     constructor(usuarioRepository, empresaRepository) {
         this.usuarioRepository = usuarioRepository;
-        this.empresaRepository = empresaRepository; // Asegúrate de que esto no sea undefined
+        this.empresaRepository = empresaRepository; 
     }
 
     async getAllUsuarios() {
@@ -17,7 +17,6 @@ export default class UsuarioService {
     }
 
     async createUsuario(data) {
-        console.log("Datos enviados al repositorio para crear usuario:", data); // Log para depuración
         return await this.usuarioRepository.create(data);
     }
 

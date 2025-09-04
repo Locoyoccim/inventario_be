@@ -28,7 +28,10 @@ export default class UsuarioController {
         const { id } = req.params;
         try {
             await this.usuarioService.deleteUsuarios(id);
-            res.status(200).json({ message: "Usuario eliminado exitosamente" });
+            res.status(200).json({ 
+                message: "Usuario eliminado exitosamente",
+                id: id
+            });
         } catch (error) {
             res.status(500).json({ error: "Error al eliminar el usuario" });
         }
@@ -42,18 +45,19 @@ export default class UsuarioController {
         }
 
         try {
-            console.log("Datos recibidos para crear usuario:", usuarioData); // Log para depuración
             const empresaExists = await this.usuarioService.existsEmpresa(
                 usuarioData.empresa_id
             );
-            console.log("Resultado de existsEmpresa:", empresaExists); // Log para depuración
             if (!empresaExists) {
                 return res.status(400).json({ error: "La empresa asociada no existe" });
             }
             const newUsuario = await this.usuarioService.createUsuario(usuarioData);
-            res.status(201).json(newUsuario);
+            res.status(201).json({
+                message: "Usuario creado exitosamente",
+                data: newUsuario
+            });
         } catch (error) {
-            console.error("Error al crear el usuario:", error); // Log para depuración
+            console.error("Error al crear el usuario:", error);
             res.status(500).json({ error: "Error al crear el usuario" });
         }
     };
@@ -67,7 +71,10 @@ export default class UsuarioController {
                 id,
                 usuarioData
             );
-            res.status(200).json(updatedUsuario);
+            res.status(200).json({
+                message: "Usuario actualizado exitosamente",
+                data: updatedUsuario
+            });
         } catch (error) {
             res.status(500).json({ error: "Error al actualizar el usuario" });
         }

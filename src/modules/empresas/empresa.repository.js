@@ -2,7 +2,7 @@ import pool from "../../config/db.js";
 
 export default class EmpresaRepository {
     async findAll() {
-        const result = await pool.query("SELECT * FROM empresas");
+        const result = await pool.query("SELECT * FROM empresas ORDER BY id ASC");
         return result.rows;
     }
 
