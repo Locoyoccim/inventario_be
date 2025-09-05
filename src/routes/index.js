@@ -30,5 +30,8 @@ router.put("/usuarios/:id", usuarioController.actualizar);
 // EndPoints Empresas
 router.get("/empresas/", empresaController.listar);
 router.get("/empresas/:id", empresaController.listarPorId);
+router.post("/empresas/", empresaController.crearEmpresa);
+router.put("/empresas/:id", empresaController.actualizarEmpresa);
+router.delete("/empresas/:id", empresaController.eliminarEmpresa);
 
 export default router;

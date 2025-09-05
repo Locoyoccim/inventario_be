@@ -115,7 +115,7 @@ export default class UsuarioRepository {
                 empresa_id,
                 id,
             ]);
-            return result.rows[0]; // Eliminamos el .json() ya que no es necesario aquí
+            return result.rows[0];
         } catch (error) {
             throw new Error(`Error al actualizar usuario: ${error.message}`);
         }
