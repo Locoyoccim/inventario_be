@@ -5,6 +5,9 @@ import UsuarioController from "../modules/usuarios/usuarios.controller.js";
 import EmpresaRepository from "../modules/empresas/empresa.repository.js";
 import EmpresaService from "../modules/empresas/empresa.service.js";
 import EmpresaController from "../modules/empresas/empresa.controller.js";
+import ProductosController from "../modules/productos/productos.controller.js";
+import ProductosService from "../modules/productos/productos.service.js";
+import ProductosRepository from "../modules/productos/productos.repository.js";
 
 const router = Router();
 
@@ -20,6 +23,11 @@ const usuarioRepo = new UsuarioRepository();
 const usuarioService = new UsuarioService(usuarioRepo, empresaRepo);
 const usuarioController = new UsuarioController(usuarioService);
 
+// Inyección de dependencias (DIP)
+const productoRepo = new ProductosRepository();
+const productoService = new ProductosService(productoRepo);
+const productoController = new ProductosController(productoService);
+
 // EndPoints Usuarios
 router.get("/usuarios/", usuarioController.listar);
 router.get("/usuarios/:id", usuarioController.listarPorId);
@@ -34,4 +42,11 @@ router.post("/empresas/", empresaController.crearEmpresa);
 router.put("/empresas/:id", empresaController.actualizarEmpresa);
 router.delete("/empresas/:id", empresaController.eliminarEmpresa);
 
+// EndPoints Productos
+router.get("/productos/", productoController.listar);
+router.get("/productos/:id", productoController.listarPorId);
+router.post("/productos/", productoController.crearProducto);
+router.put("/productos/:id", productoController.actualizarProducto);
+router.delete("/productos/:id", productoController.eliminarProducto);
+ 
 export default router;
