@@ -8,6 +8,9 @@ import EmpresaController from "../modules/empresas/empresa.controller.js";
 import ProductosController from "../modules/productos/productos.controller.js";
 import ProductosService from "../modules/productos/productos.service.js";
 import ProductosRepository from "../modules/productos/productos.repository.js";
+import ProveedorController from "../modules/proveedores/proveedor.controller.js";
+import ProveedorService from "../modules/proveedores/proveedor.service.js";
+import ProveedorRepository from "../modules/proveedores/proveedor.repository.js";
 
 const router = Router();
 
@@ -24,9 +27,16 @@ const usuarioService = new UsuarioService(usuarioRepo, empresaRepo);
 const usuarioController = new UsuarioController(usuarioService);
 
 // Inyección de dependencias (DIP)
+// Productos
 const productoRepo = new ProductosRepository();
 const productoService = new ProductosService(productoRepo);
 const productoController = new ProductosController(productoService);
+
+// Inyección dependencias (DIP)
+//proveedores
+const proveedorRepo = new ProveedorRepository();
+const proveedorService = new ProveedorService(proveedorRepo, empresaRepo);
+const proveedorController = new ProveedorController(proveedorService);
 
 // EndPoints Usuarios
 router.get("/usuarios/", usuarioController.listar);
@@ -48,5 +58,12 @@ router.get("/productos/:id", productoController.listarPorId);
 router.post("/productos/", productoController.crearProducto);
 router.put("/productos/:id", productoController.actualizarProducto);
 router.delete("/productos/:id", productoController.eliminarProducto);
- 
+
+// EndPoints Proveedores
+router.get("/proveedores/", proveedorController.listar);
+router.get("/proveedores/:id", proveedorController.listarPorId);
+router.post("/proveedores/", proveedorController.crear);
+router.put("/proveedores/:id", proveedorController.actualizar);
+router.delete("/proveedores/:id", proveedorController.eliminar);
+
 export default router;

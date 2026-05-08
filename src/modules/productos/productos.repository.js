@@ -126,7 +126,7 @@ export default class ProductoRepository {
         return result.rows[0];
     }
 
-    async removeProducto(id) {
+    async deleteProducto(id) {
         try {
             if (!id) throw new Error("ID es requerido");
             const result = await pool.query(QUERIES.DELETE, [id]);

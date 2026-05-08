@@ -1,5 +1,5 @@
-export default class Empresa {
-    constructor(id, nombre, empresa_id, telefono, email, domicilio) {
+export default class Proveedor {
+    constructor(id, nombre, telefono, email, domicilio, empresa_id) {
         this.id = id;
         this.nombre = nombre;
         this.telefono = telefono;

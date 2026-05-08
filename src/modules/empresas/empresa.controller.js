@@ -8,6 +8,7 @@ export default class EmpresaController {
             const empresa = await this.empresaService.getAllEmpresas();
             res.json(empresa);
         } catch (error) {
+            console.error("Error en listar empresas:", error);
             res.status(500).json({ error: "Error al obtener las empresas" });
         }
     };
@@ -20,6 +21,7 @@ export default class EmpresaController {
                 ? res.json(empresa)
                 : res.status(404).json({ error: "Empresa no encontrada" });
         } catch (error) {
+            console.error("Error en listarPorId:", error);
             res.status(500).json({ error: "Error al obtener la empresa" });
         }
     };
