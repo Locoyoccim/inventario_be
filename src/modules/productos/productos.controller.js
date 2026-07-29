@@ -4,18 +4,19 @@ export default class ProductosController {
     }
 
     listar = async (req, res) => {
+        const { empresa_id } = req.params;
         try {
-            const productos = await this.productosService.getAllProductos();
-            productos ? res.json(productos) : res.json(productos);
+            const productos = await this.productosService.getAllProductos(empresa_id);
+            res.json(productos);
         } catch (error) {
             res.status(500).json({ error: "Error al obtener los productos" });
         }
     };
 
     listarPorId = async (req, res) => {
-        const { id } = req.params;
+        const { empresa_id, id } = req.params;
         try {
-            const producto = await this.productosService.getProductoById(id);
+            const producto = await this.productosService.getProductoById(id, empresa_id);
             producto
                 ? res.json(producto)
                 : res.status(404).json({ error: "Producto no encontrado" });

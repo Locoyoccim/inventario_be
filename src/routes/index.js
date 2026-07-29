@@ -53,8 +53,8 @@ router.put("/empresas/:id", empresaController.actualizarEmpresa);
 router.delete("/empresas/:id", empresaController.eliminarEmpresa);
 
 // EndPoints Productos
-router.get("/productos/", productoController.listar);
-router.get("/productos/:id", productoController.listarPorId);
+router.get("/productos/:empresa_id/", productoController.listar);
+router.get("/productos/:empresa_id/:id", productoController.listarPorId);
 router.post("/productos/", productoController.crearProducto);
 router.put("/productos/:id", productoController.actualizarProducto);
 router.delete("/productos/:id", productoController.eliminarProducto);

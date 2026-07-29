@@ -1,8 +1,8 @@
 import pool from "../../config/db.js";
 
 const QUERIES = {
-    SELECT_ALL: `SELECT * FROM productos ORDER BY id ASC`,
-    SELECT_BY_ID: `SELECT * FROM productos WHERE id = $1`,
+    SELECT_ALL: `SELECT * FROM productos WHERE empresa_id = $1 ORDER BY id ASC`,
+    SELECT_BY_ID: `SELECT * FROM productos WHERE empresa_id = $2 AND id = $1`,
     EXISTS_PRODUCTO: `SELECT 1 FROM productos WHERE id = $1`,
     INSERT: `
         INSERT INTO productos 
@@ -20,13 +20,13 @@ const QUERIES = {
 };
 
 export default class ProductoRepository {
-    async findAll() {
-        const result = await pool.query(QUERIES.SELECT_ALL);
+    async findAll(empresa_id) {
+        const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id]);
         return result.rows;
     }
 
-    async findById(id) {
-        const result = await pool.query(QUERIES.SELECT_BY_ID, [id]);
+    async findById(id, empresa_id) {
+        const result = await pool.query(QUERIES.SELECT_BY_ID, [id, empresa_id]);
         return result.rows[0];
     }
 
