@@ -54,8 +54,8 @@ router.delete("/empresas/:id", empresaController.eliminarEmpresa);
 
 // EndPoints Productos
 router.get("/productos/:empresa_id/", productoController.listar);
-router.get("/productos/:empresa_id/:id", productoController.listarPorId);
-router.post("/productos/", productoController.crearProducto);
+router.get("/productos/:empresa_id/:id/", productoController.listarPorId);
+router.post("/productos/:empresa_id/", productoController.crearProducto);
 router.put("/productos/:id", productoController.actualizarProducto);
 router.delete("/productos/:id", productoController.eliminarProducto);
 

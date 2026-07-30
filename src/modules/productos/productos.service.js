@@ -11,8 +11,8 @@ export default class ProductoService {
         return await this.productoRepository.findById(id, empresa_id);
     }
 
-    async createProducto(data) {
-        return await this.productoRepository.createProducto(data);
+    async createProducto(data, empresa_id) {
+        return await this.productoRepository.createProducto(data, empresa_id);
     }
 
     async existsProducto(id) {

@@ -27,14 +27,15 @@ export default class ProductosController {
 
     crearProducto = async (req, res) => {
         const productoData = req.body;
+        const empresa_id = req.params.empresa_id;
         try {
-            const newProducto = await this.productosService.createProducto(productoData);
+            const newProducto = await this.productosService.createProducto(productoData, empresa_id);
             res.status(201).json({
                 message: "Producto creado exitosamente",
                 data: newProducto,
             });
         } catch (error) {
-            res.status(500).json({ error: "Error al crear el producto" });
+            res.status(400).json({ error: error.message });
         }
     };
 

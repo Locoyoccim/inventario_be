@@ -4,11 +4,16 @@ const QUERIES = {
     SELECT_ALL: `SELECT * FROM productos WHERE empresa_id = $1 ORDER BY id ASC`,
     SELECT_BY_ID: `SELECT * FROM productos WHERE empresa_id = $2 AND id = $1`,
     EXISTS_PRODUCTO: `SELECT 1 FROM productos WHERE id = $1`,
-    INSERT: `
-        INSERT INTO productos 
-        (producto, stock_actual, stock_minimo, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING id, producto, stock_actual, stock_minimo, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario
+    INSERT_PRODUCTO: `
+        INSERT INTO productos
+        (producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario
+    `,
+    INSERT_INVENTARIO: `
+        INSERT INTO inventario (producto_id, stock_actual, stock_minimo, updated_at)
+        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+        RETURNING stock_actual, stock_minimo, updated_at
     `,
     UPDATE: `
         UPDATE productos 
@@ -35,34 +40,18 @@ export default class ProductoRepository {
         return result.rowCount > 0;
     }
 
-    async createProducto({
-        producto,
-        stock_actual,
-        stock_minimo,
-        unidad_medida,
-        proveedor_id,
-        categoria,
-        empresa_id,
-        cantidad_presentacion,
-        costo_presentacion,
-        costo_unitario,
-    }) {
-        if (
-            !producto ||
-            !stock_actual ||
-            !stock_minimo ||
-            !unidad_medida ||
-            !proveedor_id ||
-            !categoria ||
-            !empresa_id ||
-            !cantidad_presentacion ||
-            !costo_presentacion ||
-            !costo_unitario
-        ) {
-            throw new Error("Todos los campos son requeridos");
-        }
-
-        const values = [
+    async createProducto(data, empresa_id) {
+       const {
+            producto,
+            stock_actual,
+            stock_minimo,
+            unidad_medida,
+            proveedor_id,
+            categoria,
+            cantidad_presentacion,
+            costo_presentacion,
+        } = data;
+        const camposRequeridos = {
             producto,
             stock_actual,
             stock_minimo,
@@ -72,10 +61,43 @@ export default class ProductoRepository {
             empresa_id,
             cantidad_presentacion,
             costo_presentacion,
-            costo_unitario,
-        ];
-        const result = await pool.query(QUERIES.INSERT, values);
-        return result.rows[0];
+        };
+        for (const [campo, valor] of Object.entries(camposRequeridos)) {
+            if (valor === undefined || valor === null || valor === "") {
+                throw new Error(`El campo '${campo}' es requerido`);
+            }
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            const productoResult = await client.query(QUERIES.INSERT_PRODUCTO, [
+                producto,
+                unidad_medida,
+                proveedor_id,
+                categoria,
+                empresa_id,
+                cantidad_presentacion,
+                costo_presentacion,
+            ]);
+            const nuevoProducto = productoResult.rows[0];
+
+            const inventarioResult = await client.query(QUERIES.INSERT_INVENTARIO, [
+                nuevoProducto.id,
+                stock_actual,
+                stock_minimo,
+            ]);
+
+            await client.query("COMMIT");
+
+            return { ...nuevoProducto, ...inventarioResult.rows[0] };
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
     async updateProducto(
@@ -91,7 +113,7 @@ export default class ProductoRepository {
             cantidad_presentacion,
             costo_presentacion,
             costo_unitario,
-        }
+        },
     ) {
         if (!id) throw new Error("ID es requerido");
         if (
