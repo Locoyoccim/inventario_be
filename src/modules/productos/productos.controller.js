@@ -40,19 +40,22 @@ export default class ProductosController {
     };
 
     actualizarProducto = async (req, res) => {
-        const { id } = req.params;
+        const { id, empresa_id } = req.params;
         const productoData = req.body;
         try {
             const updatedProducto = await this.productosService.updateProducto(
                 id,
-                productoData
+                productoData,
+                empresa_id
             );
-            res.json({
-                message: "Producto actualizado exitosamente",
-                data: updatedProducto,
-            });
+            updatedProducto
+                ? res.json({
+                      message: "Producto actualizado exitosamente",
+                      data: updatedProducto,
+                  })
+                : res.status(404).json({ error: "Producto no encontrado" });
         } catch (error) {
-            res.status(500).json({ error: "Error al actualizar el producto" });
+            res.status(400).json({ error: error.message });
         }
     };
 

@@ -56,11 +56,11 @@ router.delete("/empresas/:id", empresaController.eliminarEmpresa);
 router.get("/productos/:empresa_id/", productoController.listar);
 router.get("/productos/:empresa_id/:id/", productoController.listarPorId);
 router.post("/productos/:empresa_id/", productoController.crearProducto);
-router.put("/productos/:id", productoController.actualizarProducto);
-router.delete("/productos/:id", productoController.eliminarProducto);
+router.put("/productos/:empresa_id/:id/", productoController.actualizarProducto);
+router.delete("/productos/:empresa_id/:id", productoController.eliminarProducto);
 
 // EndPoints Proveedores
-router.get("/proveedores/", proveedorController.listar);
+router.get("/proveedores/:empresa_id/", proveedorController.listar);
 router.get("/proveedores/:id", proveedorController.listarPorId);
 router.post("/proveedores/", proveedorController.crear);
 router.put("/proveedores/:id", proveedorController.actualizar);

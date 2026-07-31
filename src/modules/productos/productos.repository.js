@@ -15,11 +15,17 @@ const QUERIES = {
         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
         RETURNING stock_actual, stock_minimo, updated_at
     `,
-    UPDATE: `
-        UPDATE productos 
-        SET producto = $1, stock_actual = $2, stock_minimo = $3, unidad_medida = $4, proveedor_id = $5, categoria = $6, empresa_id = $7, cantidad_presentacion = $8, costo_presentacion = $9, costo_unitario = $10
-        WHERE id = $11
-        RETURNING id, producto, stock_actual, stock_minimo, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario
+    UPDATE_PRODUCTO: `
+        UPDATE productos
+        SET producto = $1, unidad_medida = $2, proveedor_id = $3, categoria = $4, cantidad_presentacion = $5, costo_presentacion = $6
+        WHERE id = $7 AND empresa_id = $8
+        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario
+    `,
+    UPDATE_INVENTARIO: `
+        UPDATE inventario
+        SET stock_actual = $1, stock_minimo = $2, updated_at = CURRENT_TIMESTAMP
+        WHERE producto_id = $3
+        RETURNING stock_actual, stock_minimo, updated_at
     `,
     DELETE: `DELETE FROM productos WHERE id = $1 RETURNING id`,
 };
@@ -41,7 +47,7 @@ export default class ProductoRepository {
     }
 
     async createProducto(data, empresa_id) {
-       const {
+        const {
             producto,
             stock_actual,
             stock_minimo,
@@ -58,9 +64,9 @@ export default class ProductoRepository {
             unidad_medida,
             proveedor_id,
             categoria,
-            empresa_id,
             cantidad_presentacion,
             costo_presentacion,
+            empresa_id,
         };
         for (const [campo, valor] of Object.entries(camposRequeridos)) {
             if (valor === undefined || valor === null || valor === "") {
@@ -109,43 +115,66 @@ export default class ProductoRepository {
             unidad_medida,
             proveedor_id,
             categoria,
-            empresa_id,
             cantidad_presentacion,
             costo_presentacion,
-            costo_unitario,
         },
+        empresa_id
     ) {
         if (!id) throw new Error("ID es requerido");
-        if (
-            !producto ||
-            !stock_actual ||
-            !stock_minimo ||
-            !unidad_medida ||
-            !proveedor_id ||
-            !categoria ||
-            !empresa_id ||
-            !cantidad_presentacion ||
-            !costo_presentacion ||
-            !costo_unitario
-        ) {
-            throw new Error("Todos los campos son requeridos");
-        }
+        if (!empresa_id) throw new Error("empresa_id es requerido");
 
-        const values = [
+        const camposRequeridos = {
             producto,
             stock_actual,
             stock_minimo,
             unidad_medida,
             proveedor_id,
             categoria,
-            empresa_id,
             cantidad_presentacion,
             costo_presentacion,
-            costo_unitario,
-            id,
-        ];
-        const result = await pool.query(QUERIES.UPDATE, values);
-        return result.rows[0];
+        };
+        for (const [campo, valor] of Object.entries(camposRequeridos)) {
+            if (valor === undefined || valor === null || valor === "") {
+                throw new Error(`El campo '${campo}' es requerido`);
+            }
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            const productoResult = await client.query(QUERIES.UPDATE_PRODUCTO, [
+                producto,
+                unidad_medida,
+                proveedor_id,
+                categoria,
+                cantidad_presentacion,
+                costo_presentacion,
+                id,
+                empresa_id,
+            ]);
+            const productoActualizado = productoResult.rows[0];
+
+            if (!productoActualizado) {
+                await client.query("ROLLBACK");
+                return null;
+            }
+
+            const inventarioResult = await client.query(QUERIES.UPDATE_INVENTARIO, [
+                stock_actual,
+                stock_minimo,
+                id,
+            ]);
+
+            await client.query("COMMIT");
+
+            return { ...productoActualizado, ...inventarioResult.rows[0] };
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
     async deleteProducto(id) {
