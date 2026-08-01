@@ -4,11 +4,17 @@ export default class ProveedorController {
     }
 
     listar = async (req, res) => {
+        const { empresa_id } = req.params;
         try {
-            const proveedores = await this.proveedorService.getAllProveedores();
+            const empresaExists = await this.proveedorService.existsEmpresa(empresa_id);
+            if (!empresaExists) {
+                return res.status(404).json({ error: "Empresa no encontrada" });
+            }
+
+            const proveedores = await this.proveedorService.getAllProveedores(empresa_id);
             res.json(proveedores);
         } catch (error) {
-            res.status(500).json({ error: "Error al obtener los proveedores" });
+            res.status(500).json({ error: error.message });
         }
     };
 
@@ -16,6 +22,9 @@ export default class ProveedorController {
         const { id } = req.params;
         try {
             const proveedor = await this.proveedorService.getProveedorById(id);
+            if (!proveedor) {
+                return res.status(404).json({ error: "Proveedor no encontrado" });
+            }
             res.json(proveedor);
         } catch (error) {
             console.error("Error en listar proveedores:", error);
@@ -57,18 +66,19 @@ export default class ProveedorController {
                 data: newProveedor,
             });
         } catch (error) {
-            res.status(500).json({ error: "Error al crear el proveedor" });
+            res.status(500).json({ error: error.message });
         }
     };
 
     actualizar = async (req, res) => {
-        const { id } = req.params;
+        const { id, empresa_id } = req.params;
         const proveedorData = req.body;
 
         try {
             const updatedProveedor = await this.proveedorService.updateProveedor(
                 id,
                 proveedorData,
+                empresa_id,
             );
             if (updatedProveedor) {
                 res.status(200).json({
@@ -79,7 +89,7 @@ export default class ProveedorController {
                 res.status(404).json({ error: "Proveedor no encontrado" });
             }
         } catch (error) {
-            res.status(500).json({ error: "Error al actualizar el proveedor" });
+            res.status(500).json({ error: error.message });
         }
     };
 }

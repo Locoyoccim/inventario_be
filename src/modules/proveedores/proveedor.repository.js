@@ -4,16 +4,17 @@ import pool from "../../config/db.js";
 const QUERIES = {
     SELECT_ALL: `
          SELECT 
-            P.id,
             P.nombre,
-            P.telefono,
+            P.id,
             P.email,
-            P.empresa_id,
-            E.nombre AS empresa
+            P.telefono,
+            E.nombre AS empresa,
+            P.empresa_id
         FROM proveedores AS P
         LEFT JOIN empresas AS E 
             ON P.empresa_id = E.id
-        ORDER BY P.id ASC
+        WHERE P.empresa_id = $1
+        ORDER BY P.id ASC;
     `,
     SELECT_BY_ID: `
         SELECT P.id, P.nombre, P.telefono, P.email, P.empresa_id,
@@ -23,8 +24,8 @@ const QUERIES = {
         WHERE P.id = $1
     `,
     INSERT: `
-        INSERT INTO proveedores (nombre, telefono, email, empresa_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO proveedores (nombre, telefono, email, domicilio, empresa_id)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING id, nombre, telefono, email, empresa_id
     `,
     UPDATE: `
@@ -40,9 +41,9 @@ const QUERIES = {
 };
 
 export default class ProveedorRepository {
-    async findAll() {
+    async findAll(empresa_id) {
         try {
-            const result = await pool.query(QUERIES.SELECT_ALL);
+            const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id]);
             return result.rows;
         } catch (error) {
             throw new Error(`Error al obtener proveedores: ${error.message}`);
@@ -61,17 +62,17 @@ export default class ProveedorRepository {
 
     async create(data) {
         try {
-            const { nombre, contacto, telefono, email, empresa_id } = data;
-            if (!nombre || !contacto || !telefono || !email || !empresa_id) {
+            const { nombre, domicilio, telefono, email, empresa_id } = data;
+            if (!nombre || !domicilio || !telefono || !email || !empresa_id) {
                 {
                     throw new Error("Todos los campos son requeridos");
                 }
             }
             const result = await pool.query(QUERIES.INSERT, [
                 nombre,
-                contacto,
                 telefono,
                 email,
+                domicilio,
                 empresa_id,
             ]);
             return result.rows[0];

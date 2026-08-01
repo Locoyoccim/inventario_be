@@ -4,8 +4,8 @@ export default class ProveedorService {
         this.empresaRepository = empresaRepository;
     }
 
-    async getAllProveedores() {
-        return await this.proveedorRepository.findAll();
+    async getAllProveedores(empresa_id) {
+        return await this.proveedorRepository.findAll(empresa_id);
     }
 
     async getProveedorById(id) {
@@ -20,11 +20,11 @@ export default class ProveedorService {
         return await this.proveedorRepository.create(data);
     }
 
-    async updateProveedor(id, data) {
-        return await this.proveedorRepository.update(id, data);
+    async updateProveedor(id, data, empresa_id) {
+        return await this.proveedorRepository.update(id, data, empresa_id);
     }
 
-    // Validación para revisar si la empresa existe para el proveedor que sea crea
+    // Validación para revisar si la empresa existe para el proveedor que sea creado o actualizado
     async existsEmpresa(empresa_id) {
         return await this.empresaRepository.existsEmpresa(empresa_id);
     }
