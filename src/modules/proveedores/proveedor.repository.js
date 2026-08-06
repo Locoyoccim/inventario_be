@@ -4,40 +4,36 @@ import pool from "../../config/db.js";
 const QUERIES = {
     SELECT_ALL: `
          SELECT 
-            P.nombre,
             P.id,
+            P.nombre,
             P.email,
             P.telefono,
-            E.nombre AS empresa,
+            p.domicilio,
             P.empresa_id
         FROM proveedores AS P
-        LEFT JOIN empresas AS E 
-            ON P.empresa_id = E.id
         WHERE P.empresa_id = $1
         ORDER BY P.id ASC;
     `,
     SELECT_BY_ID: `
-        SELECT P.id, P.nombre, P.telefono, P.email, P.empresa_id,
-               E.nombre AS empresa
+        SELECT P.id, P.nombre, P.telefono, P.email, P.domicilio, P.empresa_id
         FROM proveedores P
-        JOIN empresas E ON P.empresa_id = E.id
-        WHERE P.id = $1
+        WHERE P.empresa_id = $1 AND P.id = $2
     `,
     INSERT: `
         INSERT INTO proveedores (nombre, telefono, email, domicilio, empresa_id)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, nombre, telefono, email, empresa_id
+        RETURNING id, nombre, telefono, email, empresa_id, domicilio
     `,
     UPDATE: `
         UPDATE proveedores
         SET nombre = $1,
             telefono = $2,
             email = $3,
-            empresa_id = $4
-        WHERE id = $5
-        RETURNING id, nombre, telefono, email, empresa_id
+            domicilio = $4
+        WHERE id = $5 AND empresa_id = $6
+        RETURNING id, nombre, telefono, email, domicilio, empresa_id
     `,
-    DELETE: `DELETE FROM proveedores WHERE id = ? RETURNING id`,
+    DELETE: `DELETE FROM proveedores WHERE id = $1 AND empresa_id = $2 RETURNING id`,
 };
 
 export default class ProveedorRepository {
@@ -50,19 +46,20 @@ export default class ProveedorRepository {
         }
     }
 
-    async findByID(id) {
+    async findByID(empresa_id, id) {
         try {
+            if (!empresa_id) throw new Error("empresa_id es requerido");
             if (!id) throw new Error("ID es requerido");
-            const result = await pool.query(QUERIES.SELECT_BY_ID, [id]);
+            const result = await pool.query(QUERIES.SELECT_BY_ID, [empresa_id, id]);
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error al obtener proveedor por ID: ${error.message}`);
         }
     }
 
-    async create(data) {
+    async create(data, empresa_id) {
         try {
-            const { nombre, domicilio, telefono, email, empresa_id } = data;
+            const { nombre, domicilio, telefono, email } = data;
             if (!nombre || !domicilio || !telefono || !email || !empresa_id) {
                 {
                     throw new Error("Todos los campos son requeridos");
@@ -81,20 +78,21 @@ export default class ProveedorRepository {
         }
     }
 
-    async update(id, data) {
+    async update(id, data, empresa_id) {
         try {
             if (!id) throw new Error("ID es requerido");
-            const { nombre, contacto, telefono, email, empresa_id } = data;
-            if (!nombre || !contacto || !telefono || !email || !empresa_id) {
+            if (!empresa_id) throw new Error("empresa_id es requerido");
+            const { nombre, telefono, email, domicilio } = data;
+            if (!nombre || !telefono || !email || !domicilio || !empresa_id) {
                 throw new Error("Todos los campos son requeridos");
             }
             const result = await pool.query(QUERIES.UPDATE, [
                 nombre,
-                contacto,
                 telefono,
                 email,
-                empresa_id,
+                domicilio,
                 id,
+                empresa_id,
             ]);
             return result.rows[0];
         } catch (error) {
@@ -102,10 +100,11 @@ export default class ProveedorRepository {
         }
     }
 
-    async remove(id) {
+    async remove(id, empresa_id) {
         try {
+            if (!empresa_id) throw new Error("empresa_id es requerido");
             if (!id) throw new Error("ID es requerido");
-            const result = await pool.query(QUERIES.DELETE, [id]);
+            const result = await pool.query(QUERIES.DELETE, [id, empresa_id]);
             if (result.rowCount === 0) {
                 throw new Error("Proveedor no encontrado");
             }

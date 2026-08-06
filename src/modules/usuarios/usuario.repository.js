@@ -4,19 +4,18 @@ import pool from "../../config/db.js";
 const QUERIES = {
     SELECT_ALL: `
         SELECT u.id, u.nombre, u.codigo_ingreso, u.puesto, u.is_admin, u.is_owner, u.empresa_id,
-               r.nombre AS rol, e.nombre AS empresa
+               r.nombre AS rol
         FROM usuarios u
         JOIN roles r ON u.role_id = r.id
-        JOIN empresas e ON u.empresa_id = e.id
+        WHERE u.empresa_id = $1
         ORDER BY u.id ASC
     `,
     SELECT_BY_ID: `
         SELECT u.id, u.nombre, u.codigo_ingreso, u.puesto, u.is_admin, u.is_owner, u.empresa_id,
-               r.nombre AS rol, e.nombre AS empresa
+               r.nombre AS rol
         FROM usuarios u
         JOIN roles r ON u.role_id = r.id
-        JOIN empresas e ON u.empresa_id = e.id
-        WHERE u.id = $1
+        WHERE u.empresa_id = $1 AND u.id = $2
     `,
     INSERT: `
         INSERT INTO usuarios (nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id)
@@ -39,27 +38,28 @@ const QUERIES = {
 };
 
 export default class UsuarioRepository {
-    async findAll() {
+    async findAll(empresa_id) {
         try {
-            const result = await pool.query(QUERIES.SELECT_ALL);
+            const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id]);
             return result.rows;
         } catch (error) {
             throw new Error(`Error al obtener usuarios: ${error.message}`);
         }
     }
 
-    async findById(id) {
+    async findById(empresa_id, id) {
         try {
             if (!id) throw new Error("ID es requerido");
+            if (!empresa_id) throw new Error("empresa_id es requerido");
 
-            const result = await pool.query(QUERIES.SELECT_BY_ID, [id]);
+            const result = await pool.query(QUERIES.SELECT_BY_ID, [empresa_id, id]);
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error al obtener usuario por ID: ${error.message}`);
         }
     }
 
-    async create(userData) {
+    async create(empresa_id, userData) {
         try {
             const {
                 nombre,
@@ -91,8 +91,9 @@ export default class UsuarioRepository {
         }
     }
 
-    async update(id, userData) {
+    async update(empresa_id, id, userData) {
         try {
+            if (!empresa_id) throw new Error("empresa_id es requerido");
             if (!id) throw new Error("ID es requerido");
 
             const {

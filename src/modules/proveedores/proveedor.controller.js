@@ -19,9 +19,12 @@ export default class ProveedorController {
     };
 
     listarPorId = async (req, res) => {
-        const { id } = req.params;
+        const { empresa_id, id } = req.params;
         try {
-            const proveedor = await this.proveedorService.getProveedorById(id);
+            const proveedor = await this.proveedorService.getProveedorById(
+                empresa_id,
+                id,
+            );
             if (!proveedor) {
                 return res.status(404).json({ error: "Proveedor no encontrado" });
             }
@@ -33,34 +36,40 @@ export default class ProveedorController {
     };
 
     eliminar = async (req, res) => {
-        const { id } = req.params;
+        const { empresa_id, id } = req.params;
+
+        if (!empresa_id) return res.status(400).json({ error: "empresa_id es requerido" });
+        if (!id) return res.status(400).json({ error: "ID es requerido" });
         try {
-            await this.proveedorService.deleteProveedor(id);
+            await this.proveedorService.deleteProveedor(id, empresa_id);
             res.status(200).json({
                 message: "Proveedor eliminado exitosamente",
                 id: id,
             });
         } catch (error) {
-            res.status(500).json({ error: "Error al eliminar el proveedor" });
+            res.status(500).json({ error: error.message });
         }
     };
 
     crear = async (req, res) => {
         const proveedorData = req.body;
+        const { empresa_id } = req.params;
 
-        if (!proveedorData.empresa_id) {
+        if (!proveedorData.empresa_id && !empresa_id) {
             return res.status(400).json({ error: "empresa_id es requerido" });
         }
 
         try {
             const empresaExists = await this.proveedorService.existsEmpresa(
-                proveedorData.empresa_id,
+                proveedorData.empresa_id || empresa_id,
             );
             if (!empresaExists) {
                 return res.status(400).json({ error: "La empresa asociada no existe" });
             }
-            const newProveedor =
-                await this.proveedorService.createProveedor(proveedorData);
+            const newProveedor = await this.proveedorService.createProveedor(
+                proveedorData,
+                empresa_id,
+            );
             res.status(201).json({
                 message: "Proveedor creado exitosamente",
                 data: newProveedor,

@@ -4,24 +4,24 @@ export default class UsuarioService {
         this.empresaRepository = empresaRepository; 
     }
 
-    async getAllUsuarios() {
-        return await this.usuarioRepository.findAll();
+    async getAllUsuarios(empresa_id) {
+        return await this.usuarioRepository.findAll(empresa_id);
     }
 
-    async getUsuarioById(id) {
-        return await this.usuarioRepository.findById(id);
+    async getUsuarioById(empresa_id, id) {
+        return await this.usuarioRepository.findById(empresa_id, id);
     }
 
     async deleteUsuarios(id) {
         return await this.usuarioRepository.remove(id);
     }
 
-    async createUsuario(data) {
-        return await this.usuarioRepository.create(data);
+    async createUsuario(empresa_id, data) {
+        return await this.usuarioRepository.create(empresa_id, data);
     }
 
-    async updateUsuario(id, data) {
-        return await this.usuarioRepository.update(id, data);
+    async updateUsuario(empresa_id, id, data) {
+        return await this.usuarioRepository.update(empresa_id, id, data);
     }
 
     // Validación para revisar si la empresa existe para el usuario que sea crea

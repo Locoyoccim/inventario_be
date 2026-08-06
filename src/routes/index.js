@@ -39,11 +39,11 @@ const proveedorService = new ProveedorService(proveedorRepo, empresaRepo);
 const proveedorController = new ProveedorController(proveedorService);
 
 // EndPoints Usuarios
-router.get("/usuarios/", usuarioController.listar);
-router.get("/usuarios/:id", usuarioController.listarPorId);
+router.get("/usuarios/:empresa_id", usuarioController.listar);
+router.get("/usuarios/:empresa_id/:id", usuarioController.listarPorId);
 router.delete("/usuarios/:id", usuarioController.eliminar);
-router.post("/usuarios/", usuarioController.crear);
-router.put("/usuarios/:id", usuarioController.actualizar);
+router.post("/usuarios/:empresa_id", usuarioController.crear);
+router.put("/usuarios/:empresa_id/:id", usuarioController.actualizar);
 
 // EndPoints Empresas
 router.get("/empresas/", empresaController.listar);
@@ -61,9 +61,9 @@ router.delete("/productos/:empresa_id/:id", productoController.eliminarProducto)
 
 // EndPoints Proveedores
 router.get("/proveedores/:empresa_id", proveedorController.listar);
-router.get("/proveedores/detalle/:id", proveedorController.listarPorId);
-router.post("/proveedores/", proveedorController.crear);
-router.put("/proveedores/:empresa_id", proveedorController.actualizar);
-router.delete("/proveedores/:id", proveedorController.eliminar);
+router.get("/proveedores/:empresa_id/:id", proveedorController.listarPorId);
+router.post("/proveedores/:empresa_id", proveedorController.crear);
+router.put("/proveedores/:empresa_id/:id", proveedorController.actualizar);
+router.delete("/proveedores/:empresa_id/:id", proveedorController.eliminar);
 
 export default router;
