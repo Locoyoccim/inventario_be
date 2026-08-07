@@ -23,18 +23,32 @@ const QUERIES = {
         RETURNING id, nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id
     `,
     UPDATE: `
-        UPDATE usuarios
-        SET nombre = $1,
-            codigo_ingreso = $2,
-            puesto = $3,
-            is_admin = $4,
-            is_owner = $5,
-            role_id = $6,
-            empresa_id = $7
-        WHERE id = $8
-        RETURNING id, nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id
-    `,
-    DELETE: `DELETE FROM usuarios WHERE id = $1 RETURNING id`,
+        WITH updated AS (
+    UPDATE usuarios
+    SET nombre = $1,
+        codigo_ingreso = $2,
+        puesto = $3,
+        is_admin = $4,
+        is_owner = $5,
+        role_id = $6,
+        empresa_id = $7
+    WHERE id = $8
+      AND empresa_id = $7
+    RETURNING *)
+    SELECT
+        u.id,
+        u.nombre,
+        u.codigo_ingreso,
+        u.puesto,
+        u.is_admin,
+        u.is_owner,
+        u.role_id,
+        u.empresa_id,
+        r.nombre AS rol
+    FROM updated u
+    JOIN roles r ON u.role_id = r.id;
+        `,
+    DELETE: `DELETE FROM usuarios WHERE empresa_id = $1 AND id = $2 RETURNING id`,
 };
 
 export default class UsuarioRepository {
@@ -92,10 +106,9 @@ export default class UsuarioRepository {
     }
 
     async update(empresa_id, id, userData) {
+        if (!empresa_id) throw new Error("empresa_id es requerido");
+        if (!id) throw new Error("ID es requerido");
         try {
-            if (!empresa_id) throw new Error("empresa_id es requerido");
-            if (!id) throw new Error("ID es requerido");
-
             const {
                 nombre,
                 codigo_ingreso,
@@ -122,11 +135,11 @@ export default class UsuarioRepository {
         }
     }
 
-    async remove(id) {
+    async remove(empresa_id, id) {
         try {
             if (!id) throw new Error("ID es requerido");
 
-            const result = await pool.query(QUERIES.DELETE, [id]);
+            const result = await pool.query(QUERIES.DELETE, [empresa_id, id]);
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error al eliminar usuario: ${error.message}`);

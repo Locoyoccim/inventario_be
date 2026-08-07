@@ -1,7 +1,7 @@
 export default class UsuarioService {
     constructor(usuarioRepository, empresaRepository) {
         this.usuarioRepository = usuarioRepository;
-        this.empresaRepository = empresaRepository; 
+        this.empresaRepository = empresaRepository;
     }
 
     async getAllUsuarios(empresa_id) {
@@ -12,8 +12,8 @@ export default class UsuarioService {
         return await this.usuarioRepository.findById(empresa_id, id);
     }
 
-    async deleteUsuarios(id) {
-        return await this.usuarioRepository.remove(id);
+    async deleteUsuarios(empresa_id, id) {
+        return await this.usuarioRepository.remove(empresa_id, id);
     }
 
     async createUsuario(empresa_id, data) {

@@ -37,9 +37,9 @@ export default class UsuarioController {
     };
 
     eliminar = async (req, res) => {
-        const { id } = req.params;
+        const { empresa_id, id } = req.params;
         try {
-            await this.usuarioService.deleteUsuarios(id);
+            await this.usuarioService.deleteUsuarios(empresa_id, id);
             res.status(200).json({
                 message: "Usuario eliminado exitosamente",
                 id: id,

@@ -11,6 +11,9 @@ import ProductosRepository from "../modules/productos/productos.repository.js";
 import ProveedorController from "../modules/proveedores/proveedor.controller.js";
 import ProveedorService from "../modules/proveedores/proveedor.service.js";
 import ProveedorRepository from "../modules/proveedores/proveedor.repository.js";
+import RecetaController from "../modules/recetas/receta.controller.js";
+import RecetaService from "../modules/recetas/receta.service.js";
+import RecetaRepository from "../modules/recetas/receta.repository.js";
 
 const router = Router();
 
@@ -38,10 +41,16 @@ const proveedorRepo = new ProveedorRepository();
 const proveedorService = new ProveedorService(proveedorRepo, empresaRepo);
 const proveedorController = new ProveedorController(proveedorService);
 
+// Inyección dependencias (DIP)
+//recetas
+const recetaRepo = new RecetaRepository();
+const recetaService = new RecetaService(recetaRepo, empresaRepo);
+const recetaController = new RecetaController(recetaService);
+
 // EndPoints Usuarios
 router.get("/usuarios/:empresa_id", usuarioController.listar);
 router.get("/usuarios/:empresa_id/:id", usuarioController.listarPorId);
-router.delete("/usuarios/:id", usuarioController.eliminar);
+router.delete("/usuarios/:empresa_id/:id", usuarioController.eliminar);
 router.post("/usuarios/:empresa_id", usuarioController.crear);
 router.put("/usuarios/:empresa_id/:id", usuarioController.actualizar);
 
@@ -65,5 +74,12 @@ router.get("/proveedores/:empresa_id/:id", proveedorController.listarPorId);
 router.post("/proveedores/:empresa_id", proveedorController.crear);
 router.put("/proveedores/:empresa_id/:id", proveedorController.actualizar);
 router.delete("/proveedores/:empresa_id/:id", proveedorController.eliminar);
+
+// EndPoints Recetas
+router.get("/recetas/:empresa_id", recetaController.listar);
+router.get("/recetas/:empresa_id/:id", recetaController.listarPorId);
+router.post("/recetas/:empresa_id", recetaController.crear);
+router.put("/recetas/:empresa_id/:id", recetaController.actualizar);
+router.delete("/recetas/:empresa_id/:id", recetaController.eliminar);
 
 export default router;
