@@ -17,6 +17,9 @@ import RecetaRepository from "../modules/recetas/receta.repository.js";
 import RecetaDetalleController from "../modules/recetaDetalle/recetaDetalle.controller.js";
 import RecetaDetalleService from "../modules/recetaDetalle/recetaDetalle.service.js";
 import RecetaDetalleRepository from "../modules/recetaDetalle/recetaDetalle.repository.js";
+import InventarioController from "../modules/inventario/inventario.controller.js";
+import InventarioService from "../modules/inventario/inventario.service.js";
+import InventarioRepository from "../modules/inventario/inventario.repository.js";
 
 const router = Router();
 
@@ -56,6 +59,16 @@ const recetaDetalleRepo = new RecetaDetalleRepository();
 const recetaDetalleService = new RecetaDetalleService(recetaDetalleRepo, recetaRepo);
 const recetaDetalleController = new RecetaDetalleController(recetaDetalleService);
 
+// Inyección dependencias (DIP)
+//inventario
+const inventarioRepo = new InventarioRepository();
+const inventarioService = new InventarioService(
+    inventarioRepo,
+    productoRepo,
+    empresaRepo,
+);
+const inventarioController = new InventarioController(inventarioService);
+
 // EndPoints Usuarios
 router.get("/usuarios/:empresa_id", usuarioController.listar);
 router.get("/usuarios/:empresa_id/:id", usuarioController.listarPorId);
@@ -76,6 +89,13 @@ router.get("/productos/:empresa_id/:id", productoController.listarPorId);
 router.post("/productos/:empresa_id/", productoController.crearProducto);
 router.put("/productos/:empresa_id/:id", productoController.actualizarProducto);
 router.delete("/productos/:empresa_id/:id", productoController.eliminarProducto);
+
+// EndPoints Inventario
+router.get("/inventario/:empresa_id", inventarioController.listar);
+router.get("/inventario/:empresa_id/:id", inventarioController.listarPorId);
+router.post("/inventario/:empresa_id", inventarioController.crear);
+router.put("/inventario/:empresa_id/:id", inventarioController.actualizar);
+router.delete("/inventario/:empresa_id/:id", inventarioController.eliminar);
 
 // EndPoints Proveedores
 router.get("/proveedores/:empresa_id", proveedorController.listar);
