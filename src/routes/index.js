@@ -20,6 +20,9 @@ import RecetaDetalleRepository from "../modules/recetaDetalle/recetaDetalle.repo
 import InventarioController from "../modules/inventario/inventario.controller.js";
 import InventarioService from "../modules/inventario/inventario.service.js";
 import InventarioRepository from "../modules/inventario/inventario.repository.js";
+import MovimientoController from "../modules/movimientos/movimiento.controller.js";
+import MovimientoService from "../modules/movimientos/movimiento.service.js";
+import MovimientoRepository from "../modules/movimientos/movimiento.repository.js";
 
 const router = Router();
 
@@ -62,12 +65,14 @@ const recetaDetalleController = new RecetaDetalleController(recetaDetalleService
 // Inyección dependencias (DIP)
 //inventario
 const inventarioRepo = new InventarioRepository();
-const inventarioService = new InventarioService(
-    inventarioRepo,
-    productoRepo,
-    empresaRepo,
-);
+const inventarioService = new InventarioService(inventarioRepo, empresaRepo);
 const inventarioController = new InventarioController(inventarioService);
+
+// Inyección dependencias (DIP)
+//movimientos de inventario
+const movimientoRepo = new MovimientoRepository();
+const movimientoService = new MovimientoService(movimientoRepo);
+const movimientoController = new MovimientoController(movimientoService);
 
 // EndPoints Usuarios
 router.get("/usuarios/:empresa_id", usuarioController.listar);
@@ -90,12 +95,13 @@ router.post("/productos/:empresa_id/", productoController.crearProducto);
 router.put("/productos/:empresa_id/:id", productoController.actualizarProducto);
 router.delete("/productos/:empresa_id/:id", productoController.eliminarProducto);
 
-// EndPoints Inventario
+// EndPoints Movimientos de Inventario
+router.get("/productos/:empresa_id/:id/movimientos", movimientoController.listar);
+router.post("/productos/:empresa_id/:id/movimientos", movimientoController.crear);
+
+// EndPoints Inventario (solo lectura: el stock se gestiona desde /productos)
 router.get("/inventario/:empresa_id", inventarioController.listar);
 router.get("/inventario/:empresa_id/:id", inventarioController.listarPorId);
-router.post("/inventario/:empresa_id", inventarioController.crear);
-router.put("/inventario/:empresa_id/:id", inventarioController.actualizar);
-router.delete("/inventario/:empresa_id/:id", inventarioController.eliminar);
 
 // EndPoints Proveedores
 router.get("/proveedores/:empresa_id", proveedorController.listar);

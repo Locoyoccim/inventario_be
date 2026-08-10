@@ -1,8 +1,8 @@
 # Inventario App — Backend
 
-Sistema de control de inventario **multiempresa**. API REST en Node.js + Express sobre PostgreSQL, organizada por capas (`routes → controller → repository`).
+Sistema de control de inventario **multiempresa** para insumos y recetas (pensado para negocios de alimentos/bebidas). API REST en Node.js + Express sobre PostgreSQL, organizada por capas (`routes → controller → service → repository`).
 
-> **Estado:** en desarrollo activo. Hay 4 módulos CRUD funcionales y varios pendientes críticos documentados en *Estado actual y deuda técnica*.
+> **Estado:** todos los módulos CRUD están implementados y auditados contra el esquema real de la base de datos. Quedan pendientes mejoras de plataforma (autenticación, paginación) documentadas en *Limitaciones conocidas*.
 
 ---
 
@@ -10,15 +10,19 @@ Sistema de control de inventario **multiempresa**. API REST en Node.js + Express
 
 | Módulo / Capacidad | Estado | Nota |
 | --- | --- | --- |
-| Usuarios (CRUD) | ✅ Implementado | Depende de `empresa_id` y `role_id` existentes |
-| Empresas (CRUD) | ✅ Implementado | Entidad raíz del modelo |
-| Productos (CRUD) | ✅ Implementado | Bugs conocidos en validación y DELETE |
-| Proveedores (CRUD) | ⚠️ Parcial | INSERT / UPDATE / DELETE con errores de SQL |
+| Empresas (CRUD) | ✅ | Entidad raíz del modelo |
+| Usuarios (CRUD) | ✅ | Depende de `empresa_id` (URL) y `role_id` existentes |
+| Proveedores (CRUD) | ✅ | Campos opcionales (`telefono`/`email`/`domicilio`) realmente opcionales |
+| Productos (CRUD) | ✅ | Crea/actualiza junto con su fila de `inventario` en una transacción |
+| Inventario | ✅ (solo lectura) | El stock se gestiona desde `/productos` y `/productos/:empresa_id/:id/movimientos` |
+| Movimientos de inventario | ✅ | Auditoría completa: compra, venta, merma, ajuste, devolución, producción |
+| Recetas (CRUD) | ✅ | `costo_total` se recalcula solo a partir de sus ingredientes |
+| Detalle de receta (CRUD) | ✅ | Valida que el ingrediente pertenezca a la misma empresa que la receta |
 | Roles | ❌ No expuesto | Solo se cargan por SQL directo en la BD |
 | Autenticación / sesión | ❌ No implementado | Todos los endpoints son públicos |
-| Aislamiento por empresa | ❌ No implementado | Los `GET` devuelven datos de todas las empresas |
-| Movimientos / trazabilidad de stock | ❌ No implementado | Hoy `stock_actual` se sobrescribe, no se audita |
-| Reportes y lista de compras | ❌ No implementado | Planeado |
+| Reportes y lista de compras | ❌ No implementado | Planeado — se apoyaría en `stock_minimo` + `movimientosinventario` |
+
+Aislamiento multiempresa: **implementado en todos los módulos**. Cada repository filtra por `empresa_id` (directo o vía `JOIN` a `productos`/`recetas`), así que un `id` de otra empresa responde `404` en vez de devolver o modificar datos ajenos.
 
 ---
 
@@ -28,7 +32,7 @@ Sistema de control de inventario **multiempresa**. API REST en Node.js + Express
 - **Framework:** Express
 - **Base de datos:** PostgreSQL 14+ (`pg`, SQL crudo — **no hay ORM ni query builder**)
 - **Configuración:** variables de entorno vía `.env`
-- **Arquitectura:** módulos de dominio con separación route / controller / repository
+- **Arquitectura:** módulos de dominio con separación route / controller / service / repository, e inyección de dependencias manual en `routes/index.js`
 
 ---
 
@@ -78,17 +82,20 @@ El servidor queda en `http://localhost:4000` y todas las rutas cuelgan de `/api`
 inventario_BE/
 ├── src/
 │   ├── config/        # Conexión a BD y carga de env
-│   ├── modules/       # Dominio: usuarios, empresas, productos, proveedores
-│   ├── routes/        # Definición de rutas montadas en /api
-│   ├── middlewares/   # Middlewares generales
-│   ├── utils/         # Funciones reutilizables
-│   └── app.js         # Inicialización de Express
+│   ├── modules/        # Dominio: empresas, usuarios, proveedores, productos,
+│   │                    #   inventario, movimientos, recetas, recetaDetalle
+│   ├── routes/         # Definición de rutas montadas en /api
+│   ├── middlewares/    # Middlewares generales
+│   ├── utils/          # Funciones reutilizables
+│   └── app.js          # Inicialización de Express
 ├── docs/
-│   └── API.md         # Referencia completa de endpoints
+│   └── API.md          # Referencia completa de endpoints
 ├── .env
 ├── package.json
-└── server.js          # Punto de entrada
+└── server.js            # Punto de entrada
 ```
+
+Cada módulo sigue el mismo patrón interno: `*.repository.js` (SQL crudo con `pg`), `*.service.js` (orquesta repositories), `*.controller.js` (parsea `req`/`res` y códigos HTTP).
 
 ---
 
@@ -99,19 +106,35 @@ erDiagram
     EMPRESAS ||--o{ USUARIOS : "tiene"
     EMPRESAS ||--o{ PROVEEDORES : "tiene"
     EMPRESAS ||--o{ PRODUCTOS : "tiene"
+    EMPRESAS ||--o{ RECETAS : "tiene"
     PROVEEDORES ||--o{ PRODUCTOS : "surte"
     ROLES ||--o{ USUARIOS : "define"
+    PRODUCTOS ||--|| INVENTARIO : "tiene stock"
+    PRODUCTOS ||--o{ MOVIMIENTOSINVENTARIO : "historial"
+    RECETAS ||--o{ RECETA_DETALLE : "usa"
+    PRODUCTOS ||--o{ RECETA_DETALLE : "es ingrediente de"
 ```
 
-`empresas` es la entidad raíz: todo lo demás cuelga de un `empresa_id`. Eso convierte al sistema en **multi-tenant por columna**, lo cual funciona, pero exige que cada query filtre por empresa. Hoy no lo hace (ver GAP-02).
+`empresas` es la entidad raíz: todo lo demás cuelga de un `empresa_id`. `productos` e `inventario` son 1 a 1 (un producto siempre tiene exactamente una fila de stock, creada junto con él); `movimientosinventario` es el historial de cambios sobre ese stock.
+
+### Columnas calculadas por PostgreSQL (no se envían en el body)
+
+| Tabla | Columna | Fórmula |
+| --- | --- | --- |
+| `productos` | `costo_unitario` | `costo_presentacion / cantidad_presentacion` |
+| `recetas` | `margen` | `(precio_venta - costo_total) / precio_venta * 100` |
+| `receta_detalle` | `costo_final` | `cantidad * costo_unitario` |
+
+`recetas.costo_total` no es una columna generada, pero el backend la recalcula automáticamente (`SUM(costo_final)` de sus `receta_detalle`) cada vez que se agrega, edita o borra un ingrediente.
 
 ### Orden obligatorio de carga de datos
 
 1. `POST /api/empresas`
 2. Insertar `roles` directamente en la BD (no hay endpoint)
-3. `POST /api/usuarios` con `empresa_id` y `role_id` existentes
-4. `POST /api/proveedores` con `empresa_id` existente
-5. `POST /api/productos` con `empresa_id` y `proveedor_id` existentes
+3. `POST /api/usuarios/:empresa_id` con `role_id` existente
+4. `POST /api/proveedores/:empresa_id`
+5. `POST /api/productos/:empresa_id` con `proveedor_id` existente (crea su inventario automáticamente)
+6. `POST /api/recetas/:empresa_id` y luego `POST /api/recetas/:receta_id/detalle` con productos de la misma empresa
 
 Cualquier otro orden rompe por llaves foráneas.
 
@@ -123,46 +146,26 @@ Referencia completa de endpoints, cuerpos JSON, campos requeridos y ejemplos: **
 
 ---
 
-## 7. Estado actual y deuda técnica
+## 7. Limitaciones conocidas
 
-### Bugs confirmados en código
-
-| ID | Módulo | Problema | Impacto | Fix |
-| --- | --- | --- | --- | --- |
-| BUG-01 | Productos | El `catch` del repository usa `throw new error(...)` | `TypeError` que oculta el error real en DELETE | Cambiar a `throw new Error(...)` |
-| BUG-02 | Productos | Validaciones con `!campo` | Rechaza valores válidos como `0` en `stock_actual`, `stock_minimo`, costos | Validar con `campo === undefined \|\| campo === null` |
-| BUG-03 | Proveedores | `INSERT` declara 4 columnas pero envía 5 valores (incluye `contacto`) | Falla toda creación de proveedor | Agregar `contacto` al SQL o quitarlo del payload |
-| BUG-04 | Proveedores | `UPDATE` declara 4 campos + `id` pero envía 6 valores | Falla toda actualización | Alinear columnas y parámetros |
-| BUG-05 | Proveedores | `DELETE` usa `?` como placeholder | `pg` requiere `$1`; la query truena | Cambiar a `$1` |
-
-### Huecos de diseño (más importantes que los bugs)
-
-| ID | Hueco | Por qué importa |
+| ID | Limitación | Por qué importa |
 | --- | --- | --- |
-| GAP-01 | **Sin autenticación** | Existen `is_admin`, `is_owner`, `role_id`, pero ningún middleware los verifica. Cualquiera con la URL puede borrar productos. Es el bloqueante #1 antes de exponer esto fuera de localhost. |
-| GAP-02 | **Sin aislamiento por empresa** | `GET /api/productos` devuelve el inventario de *todas* las empresas. En un sistema multi-tenant esto es fuga de datos entre clientes, no un detalle cosmético. |
-| GAP-03 | Sin paginación ni filtros | Los listados crecen sin límite; con 5,000 SKUs el endpoint se vuelve inusable. |
-| GAP-04 | `costo_unitario` denormalizado | Es derivable de `costo_presentacion / cantidad_presentacion`. Guardarlo aparte garantiza que tarde o temprano se desincronice. O se calcula al vuelo, o el backend lo recalcula siempre e ignora el valor del cliente. |
-| GAP-05 | Respuestas de `DELETE` inconsistentes | Productos no regresa `id`; los demás sí. Rompe el contrato para el frontend. |
-| GAP-06 | `roles` sin endpoint | Obliga a tocar SQL a mano para dar de alta un usuario. |
-| GAP-07 | Sin validación de esquema | Validaciones manuales campo por campo. Un `zod`/`joi` en middleware elimina BUG-02 y toda su familia. |
-| GAP-08 | Sin manejo centralizado de errores ni logging | Los errores SQL se filtran crudos al cliente (500 con detalle de la query). |
-
-### Riesgo funcional
-
-El sistema se llama "control de inventario" pero **no registra movimientos**. Hoy `stock_actual` se sobrescribe con un `PUT`, así que no hay forma de responder *quién* movió stock, *cuándo* ni *por qué*. Sin una tabla `movimientos_inventario` (entrada / salida / merma / ajuste), no hay trazabilidad, no hay reportes reales y la "lista de compras" solo puede compararse contra `stock_minimo` sin contexto.
+| GAP-01 | **Sin autenticación** | Existen `is_admin`, `is_owner`, `role_id` en `usuarios`, pero ningún middleware los verifica. Cualquiera con la URL puede leer o modificar cualquier empresa mientras conozca su `empresa_id`. Es el bloqueante #1 antes de exponer esto fuera de localhost. |
+| GAP-02 | Sin paginación ni filtros | Los listados (`GET` de colección) crecen sin límite; con miles de registros el endpoint se vuelve inusable. |
+| GAP-03 | `roles` sin endpoint | Obliga a tocar SQL a mano para dar de alta un rol nuevo. |
+| GAP-04 | Sin validación de esquema centralizada | Las validaciones son manuales campo por campo en cada repository. Un `zod`/`joi` en middleware reduciría la duplicación. |
+| GAP-05 | Sin manejo centralizado de errores ni logging | Cada controller repite su propio `try/catch`; algunos errores SQL crudos se filtran al cliente en el mensaje de `400`. |
+| GAP-06 | `PUT /productos` no pasa por movimientos | Sigue siendo posible sobrescribir `stock_actual` directo desde `PUT /api/productos/:empresa_id/:id` sin dejar rastro en `movimientosinventario`. Para trazabilidad, usar siempre `POST /movimientos`. |
 
 ---
 
 ## 8. Roadmap sugerido (por prioridad)
 
-1. Corregir BUG-01 a BUG-05 (bloquean uso básico).
-2. Middleware de validación con `zod` + manejador de errores centralizado (GAP-07, GAP-08).
-3. Autenticación por `codigo_ingreso` + JWT y middleware de permisos (GAP-01).
-4. Forzar filtro por `empresa_id` en todos los repositories (GAP-02).
-5. Tabla `movimientos_inventario` y endpoints de entrada/salida.
-6. Endpoint de roles (GAP-06) y paginación en listados (GAP-03).
-7. Reportes y lista de compras por proveedor.
+1. Autenticación por `codigo_ingreso` + JWT y middleware de permisos (GAP-01).
+2. Middleware de validación con `zod`/`joi` + manejador de errores centralizado (GAP-04, GAP-05).
+3. Endpoint de roles (GAP-03) y paginación en listados (GAP-02).
+4. Reportes y lista de compras (`stock_actual < stock_minimo`) por proveedor, apoyado en `movimientosinventario`.
+5. Evaluar si `PUT /productos` debe dejar de aceptar `stock_actual`/`stock_minimo` directamente, forzando todo ajuste de stock a pasar por `/movimientos` (GAP-06).
 
 ---
 
@@ -170,7 +173,8 @@ El sistema se llama "control de inventario" pero **no registra movimientos**. Ho
 
 - Header obligatorio en peticiones con body: `Content-Type: application/json`
 - Nombres de campos en `snake_case`, en español, consistentes con la BD
-- Códigos HTTP: `200` OK · `201` creado · `400` datos inválidos · `404` no encontrado · `500` error interno
+- Códigos HTTP: `200` OK · `201` creado · `400` datos inválidos o regla de negocio violada · `404` no encontrado · `500` error interno inesperado
+- `empresa_id` siempre viaja en la URL, nunca se toma del body, para que un cliente no pueda reasignar un recurso a otra empresa
 
 ---
 

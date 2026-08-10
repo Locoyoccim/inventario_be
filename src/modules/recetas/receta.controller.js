@@ -47,7 +47,7 @@ export default class RecetaController {
             const receta = await this.recetaService.createReceta(empresa_id, data);
             res.status(201).json(receta);
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            res.status(400).json({ error: error.message });
         }
     };
 
@@ -61,9 +61,11 @@ export default class RecetaController {
             }
 
             const receta = await this.recetaService.updateReceta(empresa_id, id, data);
-            res.json(receta);
+            receta
+                ? res.json(receta)
+                : res.status(404).json({ error: "Receta no encontrada" });
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            res.status(400).json({ error: error.message });
         }
     };
 
@@ -75,10 +77,12 @@ export default class RecetaController {
                 return res.status(404).json({ error: "Empresa no encontrada" });
             }
 
-            await this.recetaService.deleteReceta(empresa_id, id);
-            res.json({ message: "Receta eliminada correctamente" });
+            const deleted = await this.recetaService.deleteReceta(empresa_id, id);
+            deleted
+                ? res.json({ message: "Receta eliminada correctamente" })
+                : res.status(404).json({ error: "Receta no encontrada" });
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            res.status(400).json({ error: error.message });
         }
     };
 }

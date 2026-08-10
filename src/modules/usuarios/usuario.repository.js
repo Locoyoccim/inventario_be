@@ -6,7 +6,7 @@ const QUERIES = {
         SELECT u.id, u.nombre, u.codigo_ingreso, u.puesto, u.is_admin, u.is_owner, u.empresa_id,
                r.nombre AS rol
         FROM usuarios u
-        JOIN roles r ON u.role_id = r.id
+        LEFT JOIN roles r ON u.role_id = r.id
         WHERE u.empresa_id = $1
         ORDER BY u.id ASC
     `,
@@ -14,7 +14,7 @@ const QUERIES = {
         SELECT u.id, u.nombre, u.codigo_ingreso, u.puesto, u.is_admin, u.is_owner, u.empresa_id,
                r.nombre AS rol
         FROM usuarios u
-        JOIN roles r ON u.role_id = r.id
+        LEFT JOIN roles r ON u.role_id = r.id
         WHERE u.empresa_id = $1 AND u.id = $2
     `,
     INSERT: `
@@ -46,7 +46,7 @@ const QUERIES = {
         u.empresa_id,
         r.nombre AS rol
     FROM updated u
-    JOIN roles r ON u.role_id = r.id;
+    LEFT JOIN roles r ON u.role_id = r.id;
         `,
     DELETE: `DELETE FROM usuarios WHERE empresa_id = $1 AND id = $2 RETURNING id`,
 };
@@ -82,7 +82,6 @@ export default class UsuarioRepository {
                 is_admin = false,
                 is_owner = false,
                 role_id,
-                empresa_id,
             } = userData;
 
             // Validaciones básicas
@@ -116,7 +115,6 @@ export default class UsuarioRepository {
                 is_admin,
                 is_owner,
                 role_id,
-                empresa_id,
             } = userData;
 
             const result = await pool.query(QUERIES.UPDATE, [

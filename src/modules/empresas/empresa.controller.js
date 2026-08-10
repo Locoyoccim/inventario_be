@@ -35,7 +35,7 @@ export default class EmpresaController {
                 data: newEmpresa,
             });
         } catch (error) {
-            res.status(500).json({ error: "Error al crear la empresa" });
+            res.status(400).json({ error: error.message || "Error al crear la empresa" });
         }
     };
 
@@ -52,7 +52,7 @@ export default class EmpresaController {
                 data: updatedEmpresa,
             });
         } catch (error) {
-            res.status(500).json({ error: "Error al actualizar la empresa" });
+            res.status(400).json({ error: error.message || "Error al actualizar la empresa" });
         }
     };
 
@@ -65,7 +65,7 @@ export default class EmpresaController {
                 id: id,
             });
         } catch (error) {
-            res.status(500).json({ error: "Error al eliminar la empresa" });
+            res.status(400).json({ error: error.message || "Error al eliminar la empresa" });
         }
     };
 }

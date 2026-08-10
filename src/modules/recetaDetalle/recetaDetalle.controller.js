@@ -57,7 +57,7 @@ export default class RecetaDetalle {
             }
             res.status(201).json(recetaDetalle);
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            res.status(400).json({ error: error.message });
         }
     };
 
@@ -81,7 +81,7 @@ export default class RecetaDetalle {
             }
             res.json(recetaDetalle);
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            res.status(400).json({ error: error.message });
         }
     };
 
@@ -96,9 +96,11 @@ export default class RecetaDetalle {
                 receta_id,
                 id,
             );
-            res.json(recetaDetalle);
+            recetaDetalle
+                ? res.json({ message: "Detalle de receta eliminado correctamente" })
+                : res.status(404).json({ error: "Detalle de receta no encontrado" });
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            res.status(400).json({ error: error.message });
         }
     };
 }

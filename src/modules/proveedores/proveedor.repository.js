@@ -59,11 +59,9 @@ export default class ProveedorRepository {
 
     async create(data, empresa_id) {
         try {
-            const { nombre, domicilio, telefono, email } = data;
-            if (!nombre || !domicilio || !telefono || !email || !empresa_id) {
-                {
-                    throw new Error("Todos los campos son requeridos");
-                }
+            const { nombre, domicilio = null, telefono = null, email = null } = data;
+            if (!nombre || !empresa_id) {
+                throw new Error("nombre y empresa_id son requeridos");
             }
             const result = await pool.query(QUERIES.INSERT, [
                 nombre,
@@ -82,9 +80,9 @@ export default class ProveedorRepository {
         try {
             if (!id) throw new Error("ID es requerido");
             if (!empresa_id) throw new Error("empresa_id es requerido");
-            const { nombre, telefono, email, domicilio } = data;
-            if (!nombre || !telefono || !email || !domicilio || !empresa_id) {
-                throw new Error("Todos los campos son requeridos");
+            const { nombre, telefono = null, email = null, domicilio = null } = data;
+            if (!nombre) {
+                throw new Error("nombre es requerido");
             }
             const result = await pool.query(QUERIES.UPDATE, [
                 nombre,

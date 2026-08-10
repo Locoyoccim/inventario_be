@@ -39,11 +39,13 @@ const QUERIES = {
     UPDATE: `
     UPDATE recetas
     SET nombre = $1, categoria = $2, precio_venta = $3, costo_total = $4, activo = $5
-    WHERE id = $6 AND empresa_id = $7;
+    WHERE id = $6 AND empresa_id = $7
+    RETURNING *;
 `,
     DELETE: `
     DELETE FROM recetas
-    WHERE id = $1 AND empresa_id = $2;
+    WHERE id = $1 AND empresa_id = $2
+    RETURNING id;
 `,
     INSERT: `
     INSERT INTO recetas (nombre, categoria, precio_venta, costo_total, activo, empresa_id)
@@ -94,8 +96,8 @@ export default class RecetaRepository {
     async update(empresa_id, id, data) {
         const { nombre, categoria, precio_venta, costo_total, activo } = data;
         try {
-            await pool.query(QUERIES.UPDATE, [nombre, categoria, precio_venta, costo_total, activo, id, empresa_id]);
-            return { message: "Receta actualizada correctamente" };
+            const result = await pool.query(QUERIES.UPDATE, [nombre, categoria, precio_venta, costo_total, activo, id, empresa_id]);
+            return result.rows[0];
         } catch (error) {
             throw new Error(`Error al actualizar receta: ${error.message}`);
         }
@@ -103,10 +105,10 @@ export default class RecetaRepository {
 
     async remove(empresa_id, id) {
         try {
-            await pool.query(QUERIES.DELETE, [id, empresa_id]);
-            return { message: "Receta eliminada correctamente" };
+            const result = await pool.query(QUERIES.DELETE, [id, empresa_id]);
+            return result.rows[0];
         } catch (error) {
             throw new Error(`Error al eliminar receta: ${error.message}`);
         }
-    }   
+    }
 }

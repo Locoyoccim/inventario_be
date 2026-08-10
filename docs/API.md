@@ -1,6 +1,6 @@
 # Referencia de API — Inventario Backend
 
-API REST para gestionar **empresas, usuarios, proveedores y productos**.
+API REST multiempresa para gestionar **empresas, usuarios, proveedores, productos, inventario, movimientos de stock y recetas**.
 
 ---
 
@@ -10,12 +10,12 @@ API REST para gestionar **empresas, usuarios, proveedores y productos**.
 | --- | --- |
 | URL base | `http://localhost:4000` |
 | Prefijo de rutas | `/api` |
-| Ejemplo | `http://localhost:4000/api/usuarios` |
+| Ejemplo | `http://localhost:4000/api/productos/4` |
 | Formato | JSON |
 | Header requerido (con body) | `Content-Type: application/json` |
-| Autenticación | **Ninguna** — todos los endpoints son públicos |
+| Autenticación | **Ninguna** — todos los endpoints son públicos (ver *Limitaciones* en el README) |
 
-> ⚠️ No hay filtro por `empresa_id` en los listados. Todo `GET` de colección devuelve registros de todas las empresas.
+> Todos los recursos (salvo `empresas`, que es la raíz) cuelgan de una empresa y llevan `:empresa_id` en la URL. Los repositories filtran por ese `empresa_id` en cada query, así que un `id` que exista pero pertenezca a otra empresa responde `404`, no los datos de otra compañía.
 
 ### Códigos de respuesta
 
@@ -23,9 +23,9 @@ API REST para gestionar **empresas, usuarios, proveedores y productos**.
 | --- | --- |
 | `200` | Solicitud exitosa |
 | `201` | Recurso creado |
-| `400` | Datos inválidos o campos requeridos faltantes |
-| `404` | Recurso no encontrado |
-| `500` | Error interno del servidor o error SQL |
+| `400` | Datos inválidos, campo requerido faltante, o violación de regla de negocio (ej. stock insuficiente) |
+| `404` | Recurso no encontrado (o no pertenece a la empresa de la URL) |
+| `500` | Error interno inesperado |
 
 ---
 
@@ -38,67 +38,64 @@ API REST para gestionar **empresas, usuarios, proveedores y productos**.
 | Empresas | `POST` | `/api/empresas` | Crear empresa |
 | Empresas | `PUT` | `/api/empresas/:id` | Actualizar empresa |
 | Empresas | `DELETE` | `/api/empresas/:id` | Eliminar empresa |
-| Usuarios | `GET` | `/api/usuarios` | Listar usuarios |
-| Usuarios | `GET` | `/api/usuarios/:id` | Obtener usuario |
-| Usuarios | `POST` | `/api/usuarios` | Crear usuario |
-| Usuarios | `PUT` | `/api/usuarios/:id` | Actualizar usuario |
-| Usuarios | `DELETE` | `/api/usuarios/:id` | Eliminar usuario |
-| Proveedores | `GET` | `/api/proveedores` | Listar proveedores |
-| Proveedores | `GET` | `/api/proveedores/:id` | Obtener proveedor |
-| Proveedores | `POST` | `/api/proveedores` | Crear proveedor ⚠️ |
-| Proveedores | `PUT` | `/api/proveedores/:id` | Actualizar proveedor ⚠️ |
-| Proveedores | `DELETE` | `/api/proveedores/:id` | Eliminar proveedor ⚠️ |
-| Productos | `GET` | `/api/productos` | Listar productos |
-| Productos | `GET` | `/api/productos/:id` | Obtener producto |
-| Productos | `POST` | `/api/productos` | Crear producto |
-| Productos | `PUT` | `/api/productos/:id` | Actualizar producto |
-| Productos | `DELETE` | `/api/productos/:id` | Eliminar producto |
+| Usuarios | `GET` | `/api/usuarios/:empresa_id` | Listar usuarios de una empresa |
+| Usuarios | `GET` | `/api/usuarios/:empresa_id/:id` | Obtener usuario |
+| Usuarios | `POST` | `/api/usuarios/:empresa_id` | Crear usuario |
+| Usuarios | `PUT` | `/api/usuarios/:empresa_id/:id` | Actualizar usuario |
+| Usuarios | `DELETE` | `/api/usuarios/:empresa_id/:id` | Eliminar usuario |
+| Proveedores | `GET` | `/api/proveedores/:empresa_id` | Listar proveedores de una empresa |
+| Proveedores | `GET` | `/api/proveedores/:empresa_id/:id` | Obtener proveedor |
+| Proveedores | `POST` | `/api/proveedores/:empresa_id` | Crear proveedor |
+| Proveedores | `PUT` | `/api/proveedores/:empresa_id/:id` | Actualizar proveedor |
+| Proveedores | `DELETE` | `/api/proveedores/:empresa_id/:id` | Eliminar proveedor |
+| Productos | `GET` | `/api/productos/:empresa_id` | Listar productos de una empresa |
+| Productos | `GET` | `/api/productos/:empresa_id/:id` | Obtener producto |
+| Productos | `POST` | `/api/productos/:empresa_id` | Crear producto (crea también su fila de inventario) |
+| Productos | `PUT` | `/api/productos/:empresa_id/:id` | Actualizar producto (y su stock) |
+| Productos | `DELETE` | `/api/productos/:empresa_id/:id` | Eliminar producto |
+| Movimientos | `GET` | `/api/productos/:empresa_id/:id/movimientos` | Historial de movimientos de stock de un producto |
+| Movimientos | `POST` | `/api/productos/:empresa_id/:id/movimientos` | Registrar un movimiento de stock (compra, venta, merma, ajuste, devolución, producción) |
+| Inventario | `GET` | `/api/inventario/:empresa_id` | Listar stock de todos los productos de una empresa |
+| Inventario | `GET` | `/api/inventario/:empresa_id/:id` | Obtener una fila de inventario por su `id` |
+| Recetas | `GET` | `/api/recetas/:empresa_id` | Listar recetas de una empresa |
+| Recetas | `GET` | `/api/recetas/:empresa_id/:id` | Obtener receta |
+| Recetas | `POST` | `/api/recetas/:empresa_id` | Crear receta |
+| Recetas | `PUT` | `/api/recetas/:empresa_id/:id` | Actualizar receta |
+| Recetas | `DELETE` | `/api/recetas/:empresa_id/:id` | Eliminar receta |
+| Detalle de receta | `GET` | `/api/recetas/:receta_id/detalle` | Listar ingredientes de una receta |
+| Detalle de receta | `GET` | `/api/recetas/:receta_id/detalle/:id` | Obtener un ingrediente |
+| Detalle de receta | `POST` | `/api/recetas/:receta_id/detalle` | Agregar un ingrediente a la receta |
+| Detalle de receta | `PUT` | `/api/recetas/:receta_id/detalle/:id` | Cambiar producto/cantidad de un ingrediente |
+| Detalle de receta | `DELETE` | `/api/recetas/:receta_id/detalle/:id` | Quitar un ingrediente |
 
-⚠️ = tiene bugs conocidos, ver la sección final.
+> **Nota sobre `/inventario`:** el módulo es de **solo lectura**. El stock siempre se crea y se ajusta desde `/productos` (al crear/actualizar el producto) o desde `/productos/:empresa_id/:id/movimientos` (para registrar entradas/salidas con auditoría). No existen `POST`/`PUT`/`DELETE` directos sobre `/inventario` para evitar que dos rutas escriban el mismo dato de forma inconsistente.
 
 ---
 
 ## Empresas
 
-Entidad raíz. Debe crearse antes que cualquier otro recurso.
+Entidad raíz. Debe crearse antes que cualquier otro recurso. No lleva `empresa_id` porque es la propia empresa.
 
 ### Campos
 
 | Campo | Tipo | Requerido | Notas |
 | --- | --- | --- | --- |
 | `id` | integer | auto | Generado por la BD |
-| `nombre` | string | Sí | Razón social o nombre comercial |
-| `titular` | string | Sí | Responsable de la cuenta |
-| `telefono` | string | Sí | Se guarda como texto |
+| `nombre` | string | Sí | |
+| `titular` | string | Sí | |
+| `telefono` | string | Sí | |
 | `email` | string | Sí | |
 | `domicilio` | string | Sí | |
 
-### `GET /api/empresas`
-
-```json
-[
-  {
-    "id": 1,
-    "nombre": "CotiPro Solutions",
-    "titular": "Carlos Ramirez",
-    "telefono": "5551234567",
-    "email": "contacto@cotipro.com",
-    "domicilio": "Av. Principal 123"
-  }
-]
-```
-
 ### `POST /api/empresas`
-
-Body:
 
 ```json
 {
-  "nombre": "CotiPro Solutions",
+  "nombre": "Café Aroma",
   "titular": "Carlos Ramirez",
   "telefono": "5551234567",
-  "email": "contacto@cotipro.com",
-  "domicilio": "Av. Principal 123, Ciudad de Mexico"
+  "email": "contacto@cafearoma.com",
+  "domicilio": "Av. Principal 123"
 }
 ```
 
@@ -107,26 +104,21 @@ Respuesta `201`:
 ```json
 {
   "message": "Empresa creada exitosamente",
-  "data": {
-    "id": 1,
-    "nombre": "CotiPro Solutions",
-    "titular": "Carlos Ramirez",
-    "telefono": "5551234567",
-    "email": "contacto@cotipro.com",
-    "domicilio": "Av. Principal 123, Ciudad de Mexico"
-  }
+  "data": { "id": 4, "nombre": "Café Aroma", "titular": "Carlos Ramirez", "telefono": "5551234567", "email": "contacto@cafearoma.com", "domicilio": "Av. Principal 123" }
 }
 ```
 
 ### `PUT /api/empresas/:id`
 
-Mismo body que el `POST`. Reemplaza todos los campos enviados.
+Mismo body que el `POST`, reemplaza todos los campos.
 
 ### `DELETE /api/empresas/:id`
 
 ```json
-{ "message": "Empresa eliminada exitosamente", "id": "1" }
+{ "message": "Empresa eliminada exitosamente", "id": "4" }
 ```
+
+> Si la empresa tiene productos, proveedores o recetas asociados, el borrado falla con `400` por restricción de llave foránea (no hay cascada en esas relaciones).
 
 ---
 
@@ -137,34 +129,25 @@ Mismo body que el `POST`. Reemplaza todos los campos enviados.
 | Campo | Tipo | Requerido | Notas |
 | --- | --- | --- | --- |
 | `nombre` | string | Sí | |
-| `codigo_ingreso` | string | Sí | Código de acceso del empleado; debería ser único |
-| `puesto` | string | Sí | Texto libre |
+| `codigo_ingreso` | string | Sí | Único en toda la BD (no solo por empresa) |
+| `puesto` | string | Sí | |
 | `is_admin` | boolean | No | Default `false` |
 | `is_owner` | boolean | No | Default `false` |
-| `role_id` | integer | Sí | FK a `roles` — cargar la tabla por SQL |
-| `empresa_id` | integer | Sí | FK a `empresas` |
+| `role_id` | integer | Sí | FK a `roles` (`1=owner`, `2=admin`, `3=usuario` en el seed actual) — no hay endpoint de roles, se cargan por SQL |
 
-### `GET /api/usuarios`
+`empresa_id` **no va en el body**: siempre se toma del segmento `:empresa_id` de la URL, así que un cliente no puede crear/mover un usuario a otra empresa mandando un `empresa_id` distinto en el JSON.
 
-El listado devuelve `rol` y `empresa` resueltos por `JOIN` (no devuelve `role_id`):
+### `GET /api/usuarios/:empresa_id`
+
+El listado resuelve `rol` por `LEFT JOIN` (si el usuario no tiene `role_id`, `rol` viene `null` en vez de excluir la fila). Responde `404` si la empresa no tiene usuarios.
 
 ```json
 [
-  {
-    "id": 1,
-    "nombre": "Carlos Ramirez",
-    "codigo_ingreso": "CR001",
-    "puesto": "Gerente General",
-    "is_admin": true,
-    "is_owner": true,
-    "empresa_id": 1,
-    "rol": "owner",
-    "empresa": "CotiPro Solutions"
-  }
+  { "id": 1, "nombre": "Carlos Ramirez", "codigo_ingreso": "CR001", "puesto": "Gerente General", "is_admin": true, "is_owner": true, "empresa_id": 4, "rol": "owner" }
 ]
 ```
 
-### `POST /api/usuarios`
+### `POST /api/usuarios/:empresa_id`
 
 ```json
 {
@@ -173,46 +156,15 @@ El listado devuelve `rol` y `empresa` resueltos por `JOIN` (no devuelve `role_id
   "puesto": "Gerente General",
   "is_admin": true,
   "is_owner": true,
-  "role_id": 1,
-  "empresa_id": 1
+  "role_id": 1
 }
 ```
 
-Respuesta `201`:
+### `PUT /api/usuarios/:empresa_id/:id`
 
-```json
-{
-  "message": "Usuario creado exitosamente",
-  "data": {
-    "id": 1,
-    "nombre": "Carlos Ramirez",
-    "codigo_ingreso": "CR001",
-    "puesto": "Gerente General",
-    "is_admin": true,
-    "is_owner": true,
-    "role_id": 1,
-    "empresa_id": 1
-  }
-}
-```
+Mismo body que el `POST` (sin `empresa_id`). Responde `404` si el usuario no existe en esa empresa.
 
-### `PUT /api/usuarios/:id`
-
-```json
-{
-  "nombre": "Carlos Ramirez",
-  "codigo_ingreso": "CR002",
-  "puesto": "Administrador",
-  "is_admin": true,
-  "is_owner": false,
-  "role_id": 2,
-  "empresa_id": 1
-}
-```
-
-Respuesta: `{ "message": "Usuario actualizado exitosamente", "data": { ... } }`
-
-### `DELETE /api/usuarios/:id`
+### `DELETE /api/usuarios/:empresa_id/:id`
 
 ```json
 { "message": "Usuario eliminado exitosamente", "id": "1" }
@@ -227,143 +179,258 @@ Respuesta: `{ "message": "Usuario actualizado exitosamente", "data": { ... } }`
 | Campo | Tipo | Requerido | Notas |
 | --- | --- | --- | --- |
 | `nombre` | string | Sí | |
-| `contacto` | string | ⚠️ | El repository lo envía, el SQL no lo declara → ver BUG-03 |
-| `telefono` | string | Sí | |
-| `email` | string | Sí | |
-| `empresa_id` | integer | Sí | FK a `empresas` |
+| `telefono` | string | No | |
+| `email` | string | No | |
+| `domicilio` | string | No | |
 
-### `GET /api/proveedores`
+`empresa_id` viene de la URL igual que en usuarios.
 
-```json
-[
-  {
-    "id": 1,
-    "nombre": "Proveedor Central",
-    "telefono": "5551112233",
-    "email": "ventas@proveedorcentral.com",
-    "empresa_id": 1,
-    "empresa": "CotiPro Solutions"
-  }
-]
-```
-
-### `POST /api/proveedores`
+### `POST /api/proveedores/:empresa_id`
 
 ```json
-{
-  "nombre": "Proveedor Central",
-  "contacto": "Laura Martinez",
-  "telefono": "5551112233",
-  "email": "ventas@proveedorcentral.com",
-  "empresa_id": 1
-}
+{ "nombre": "Proveedor Central", "telefono": "5551112233", "email": "ventas@proveedorcentral.com", "domicilio": "Zona Industrial 45" }
 ```
 
-Respuesta esperada `201`:
+Respuesta `201`:
 
 ```json
 {
   "message": "Proveedor creado exitosamente",
-  "data": {
-    "id": 1,
-    "nombre": "Proveedor Central",
-    "telefono": "5551112233",
-    "email": "ventas@proveedorcentral.com",
-    "empresa_id": 1
-  }
+  "data": { "id": 3, "nombre": "Proveedor Central", "telefono": "5551112233", "email": "ventas@proveedorcentral.com", "empresa_id": 4, "domicilio": "Zona Industrial 45" }
 }
 ```
 
-> ⚠️ En el estado actual del código esta petición falla: el `INSERT` declara 4 columnas pero se envían 5 valores. `contacto` no persiste ni se regresa.
+### `PUT /api/proveedores/:empresa_id/:id`
 
-### `PUT /api/proveedores/:id`
+Mismo body que el `POST`.
 
-Mismo body que el `POST`. ⚠️ Falla por el mismo desajuste de parámetros (4 campos + `id` contra 6 valores).
-
-### `DELETE /api/proveedores/:id`
+### `DELETE /api/proveedores/:empresa_id/:id`
 
 ```json
-{ "message": "Proveedor eliminado exitosamente", "id": "1" }
+{ "message": "Proveedor eliminado exitosamente", "id": "3" }
 ```
-
-> ⚠️ Falla: el SQL usa `?` como placeholder y `pg` requiere `$1`.
 
 ---
 
 ## Productos
 
-### Campos
+Al crear un producto también se crea automáticamente su fila en `inventario` (relación 1 a 1). Al actualizar, ambas tablas se actualizan juntas dentro de la misma transacción.
+
+### Campos del body (`POST` / `PUT`)
 
 | Campo | Tipo | Requerido | Notas |
 | --- | --- | --- | --- |
 | `producto` | string | Sí | Nombre del insumo |
-| `stock_actual` | number | Sí | ⚠️ El valor `0` es rechazado por la validación actual |
-| `stock_minimo` | number | Sí | Umbral para lista de compras; `0` también se rechaza |
+| `stock_actual` | number | Sí | Acepta `0` |
+| `stock_minimo` | number | Sí | Acepta `0`; umbral para lista de compras |
 | `unidad_medida` | string | Sí | `kg`, `l`, `pza`, etc. |
 | `proveedor_id` | integer | Sí | FK a `proveedores` |
 | `categoria` | string | Sí | Texto libre |
-| `empresa_id` | integer | Sí | FK a `empresas` |
 | `cantidad_presentacion` | number | Sí | Contenido por presentación de compra |
 | `costo_presentacion` | number | Sí | Precio de la presentación completa |
-| `costo_unitario` | number | Sí | Debería ser `costo_presentacion / cantidad_presentacion` — hoy se envía a mano y puede desincronizarse |
 
-### `GET /api/productos`
+`costo_unitario` **no se envía**: es una columna generada por PostgreSQL (`costo_presentacion / cantidad_presentacion`) y siempre viene calculada en la respuesta. `empresa_id` viene de la URL, no del body.
+
+### `GET /api/productos/:empresa_id`
 
 ```json
 [
-  {
-    "id": 1,
-    "producto": "Cafe molido",
-    "stock_actual": 20,
-    "stock_minimo": 5,
-    "unidad_medida": "kg",
-    "proveedor_id": 1,
-    "categoria": "Insumos",
-    "empresa_id": 1,
-    "cantidad_presentacion": 1,
-    "costo_presentacion": 150,
-    "costo_unitario": 150
-  }
+  { "id": 33, "producto": "Cholate Sicao", "unidad_medida": "kg", "proveedor_id": 4, "categoria": "Insumos", "empresa_id": 4, "cantidad_presentacion": "1.000", "costo_presentacion": "0.14", "costo_unitario": "0.1400" }
 ]
 ```
 
-### `POST /api/productos`
+### `POST /api/productos/:empresa_id`
 
-Body con todos los campos de la tabla anterior. Respuesta `201`:
+```json
+{
+  "producto": "Café molido",
+  "stock_actual": 20,
+  "stock_minimo": 5,
+  "unidad_medida": "kg",
+  "proveedor_id": 4,
+  "categoria": "Insumos",
+  "cantidad_presentacion": 1,
+  "costo_presentacion": 150
+}
+```
+
+Respuesta `201`:
 
 ```json
 {
   "message": "Producto creado exitosamente",
-  "data": { "id": 1, "producto": "Cafe molido", "...": "..." }
+  "data": {
+    "id": 40, "producto": "Café molido", "unidad_medida": "kg", "proveedor_id": 4,
+    "categoria": "Insumos", "empresa_id": 4, "cantidad_presentacion": "1.000",
+    "costo_presentacion": "150.00", "costo_unitario": "150.0000",
+    "stock_actual": "20.000", "stock_minimo": "5.000", "updated_at": "2026-08-10T22:00:00.000Z"
+  }
 }
 ```
 
-### `PUT /api/productos/:id`
+### `PUT /api/productos/:empresa_id/:id`
 
-```json
-{
-  "producto": "Cafe molido premium",
-  "stock_actual": 30,
-  "stock_minimo": 8,
-  "unidad_medida": "kg",
-  "proveedor_id": 1,
-  "categoria": "Insumos",
-  "empresa_id": 1,
-  "cantidad_presentacion": 1,
-  "costo_presentacion": 180,
-  "costo_unitario": 180
-}
-```
+Mismo body que el `POST`. Responde `404` si el producto no existe en esa empresa.
 
-> Este `PUT` es también el único mecanismo para mover stock: sobrescribe `stock_actual` sin dejar registro del movimiento.
+> Este `PUT` sobrescribe `stock_actual`/`stock_minimo` directamente y **no queda registrado** en el historial de movimientos. Para ajustes de stock que sí necesiten auditoría (quién, cuándo, por qué), usa `POST /movimientos` en vez de este endpoint.
 
-### `DELETE /api/productos/:id`
+### `DELETE /api/productos/:empresa_id/:id`
 
 ```json
 { "message": "Producto eliminado exitosamente" }
 ```
 
-> ⚠️ Inconsistente con los demás módulos: no regresa `id`.
+Al borrar el producto, su fila de `inventario` se borra en cascada automáticamente (constraint de la BD).
+
+---
+
+## Movimientos de inventario
+
+Registra entradas, salidas y ajustes de stock con trazabilidad completa (usuario, fecha, motivo, stock antes/después). Es el mecanismo recomendado para mover stock en vez de `PUT /productos`.
+
+### Campos del body (`POST`)
+
+| Campo | Tipo | Requerido | Notas |
+| --- | --- | --- | --- |
+| `tipo_movimiento` | string | Sí | Uno de: `COMPRA`, `VENTA`, `MERMA`, `AJUSTE`, `DEVOLUCION`, `PRODUCCION` |
+| `cantidad` | number | Sí | Distinta de `0`. Ver reglas de signo abajo |
+| `motivo` | string | No | Texto libre para auditoría |
+| `usuario_id` | integer | No | Quién hizo el movimiento |
+| `costo_unitario` | number | No | Si se omite, toma el `costo_unitario` actual del producto |
+| `referencia_tipo` / `referencia_id` | string / integer | No | Para vincular el movimiento a otro registro (ej. una venta o una receta) |
+
+**Dirección sobre el stock:**
+
+| `tipo_movimiento` | Efecto | Signo de `cantidad` |
+| --- | --- | --- |
+| `COMPRA`, `DEVOLUCION` | Suma al stock | Siempre positiva (se usa su valor absoluto) |
+| `VENTA`, `MERMA`, `PRODUCCION` | Resta al stock | Siempre positiva (se usa su valor absoluto) |
+| `AJUSTE` | Suma o resta según el signo | Puede ser negativa (ej. `-2` para corregir un conteo físico a la baja) |
+
+Si el movimiento dejaría el stock en negativo, la operación se cancela completa (rollback) y responde `400` con `"Stock insuficiente para este movimiento"`.
+
+### `POST /api/productos/:empresa_id/:id/movimientos`
+
+```json
+{ "tipo_movimiento": "COMPRA", "cantidad": 20, "motivo": "Reabastecimiento semanal" }
+```
+
+Respuesta `201`:
+
+```json
+{
+  "message": "Movimiento registrado exitosamente",
+  "data": {
+    "id": 1, "fecha": "2026-08-10T22:07:21.357Z", "usuario_id": null, "producto_id": 33,
+    "tipo_movimiento": "COMPRA", "cantidad": "20.000", "costo_unitario": "0.14",
+    "stock_anterior": "1.000", "stock_nuevo": "21.000", "motivo": "Reabastecimiento semanal",
+    "referencia_tipo": null, "referencia_id": null
+  }
+}
+```
+
+### `GET /api/productos/:empresa_id/:id/movimientos`
+
+Devuelve el historial del producto, más reciente primero:
+
+```json
+[
+  { "id": 1, "fecha": "2026-08-10T22:07:21.357Z", "usuario": null, "tipo_movimiento": "COMPRA", "cantidad": "20.000", "stock_anterior": "1.000", "stock_nuevo": "21.000", "motivo": "Reabastecimiento semanal" }
+]
+```
+
+---
+
+## Inventario (solo lectura)
+
+Vista de solo lectura del stock de todos los productos de una empresa (equivalente a un `GET /productos` pero enfocado en las columnas de stock). Para crear o modificar stock, usa `/productos` o `/productos/:empresa_id/:id/movimientos`.
+
+### `GET /api/inventario/:empresa_id`
+
+```json
+[
+  { "id": 11, "producto_id": 33, "producto": "Cholate Sicao", "stock_actual": "1.000", "stock_minimo": "4.000", "updated_at": "2026-07-31T15:02:40.691Z" }
+]
+```
+
+### `GET /api/inventario/:empresa_id/:id`
+
+`:id` es el `id` de la fila de `inventario` (no el `producto_id`).
+
+---
+
+## Recetas
+
+### Campos
+
+| Campo | Tipo | Requerido | Notas |
+| --- | --- | --- | --- |
+| `nombre` | string | Sí | |
+| `categoria` | string | Sí | |
+| `precio_venta` | number | Sí (o usa el default `0`) | |
+| `costo_total` | number | No | Valor inicial; se **recalcula automáticamente** como la suma de `costo_final` de sus ingredientes cada vez que se agrega, edita o borra un detalle |
+| `activo` | boolean | No | |
+
+`margen` no se envía: es una columna generada (`(precio_venta - costo_total) / precio_venta * 100`).
+
+### `POST /api/recetas/:empresa_id`
+
+```json
+{ "nombre": "Hamburguesa BBQ", "categoria": "Plato fuerte", "precio_venta": 189, "costo_total": 0, "activo": true }
+```
+
+Respuesta `201`: la fila completa de la receta, incluido `margen` calculado.
+
+### `PUT /api/recetas/:empresa_id/:id`
+
+Mismo body. Responde `404` si la receta no existe en esa empresa.
+
+### `DELETE /api/recetas/:empresa_id/:id`
+
+```json
+{ "message": "Receta eliminada correctamente" }
+```
+
+---
+
+## Detalle de receta (ingredientes)
+
+Cada fila conecta una receta con un producto (ingrediente) y su cantidad. **No lleva `:empresa_id` en la URL** — la ruta cuelga de `:receta_id` (que ya pertenece a una empresa), y el backend valida en la propia query que el `producto_id` enviado pertenezca a la **misma empresa** que la receta; si no, responde `404` en vez de mezclar productos entre empresas.
+
+### Campos del body
+
+| Campo | Tipo | Requerido | Notas |
+| --- | --- | --- | --- |
+| `producto_id` | integer | Sí | Debe pertenecer a la misma empresa que la receta |
+| `cantidad` | number | Sí | |
+
+`costo_unitario` se copia automáticamente del producto al momento de crear/editar el detalle (snapshot histórico), y `costo_final` es una columna generada (`cantidad * costo_unitario`).
+
+### `POST /api/recetas/:receta_id/detalle`
+
+```json
+{ "producto_id": 33, "cantidad": 3 }
+```
+
+Respuesta `201`:
+
+```json
+{ "id": 32, "receta_id": 1, "producto": "Cholate Sicao", "cantidad": "3.000", "costo_unitario": "0.1400", "costo_final": "0.42" }
+```
+
+Si `producto_id` no existe o pertenece a otra empresa, responde `404` con `{"error": "Producto no encontrado"}` y la receta padre recalcula su `costo_total` automáticamente tras la operación.
+
+### `PUT /api/recetas/:receta_id/detalle/:id`
+
+```json
+{ "producto_id": 33, "cantidad": 10 }
+```
+
+### `DELETE /api/recetas/:receta_id/detalle/:id`
+
+```json
+{ "message": "Detalle de receta eliminado correctamente" }
+```
 
 ---
 
@@ -373,37 +440,38 @@ Body con todos los campos de la tabla anterior. Respuesta `201`:
 # 1. Empresa
 curl -X POST http://localhost:4000/api/empresas \
   -H "Content-Type: application/json" \
-  -d '{"nombre":"CotiPro Solutions","titular":"Carlos Ramirez","telefono":"5551234567","email":"contacto@cotipro.com","domicilio":"Av. Principal 123"}'
+  -d '{"nombre":"Café Aroma","titular":"Carlos Ramirez","telefono":"5551234567","email":"contacto@cafearoma.com","domicilio":"Av. Principal 123"}'
 
 # 2. Roles: insertar por SQL, no hay endpoint
-#    INSERT INTO roles (nombre) VALUES ('owner'), ('admin'), ('empleado');
+#    INSERT INTO roles (nombre) VALUES ('owner'), ('admin'), ('usuario');
 
-# 3. Usuario
-curl -X POST http://localhost:4000/api/usuarios \
+# 3. Usuario (empresa_id = 4, ajusta al id real que te devolvió el paso 1)
+curl -X POST http://localhost:4000/api/usuarios/4 \
   -H "Content-Type: application/json" \
-  -d '{"nombre":"Carlos Ramirez","codigo_ingreso":"CR001","puesto":"Gerente General","is_admin":true,"is_owner":true,"role_id":1,"empresa_id":1}'
+  -d '{"nombre":"Carlos Ramirez","codigo_ingreso":"CR001","puesto":"Gerente General","is_admin":true,"is_owner":true,"role_id":1}'
 
 # 4. Proveedor
-curl -X POST http://localhost:4000/api/proveedores \
+curl -X POST http://localhost:4000/api/proveedores/4 \
   -H "Content-Type: application/json" \
-  -d '{"nombre":"Proveedor Central","contacto":"Laura Martinez","telefono":"5551112233","email":"ventas@proveedorcentral.com","empresa_id":1}'
+  -d '{"nombre":"Proveedor Central","telefono":"5551112233","email":"ventas@proveedorcentral.com"}'
 
-# 5. Producto
-curl -X POST http://localhost:4000/api/productos \
+# 5. Producto (usa el proveedor_id real del paso 4)
+curl -X POST http://localhost:4000/api/productos/4 \
   -H "Content-Type: application/json" \
-  -d '{"producto":"Cafe molido","stock_actual":20,"stock_minimo":5,"unidad_medida":"kg","proveedor_id":1,"categoria":"Insumos","empresa_id":1,"cantidad_presentacion":1,"costo_presentacion":150,"costo_unitario":150}'
+  -d '{"producto":"Café molido","stock_actual":20,"stock_minimo":5,"unidad_medida":"kg","proveedor_id":1,"categoria":"Insumos","cantidad_presentacion":1,"costo_presentacion":150}'
+
+# 6. Movimiento de stock (usa el id del producto del paso 5)
+curl -X POST http://localhost:4000/api/productos/4/1/movimientos \
+  -H "Content-Type: application/json" \
+  -d '{"tipo_movimiento":"COMPRA","cantidad":10,"motivo":"Reabastecimiento"}'
+
+# 7. Receta
+curl -X POST http://localhost:4000/api/recetas/4 \
+  -H "Content-Type: application/json" \
+  -d '{"nombre":"Café americano","categoria":"Bebida","precio_venta":45,"activo":true}'
+
+# 8. Ingrediente de la receta (usa el id de la receta del paso 7 y el producto del paso 5)
+curl -X POST http://localhost:4000/api/recetas/1/detalle \
+  -H "Content-Type: application/json" \
+  -d '{"producto_id":1,"cantidad":0.02}'
 ```
-
----
-
-## Bugs conocidos que afectan estos endpoints
-
-| ID | Endpoint afectado | Problema |
-| --- | --- | --- |
-| BUG-01 | `DELETE /api/productos/:id` | El `catch` usa `throw new error(...)` en minúscula → `TypeError` que oculta el error real |
-| BUG-02 | `POST`/`PUT /api/productos` | Validación `!campo` rechaza `0` en stock y costos |
-| BUG-03 | `POST /api/proveedores` | `INSERT` con 4 columnas y 5 valores |
-| BUG-04 | `PUT /api/proveedores/:id` | `UPDATE` con 4 campos + `id` y 6 valores |
-| BUG-05 | `DELETE /api/proveedores/:id` | Placeholder `?` en vez de `$1` |
-
-Detalle y prioridad de corrección en el README, sección *Estado actual y deuda técnica*.

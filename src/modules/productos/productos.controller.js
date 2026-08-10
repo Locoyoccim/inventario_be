@@ -60,12 +60,14 @@ export default class ProductosController {
     };
 
     eliminarProducto = async (req, res) => {
-        const { id } = req.params;
+        const { id, empresa_id } = req.params;
         try {
-            await this.productosService.deleteProducto(id);
-            res.json({ message: "Producto eliminado exitosamente" });
+            const eliminado = await this.productosService.deleteProducto(id, empresa_id);
+            eliminado
+                ? res.json({ message: "Producto eliminado exitosamente" })
+                : res.status(404).json({ error: "Producto no encontrado" });
         } catch (error) {
-            res.status(500).json({ error: "Error al eliminar el producto" });
+            res.status(400).json({ error: error.message });
         }
     };
 }

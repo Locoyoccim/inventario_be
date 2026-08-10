@@ -11,8 +11,8 @@ const QUERIES = {
         RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario
     `,
     INSERT_INVENTARIO: `
-        INSERT INTO inventario (producto_id, stock_actual, stock_minimo, updated_at)
-        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+        INSERT INTO inventario (producto_id, stock_actual, stock_minimo, empresa_id, updated_at)
+        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
         RETURNING stock_actual, stock_minimo, updated_at
     `,
     UPDATE_PRODUCTO: `
@@ -27,7 +27,7 @@ const QUERIES = {
         WHERE producto_id = $3
         RETURNING stock_actual, stock_minimo, updated_at
     `,
-    DELETE: `DELETE FROM productos WHERE id = $1 RETURNING id`,
+    DELETE: `DELETE FROM productos WHERE id = $1 AND empresa_id = $2 RETURNING id`,
 };
 
 export default class ProductoRepository {
@@ -93,6 +93,7 @@ export default class ProductoRepository {
                 nuevoProducto.id,
                 stock_actual,
                 stock_minimo,
+                empresa_id,
             ]);
 
             await client.query("COMMIT");
@@ -177,13 +178,10 @@ export default class ProductoRepository {
         }
     }
 
-    async deleteProducto(id) {
-        try {
-            if (!id) throw new Error("ID es requerido");
-            const result = await pool.query(QUERIES.DELETE, [id]);
-            return result.rows[0];
-        } catch (error) {
-            throw new error(`Error al eliminar producto: ${error.message}`);
-        }
+    async deleteProducto(id, empresa_id) {
+        if (!id) throw new Error("ID es requerido");
+        if (!empresa_id) throw new Error("empresa_id es requerido");
+        const result = await pool.query(QUERIES.DELETE, [id, empresa_id]);
+        return result.rows[0];
     }
 }

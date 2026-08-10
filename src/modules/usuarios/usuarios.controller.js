@@ -53,7 +53,7 @@ export default class UsuarioController {
         const usuarioData = req.body;
         const { empresa_id } = req.params;
 
-        if (!usuarioData.empresa_id) {
+        if (!empresa_id) {
             return res.status(400).json({ error: "empresa_id es requerido" });
         }
 
@@ -71,7 +71,7 @@ export default class UsuarioController {
                 data: newUsuario,
             });
         } catch (error) {
-            res.status(500).json({ error: error.message || "Error al crear el usuario" });
+            res.status(400).json({ error: error.message || "Error al crear el usuario" });
         }
     };
 
@@ -79,8 +79,9 @@ export default class UsuarioController {
         const { empresa_id, id } = req.params;
         const usuarioData = req.body;
 
-        if (!usuarioData.empresa_id && !usuarioData.id)
-            return res.status(400).json({ error: "empresa_id y id son requeridos" });
+        if (!empresa_id || !id) {
+            return res.status(400).json({ error: "empresa_id e id son requeridos" });
+        }
 
         try {
             const updatedUsuario = await this.usuarioService.updateUsuario(
@@ -88,12 +89,14 @@ export default class UsuarioController {
                 id,
                 usuarioData,
             );
-            res.status(200).json({
-                message: "Usuario actualizado exitosamente",
-                data: updatedUsuario,
-            });
+            updatedUsuario
+                ? res.status(200).json({
+                      message: "Usuario actualizado exitosamente",
+                      data: updatedUsuario,
+                  })
+                : res.status(404).json({ error: "Usuario no encontrado" });
         } catch (error) {
-            res.status(500).json({ error: error.message || "Error al actualizar el usuario" });
+            res.status(400).json({ error: error.message || "Error al actualizar el usuario" });
         }
     };
 }

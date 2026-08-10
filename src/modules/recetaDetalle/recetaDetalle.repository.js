@@ -33,10 +33,12 @@ const QUERIES = {
         producto_id = $1,
         cantidad = $2,
         costo_unitario = p.costo_unitario
-    FROM productos p
+    FROM productos p, recetas rec
     WHERE r.id = $3
         AND r.receta_id = $4
         AND p.id = $1
+        AND rec.id = $4
+        AND rec.empresa_id = p.empresa_id
     RETURNING
         r.id,
         r.receta_id,
@@ -47,13 +49,15 @@ const QUERIES = {
 `,
     DELETE: `
     DELETE FROM receta_detalle
-    WHERE id = $1 AND receta_id = $2;
+    WHERE id = $1 AND receta_id = $2
+    RETURNING id;
 `,
     INSERT: `
     WITH producto_data AS (
-        SELECT id, producto, costo_unitario
-        FROM productos
-        WHERE id = $3
+        SELECT p.id, p.producto, p.costo_unitario
+        FROM productos p
+        JOIN recetas rec ON rec.empresa_id = p.empresa_id
+        WHERE p.id = $3 AND rec.id = $1
     ),
     inserted AS (
         INSERT INTO receta_detalle (
@@ -80,6 +84,14 @@ const QUERIES = {
     FROM inserted i
     INNER JOIN producto_data p ON p.id = i.producto_id;
 `,
+    RECALCULAR_COSTO_TOTAL: `
+    UPDATE recetas
+    SET costo_total = COALESCE(
+        (SELECT SUM(costo_final) FROM receta_detalle WHERE receta_id = $1),
+        0
+    )
+    WHERE id = $1;
+`,
 };
 
 export default class RecetaDetalleRepository {
@@ -105,49 +117,86 @@ export default class RecetaDetalleRepository {
 
     async create(receta_id, data) {
         const { producto_id, cantidad } = data;
-        try {
-            if (!producto_id || cantidad === undefined || cantidad === null) {
-                throw new Error("producto_id y cantidad son requeridos");
-            }
+        if (!producto_id || cantidad === undefined || cantidad === null) {
+            throw new Error("producto_id y cantidad son requeridos");
+        }
 
-            const result = await pool.query(QUERIES.INSERT, [
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            const result = await client.query(QUERIES.INSERT, [
                 receta_id,
                 cantidad,
                 producto_id,
             ]);
+            const detalle = result.rows[0];
 
-            return result.rows[0];
+            if (detalle) {
+                await client.query(QUERIES.RECALCULAR_COSTO_TOTAL, [receta_id]);
+            }
+
+            await client.query("COMMIT");
+            return detalle;
         } catch (error) {
+            await client.query("ROLLBACK");
             throw new Error(`Error al crear detalle de receta: ${error.message}`);
+        } finally {
+            client.release();
         }
     }
 
     async update(receta_id, id, data) {
         const { producto_id, cantidad } = data;
-        try {
-            if (!producto_id || cantidad === undefined || cantidad === null) {
-                throw new Error("producto_id y cantidad son requeridos");
-            }
+        if (!producto_id || cantidad === undefined || cantidad === null) {
+            throw new Error("producto_id y cantidad son requeridos");
+        }
 
-            const result = await pool.query(QUERIES.UPDATE, [
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            const result = await client.query(QUERIES.UPDATE, [
                 producto_id,
                 cantidad,
                 id,
                 receta_id,
             ]);
+            const detalle = result.rows[0];
 
-            return result.rows[0];
+            if (detalle) {
+                await client.query(QUERIES.RECALCULAR_COSTO_TOTAL, [receta_id]);
+            }
+
+            await client.query("COMMIT");
+            return detalle;
         } catch (error) {
+            await client.query("ROLLBACK");
             throw new Error(`Error al actualizar detalle de receta: ${error.message}`);
+        } finally {
+            client.release();
         }
     }
 
     async remove(receta_id, id) {
+        const client = await pool.connect();
         try {
-            await pool.query(QUERIES.DELETE, [id, receta_id]);
-            return { message: "Detalle de receta eliminado correctamente" };
+            await client.query("BEGIN");
+
+            const result = await client.query(QUERIES.DELETE, [id, receta_id]);
+            const detalle = result.rows[0];
+
+            if (detalle) {
+                await client.query(QUERIES.RECALCULAR_COSTO_TOTAL, [receta_id]);
+            }
+
+            await client.query("COMMIT");
+            return detalle;
         } catch (error) {
+            await client.query("ROLLBACK");
             throw new Error(`Error al eliminar detalle de receta: ${error.message}`);
+        } finally {
+            client.release();
         }
     }
 }
