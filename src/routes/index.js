@@ -14,6 +14,9 @@ import ProveedorRepository from "../modules/proveedores/proveedor.repository.js"
 import RecetaController from "../modules/recetas/receta.controller.js";
 import RecetaService from "../modules/recetas/receta.service.js";
 import RecetaRepository from "../modules/recetas/receta.repository.js";
+import RecetaDetalleController from "../modules/recetaDetalle/recetaDetalle.controller.js";
+import RecetaDetalleService from "../modules/recetaDetalle/recetaDetalle.service.js";
+import RecetaDetalleRepository from "../modules/recetaDetalle/recetaDetalle.repository.js";
 
 const router = Router();
 
@@ -47,6 +50,12 @@ const recetaRepo = new RecetaRepository();
 const recetaService = new RecetaService(recetaRepo, empresaRepo);
 const recetaController = new RecetaController(recetaService);
 
+// Inyección dependencias (DIP)
+//recetas detalle
+const recetaDetalleRepo = new RecetaDetalleRepository();
+const recetaDetalleService = new RecetaDetalleService(recetaDetalleRepo, recetaRepo);
+const recetaDetalleController = new RecetaDetalleController(recetaDetalleService);
+
 // EndPoints Usuarios
 router.get("/usuarios/:empresa_id", usuarioController.listar);
 router.get("/usuarios/:empresa_id/:id", usuarioController.listarPorId);
@@ -74,6 +83,13 @@ router.get("/proveedores/:empresa_id/:id", proveedorController.listarPorId);
 router.post("/proveedores/:empresa_id", proveedorController.crear);
 router.put("/proveedores/:empresa_id/:id", proveedorController.actualizar);
 router.delete("/proveedores/:empresa_id/:id", proveedorController.eliminar);
+
+// EndPoints Recetas Detalle
+router.get("/recetas/:receta_id/detalle", recetaDetalleController.listar);
+router.get("/recetas/:receta_id/detalle/:id", recetaDetalleController.listarPorId);
+router.post("/recetas/:receta_id/detalle", recetaDetalleController.crear);
+router.put("/recetas/:receta_id/detalle/:id", recetaDetalleController.actualizar);
+router.delete("/recetas/:receta_id/detalle/:id", recetaDetalleController.eliminar);
 
 // EndPoints Recetas
 router.get("/recetas/:empresa_id", recetaController.listar);

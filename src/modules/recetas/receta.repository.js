@@ -31,18 +31,23 @@ const QUERIES = {
     FROM recetas r
     WHERE r.id = $1 AND r.empresa_id = $2;
 `,
+    EXISTS_RECETA: `
+    SELECT 1
+    FROM recetas
+    WHERE id = $1;
+`,
     UPDATE: `
     UPDATE recetas
-    SET nombre = $1, categoria = $2, precio_venta = $3, costo_total = $4, margen = $5, activo = $6
-    WHERE id = $7 AND empresa_id = $8;
+    SET nombre = $1, categoria = $2, precio_venta = $3, costo_total = $4, activo = $5
+    WHERE id = $6 AND empresa_id = $7;
 `,
     DELETE: `
     DELETE FROM recetas
     WHERE id = $1 AND empresa_id = $2;
 `,
     INSERT: `
-    INSERT INTO recetas (nombre, categoria, precio_venta, costo_total, margen, activo, empresa_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO recetas (nombre, categoria, precio_venta, costo_total, activo, empresa_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING *;
 `,
 
@@ -67,10 +72,19 @@ export default class RecetaRepository {
         }
     }
 
-    async create(empresa_id, data) {
-        const { nombre, categoria, precio_venta, costo_total, margen, activo } = data;
+    async existsReceta(id) {
         try {
-            const result = await pool.query(QUERIES.INSERT, [nombre, categoria, precio_venta, costo_total, margen, activo, empresa_id]);
+            const result = await pool.query(QUERIES.EXISTS_RECETA, [id]);
+            return result.rowCount > 0;
+        } catch (error) {
+            throw new Error(`Error al validar receta: ${error.message}`);
+        }
+    }
+
+    async create(empresa_id, data) {
+        const { nombre, categoria, precio_venta, costo_total, activo } = data;
+        try {
+            const result = await pool.query(QUERIES.INSERT, [nombre, categoria, precio_venta, costo_total, activo, empresa_id]);
             return result.rows[0];
         } catch (error) {
             throw new Error(`Error al crear receta: ${error.message}`);
@@ -78,9 +92,9 @@ export default class RecetaRepository {
     }
 
     async update(empresa_id, id, data) {
-        const { nombre, categoria, precio_venta, costo_total, margen, activo } = data;
+        const { nombre, categoria, precio_venta, costo_total, activo } = data;
         try {
-            await pool.query(QUERIES.UPDATE, [nombre, categoria, precio_venta, costo_total, margen, activo, id, empresa_id]);
+            await pool.query(QUERIES.UPDATE, [nombre, categoria, precio_venta, costo_total, activo, id, empresa_id]);
             return { message: "Receta actualizada correctamente" };
         } catch (error) {
             throw new Error(`Error al actualizar receta: ${error.message}`);
