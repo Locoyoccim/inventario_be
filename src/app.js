@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import routes from "./routes/index.js";
 import UsuarioService from "./modules/usuarios/usuario.service.js";
 import UsuarioRepository from "./modules/usuarios/usuario.repository.js";
@@ -14,6 +15,7 @@ const usuarioService = new UsuarioService(usuarioRepository, empresaRepository);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(cors());
 app.use(express.json());
 
 // Rutas

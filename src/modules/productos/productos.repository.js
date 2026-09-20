@@ -1,8 +1,21 @@
 import pool from "../../config/db.js";
 
 const QUERIES = {
-    SELECT_ALL: `SELECT * FROM productos WHERE empresa_id = $1 ORDER BY id ASC`,
-    SELECT_BY_ID: `SELECT * FROM productos WHERE empresa_id = $2 AND id = $1`,
+    SELECT_ALL: `
+        SELECT p.id, p.producto, p.unidad_medida, prov.nombre AS proveedor, p.categoria, p.empresa_id,
+               p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario
+        FROM productos p
+        LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
+        WHERE p.empresa_id = $1
+        ORDER BY p.id ASC
+    `,
+    SELECT_BY_ID: `
+        SELECT p.id, p.producto, p.unidad_medida, prov.nombre AS proveedor, p.categoria, p.empresa_id,
+               p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario
+        FROM productos p
+        LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
+        WHERE p.empresa_id = $2 AND p.id = $1
+    `,
     EXISTS_PRODUCTO: `SELECT 1 FROM productos WHERE id = $1`,
     INSERT_PRODUCTO: `
         INSERT INTO productos

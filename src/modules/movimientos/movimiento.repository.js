@@ -42,7 +42,12 @@ export default class MovimientoRepository {
         return result.rows;
     }
 
-    async registrar(producto_id, empresa_id, data) {
+    // Núcleo reutilizable: aplica UN movimiento usando un client de transacción YA abierto.
+    // No hace BEGIN/COMMIT (lo controla quien llama). Devuelve la fila del movimiento,
+    // o null si el producto o su inventario no existen para esa empresa.
+    // opts.permitirNegativo=true deja que el stock quede negativo (modo importación diaria).
+    async aplicar(client, producto_id, empresa_id, data, opts = {}) {
+        const { permitirNegativo = false } = opts;
         const {
             tipo_movimiento,
             cantidad,
@@ -60,59 +65,85 @@ export default class MovimientoRepository {
             throw new Error("cantidad es requerida y debe ser distinta de 0");
         }
 
+        const productoResult = await client.query(QUERIES.SELECT_PRODUCTO, [
+            producto_id,
+            empresa_id,
+        ]);
+        const producto = productoResult.rows[0];
+        if (!producto) return null;
+
+        const inventarioResult = await client.query(QUERIES.LOCK_INVENTARIO, [producto_id]);
+        const inventario = inventarioResult.rows[0];
+        if (!inventario) return null;
+
+        const direccion = DIRECCION[tipo_movimiento];
+        const delta =
+            direccion === null
+                ? Number(cantidad)
+                : Math.abs(Number(cantidad)) * direccion;
+
+        const stockAnterior = Number(inventario.stock_actual);
+        const stockNuevo = stockAnterior + delta;
+
+        if (stockNuevo < 0 && !permitirNegativo) {
+            throw new Error("Stock insuficiente para este movimiento");
+        }
+
+        await client.query(QUERIES.UPDATE_STOCK, [stockNuevo, producto_id]);
+
+        const movimientoResult = await client.query(QUERIES.INSERT_MOVIMIENTO, [
+            usuario_id,
+            producto_id,
+            tipo_movimiento,
+            Math.abs(Number(cantidad)),
+            costo_unitario ?? producto.costo_unitario,
+            stockAnterior,
+            stockNuevo,
+            motivo,
+            referencia_tipo,
+            referencia_id,
+        ]);
+
+        return movimientoResult.rows[0];
+    }
+
+    // Registro individual (comportamiento original): su propia transacción.
+    async registrar(producto_id, empresa_id, data) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
-
-            const productoResult = await client.query(QUERIES.SELECT_PRODUCTO, [
-                producto_id,
-                empresa_id,
-            ]);
-            const producto = productoResult.rows[0];
-            if (!producto) {
+            const movimiento = await this.aplicar(client, producto_id, empresa_id, data);
+            if (!movimiento) {
                 await client.query("ROLLBACK");
                 return null;
             }
-
-            const inventarioResult = await client.query(QUERIES.LOCK_INVENTARIO, [
-                producto_id,
-            ]);
-            const inventario = inventarioResult.rows[0];
-            if (!inventario) {
-                await client.query("ROLLBACK");
-                return null;
-            }
-
-            const direccion = DIRECCION[tipo_movimiento];
-            const delta =
-                direccion === null
-                    ? Number(cantidad)
-                    : Math.abs(Number(cantidad)) * direccion;
-
-            const stockAnterior = Number(inventario.stock_actual);
-            const stockNuevo = stockAnterior + delta;
-
-            if (stockNuevo < 0) {
-                throw new Error("Stock insuficiente para este movimiento");
-            }
-
-            await client.query(QUERIES.UPDATE_STOCK, [stockNuevo, producto_id]);
-
-            const movimientoResult = await client.query(QUERIES.INSERT_MOVIMIENTO, [
-                usuario_id,
-                producto_id,
-                tipo_movimiento,
-                Math.abs(Number(cantidad)),
-                costo_unitario ?? producto.costo_unitario,
-                stockAnterior,
-                stockNuevo,
-                motivo,
-                referencia_tipo,
-                referencia_id,
-            ]);
-
             await client.query("COMMIT");
-            return movimientoResult.rows[0];
+            return movimiento;
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    // Registro por lote genérico: N movimientos en UNA sola transacción.
+    // items: [{ producto_id, tipo_movimiento, cantidad, ... }]
+    async registrarLote(empresa_id, items, opts = {}) {
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            const resultados = [];
+            for (const item of items) {
+                const { producto_id, ...data } = item;
+                const mov = await this.aplicar(client, producto_id, empresa_id, data, opts);
+                if (!mov) {
+                    throw new Error(`Producto ${producto_id} no encontrado para la empresa ${empresa_id}`);
+                }
+                resultados.push(mov);
+            }
+            await client.query("COMMIT");
+            return resultados;
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;

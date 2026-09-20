@@ -44,8 +44,23 @@ export default class RecetaController {
             if (!empresaExists) {
                 return res.status(404).json({ error: "Empresa no encontrada" });
             }
-            const receta = await this.recetaService.createReceta(empresa_id, data);
+            const receta = Array.isArray(data.ingredientes)
+                ? await this.recetaService.createRecetaConDetalle(empresa_id, data)
+                : await this.recetaService.createReceta(empresa_id, data);
             res.status(201).json(receta);
+        } catch (error) {
+            res.status(400).json({ error: error.message });
+        }
+    };
+
+    // Preview de costeo SIN guardar (para el cálculo en vivo del front)
+    preview = async (req, res) => {
+        const { empresa_id } = req.params;
+        try {
+            const existe = await this.recetaService.existsEmpresa(empresa_id);
+            if (!existe) return res.status(404).json({ error: "Empresa no encontrada" });
+            const resultado = await this.recetaService.previewCosteo(empresa_id, req.body);
+            res.json(resultado);
         } catch (error) {
             res.status(400).json({ error: error.message });
         }

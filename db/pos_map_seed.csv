@@ -1,0 +1,44 @@
+nombre_pos,tipo_sugerido,receta_id,producto_id,factor,nota
+Baguette de Pollo,RECETA,,,1,
+Pan Turco de Arrachera,RECETA,,,1,
+Golden Crispy Chicken,RECETA,,,1,
+Latte Moka,RECETA,,,1,receta SIN leche (la leche entra por modificador)
+Chilaquiles Verdes,RECETA,,,1,
+Latte,RECETA,,,1,receta SIN leche
+Frappe Caramelo,RECETA,,,1,receta SIN leche
+Felix Special,RECETA,,,1,confirmar si es platillo o coctel
+Boneless Buffalo Tradicional,RECETA,,,1,
+San Pellegrino Mineral,INSUMO,,,1,producto embotellado: resta 1:1
+Iced Latte,RECETA,,,1,receta SIN leche
+Frappe de Galleta,RECETA,,,1,receta SIN leche
+Papas Gajo,RECETA,,,1,
+Verde Rosa,RECETA,,,1,confirmar (coctel/mocktail)
+Pizzas,IGNORAR,,,1,AMBIGUO: categoria o boton generico? confirmar
+Iced Caramel Macchiato,RECETA,,,1,receta SIN leche
+La Barranqueña,RECETA,,,1,confirmar (coctel)
+Frappe Tradicional,RECETA,,,1,receta SIN leche
+Smash Aroma,RECETA,,,1,confirmar (coctel/hamburguesa?)
+Rol de Canela,RECETA,,,1,
+Con Arrachera,INSUMO,,,1,modificador: extra de arrachera
+Frappe Moka Menta,RECETA,,,1,receta SIN leche
+Mousse de Chocolate,RECETA,,,1,
+Café Mexicano,RECETA,,,1,
+Chai,RECETA,,,1,receta SIN leche
+Matcha,RECETA,,,1,receta SIN leche
+UMBRAL,IGNORAR,,,1,AMBIGUO: confirmar que es
+Chocolate Caliente,RECETA,,,1,receta SIN leche
+Extra Huevo,INSUMO,,,1,modificador: 1 huevo
+Cappuccino,RECETA,,,1,receta SIN leche
+Cherry Bomb,RECETA,,,1,confirmar (coctel)
+Agua embotellada,INSUMO,,,1,producto embotellado: resta 1:1
+Con Huevo,INSUMO,,,1,modificador: 1 huevo
+Jarabes,INSUMO,,,1,modificador: 1 bombeo de jarabe
+Extra Jarabe,INSUMO,,,1,modificador: 1 bombeo de jarabe
+Galleta de Chocolate,RECETA,,,1,
+Coffee,RECETA,,,1,AMBIGUO: cafe americano? confirmar
+Leche de Almendra,INSUMO,,,1,modificador: porcion de leche de almendra
+Deslactosada,INSUMO,,,1,modificador: porcion de leche deslactosada
+Clementina,INSUMO,,,1,San Pellegrino sabor: resta 1:1
+Aranciata,INSUMO,,,1,San Pellegrino sabor: resta 1:1
+Entera,INSUMO,,,1,modificador: porcion de leche entera
+Sin Tequila,IGNORAR,,,1,modificador de quitar: no descuenta

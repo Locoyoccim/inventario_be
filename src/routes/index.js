@@ -23,6 +23,12 @@ import InventarioRepository from "../modules/inventario/inventario.repository.js
 import MovimientoController from "../modules/movimientos/movimiento.controller.js";
 import MovimientoService from "../modules/movimientos/movimiento.service.js";
 import MovimientoRepository from "../modules/movimientos/movimiento.repository.js";
+import PosMapController from "../modules/posMap/posMap.controller.js";
+import PosMapService from "../modules/posMap/posMap.service.js";
+import PosMapRepository from "../modules/posMap/posMap.repository.js";
+import VentaController from "../modules/ventas/venta.controller.js";
+import VentaService from "../modules/ventas/venta.service.js";
+import VentaRepository from "../modules/ventas/venta.repository.js";
 
 const router = Router();
 
@@ -74,6 +80,18 @@ const movimientoRepo = new MovimientoRepository();
 const movimientoService = new MovimientoService(movimientoRepo);
 const movimientoController = new MovimientoController(movimientoService);
 
+// Inyección dependencias (DIP)
+//pos_map (mapeo nombres del POS -> recetas/insumos)
+const posMapRepo = new PosMapRepository();
+const posMapService = new PosMapService(posMapRepo, empresaRepo);
+const posMapController = new PosMapController(posMapService);
+
+// Inyección dependencias (DIP)
+//ventas (importación diaria; reutiliza movimientoRepo para descontar stock)
+const ventaRepo = new VentaRepository(movimientoRepo);
+const ventaService = new VentaService(ventaRepo, empresaRepo);
+const ventaController = new VentaController(ventaService);
+
 // EndPoints Usuarios
 router.get("/usuarios/:empresa_id", usuarioController.listar);
 router.get("/usuarios/:empresa_id/:id", usuarioController.listarPorId);
@@ -118,10 +136,24 @@ router.put("/recetas/:receta_id/detalle/:id", recetaDetalleController.actualizar
 router.delete("/recetas/:receta_id/detalle/:id", recetaDetalleController.eliminar);
 
 // EndPoints Recetas
+router.post("/recetas/:empresa_id/preview", recetaController.preview);
 router.get("/recetas/:empresa_id", recetaController.listar);
 router.get("/recetas/:empresa_id/:id", recetaController.listarPorId);
 router.post("/recetas/:empresa_id", recetaController.crear);
 router.put("/recetas/:empresa_id/:id", recetaController.actualizar);
 router.delete("/recetas/:empresa_id/:id", recetaController.eliminar);
+
+// EndPoints PosMap (mapeo de nombres del reporte de Toteat)
+router.get("/pos-map/:empresa_id", posMapController.listar);
+router.get("/pos-map/:empresa_id/:id", posMapController.listarPorId);
+router.post("/pos-map/:empresa_id/bulk", posMapController.crearBulk);
+router.post("/pos-map/:empresa_id", posMapController.crear);
+router.put("/pos-map/:empresa_id/:id", posMapController.actualizar);
+router.delete("/pos-map/:empresa_id/:id", posMapController.eliminar);
+
+// EndPoints Ventas (importación diaria del mix de Toteat)
+router.post("/ventas/:empresa_id/importar", ventaController.importar);
+router.get("/ventas/:empresa_id/:fecha", ventaController.consultarDia);
+router.delete("/ventas/:empresa_id/:fecha", ventaController.revertirDia);
 
 export default router;

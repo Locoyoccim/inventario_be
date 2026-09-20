@@ -1,3 +1,5 @@
+import { calcularPreview } from "../../utils/costeo.js";
+
 export default class RecetaService {
     constructor(recetaRepository, empresaRepository) {
         this.recetaRepository = recetaRepository;
@@ -25,6 +27,14 @@ export default class RecetaService {
     }
 
     // Validación para revisar si la empresa existe para la receta que sea creada o actualizada
+    async createRecetaConDetalle(empresa_id, data) {
+        return await this.recetaRepository.createConDetalle(empresa_id, data);
+    }
+
+    async previewCosteo(empresa_id, data) {
+        return await calcularPreview(empresa_id, data);
+    }
+
     async existsEmpresa(empresa_id) {
         return await this.empresaRepository.existsEmpresa(empresa_id);
     }
