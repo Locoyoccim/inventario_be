@@ -1,71 +1,39 @@
+import { asyncHandler } from "../../middlewares/asyncHandler.js";
+import ApiError from "../../utils/ApiError.js";
+
 export default class EmpresaController {
     constructor(empresaService) {
         this.empresaService = empresaService;
     }
 
-    listar = async (req, res) => {
-        try {
-            const empresa = await this.empresaService.getAllEmpresas();
-            res.json(empresa);
-        } catch (error) {
-            console.error("Error en listar empresas:", error);
-            res.status(500).json({ error: "Error al obtener las empresas" });
-        }
-    };
+    listar = asyncHandler(async (req, res) => {
+        // Un usuario solo ve su propia empresa (no se listan todas las del sistema)
+        const propia = await this.empresaService.getEmpresaById(req.user.empresa_id);
+        res.json({ success: true, data: propia ? [propia] : [] });
+    });
 
-    listarPorId = async (req, res) => {
+    listarPorId = asyncHandler(async (req, res) => {
         const { id } = req.params;
-        try {
-            const empresa = await this.empresaService.getEmpresaById(id);
-            empresa
-                ? res.json(empresa)
-                : res.status(404).json({ error: "Empresa no encontrada" });
-        } catch (error) {
-            console.error("Error en listarPorId:", error);
-            res.status(500).json({ error: "Error al obtener la empresa" });
-        }
-    };
+        const empresa = await this.empresaService.getEmpresaById(id);
+        if (!empresa) throw ApiError.notFound("Empresa no encontrada");
+        res.json({ success: true, data: empresa });
+    });
 
-    crearEmpresa = async (req, res) => {
-        const empresaData = req.body;
-        try {
-            const newEmpresa = await this.empresaService.createEmpresa(empresaData);
-            res.status(201).json({
-                message: "Empresa creada exitosamente",
-                data: newEmpresa,
-            });
-        } catch (error) {
-            res.status(400).json({ error: error.message || "Error al crear la empresa" });
-        }
-    };
+    crearEmpresa = asyncHandler(async (req, res) => {
+        const nueva = await this.empresaService.createEmpresa(req.body);
+        res.status(201).json({ success: true, data: nueva });
+    });
 
-    actualizarEmpresa = async (req, res) => {
+    actualizarEmpresa = asyncHandler(async (req, res) => {
         const { id } = req.params;
-        const empresaData = req.body;
-        try {
-            const updatedEmpresa = await this.empresaService.updateEmpresa(
-                id,
-                empresaData
-            );
-            res.json({
-                message: "Empresa actualizada exitosamente",
-                data: updatedEmpresa,
-            });
-        } catch (error) {
-            res.status(400).json({ error: error.message || "Error al actualizar la empresa" });
-        }
-    };
+        const actualizada = await this.empresaService.updateEmpresa(id, req.body);
+        if (!actualizada) throw ApiError.notFound("Empresa no encontrada");
+        res.json({ success: true, data: actualizada });
+    });
 
-    eliminarEmpresa = async (req, res) => {
+    eliminarEmpresa = asyncHandler(async (req, res) => {
         const { id } = req.params;
-        try {
-            await this.empresaService.deleteEmpresa(id);
-            res.status(200).json({
-                message: "Empresa eliminada exitosamente",
-                id: id,
-            });
-        } catch (error) {
-            res.status(400).json({ error: error.message || "Error al eliminar la empresa" });
-        }
-    };
+        await this.empresaService.deleteEmpresa(id);
+        res.json({ success: true, message: "Empresa eliminada exitosamente" });
+    });
 }

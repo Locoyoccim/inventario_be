@@ -1,42 +1,30 @@
+import { asyncHandler } from "../../middlewares/asyncHandler.js";
+import ApiError from "../../utils/ApiError.js";
+
 export default class VentaController {
     constructor(ventaService) {
         this.ventaService = ventaService;
     }
 
-    importar = async (req, res) => {
+    importar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
-        try {
-            const existe = await this.ventaService.existsEmpresa(empresa_id);
-            if (!existe) return res.status(404).json({ error: "Empresa no encontrada" });
+        if (!(await this.ventaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const reporte = await this.ventaService.importar(empresa_id, req.body);
+        res.status(201).json({ success: true, data: reporte });
+    });
 
-            const reporte = await this.ventaService.importar(empresa_id, req.body);
-            res.status(201).json({ message: "Importación procesada", data: reporte });
-        } catch (error) {
-            if (error.code === "DIA_YA_PROCESADO") {
-                return res.status(409).json({ error: error.message });
-            }
-            res.status(400).json({ error: error.message });
-        }
-    };
-
-    consultarDia = async (req, res) => {
+    consultarDia = asyncHandler(async (req, res) => {
         const { empresa_id, fecha } = req.params;
-        try {
-            const dia = await this.ventaService.consultarDia(empresa_id, fecha);
-            dia ? res.json(dia) : res.status(404).json({ error: "No hay importación para esa fecha" });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
+        const dia = await this.ventaService.consultarDia(empresa_id, fecha);
+        if (!dia) throw ApiError.notFound("No hay importación para esa fecha");
+        res.json({ success: true, data: dia });
+    });
 
-    revertirDia = async (req, res) => {
+    revertirDia = asyncHandler(async (req, res) => {
         const { empresa_id, fecha } = req.params;
-        try {
-            const r = await this.ventaService.revertirDia(empresa_id, fecha);
-            r ? res.json({ message: `Día revertido (${r.revertidos} movimientos)`, data: r })
-              : res.status(404).json({ error: "No hay importación para esa fecha" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        const r = await this.ventaService.revertirDia(empresa_id, fecha);
+        if (!r) throw ApiError.notFound("No hay importación para esa fecha");
+        res.json({ success: true, message: `Día revertido (${r.revertidos} movimientos)`, data: r });
+    });
 }

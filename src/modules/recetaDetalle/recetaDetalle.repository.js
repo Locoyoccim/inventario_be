@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import { recalcularCostoTotal } from "../../utils/costeo.js";
+import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
     SELECT_ALL: `
@@ -53,7 +54,7 @@ export default class RecetaDetalleRepository {
     async create(receta_id, data) {
         const { producto_id, cantidad } = data;
         if (!producto_id || cantidad === undefined || cantidad === null) {
-            throw new Error("producto_id y cantidad son requeridos");
+            throw ApiError.badRequest("producto_id y cantidad son requeridos");
         }
         const client = await pool.connect();
         try {
@@ -74,7 +75,7 @@ export default class RecetaDetalleRepository {
     async update(receta_id, id, data) {
         const { producto_id, cantidad } = data;
         if (!producto_id || cantidad === undefined || cantidad === null) {
-            throw new Error("producto_id y cantidad son requeridos");
+            throw ApiError.badRequest("producto_id y cantidad son requeridos");
         }
         const client = await pool.connect();
         try {

@@ -1,13 +1,16 @@
 import pool from "../../config/db.js";
+import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
     SELECT_ALL: `
         SELECT p.id, p.producto, p.unidad_medida, prov.nombre AS proveedor, p.categoria, p.empresa_id,
-               p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario
+               p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario,
+               COUNT(*) OVER()::int AS total
         FROM productos p
         LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
         WHERE p.empresa_id = $1
         ORDER BY p.id ASC
+        LIMIT $2 OFFSET $3
     `,
     SELECT_BY_ID: `
         SELECT p.id, p.producto, p.unidad_medida, prov.nombre AS proveedor, p.categoria, p.empresa_id,
@@ -40,13 +43,21 @@ const QUERIES = {
         WHERE producto_id = $3
         RETURNING stock_actual, stock_minimo, updated_at
     `,
+    UPDATE_INVENTARIO_MINIMO: `
+        UPDATE inventario
+        SET stock_minimo = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE producto_id = $2
+        RETURNING stock_actual, stock_minimo, updated_at
+    `,
     DELETE: `DELETE FROM productos WHERE id = $1 AND empresa_id = $2 RETURNING id`,
 };
 
 export default class ProductoRepository {
-    async findAll(empresa_id) {
-        const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id]);
-        return result.rows;
+    async findAll(empresa_id, { limit = 50, offset = 0 } = {}) {
+        const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id, limit, offset]);
+        const total = result.rows[0]?.total ?? 0;
+        const rows = result.rows.map(({ total, ...r }) => r);
+        return { rows, total };
     }
 
     async findById(id, empresa_id) {
@@ -83,7 +94,7 @@ export default class ProductoRepository {
         };
         for (const [campo, valor] of Object.entries(camposRequeridos)) {
             if (valor === undefined || valor === null || valor === "") {
-                throw new Error(`El campo '${campo}' es requerido`);
+                throw ApiError.badRequest(`El campo '${campo}' es requerido`);
             }
         }
 
@@ -124,7 +135,6 @@ export default class ProductoRepository {
         id,
         {
             producto,
-            stock_actual,
             stock_minimo,
             unidad_medida,
             proveedor_id,
@@ -134,12 +144,11 @@ export default class ProductoRepository {
         },
         empresa_id
     ) {
-        if (!id) throw new Error("ID es requerido");
-        if (!empresa_id) throw new Error("empresa_id es requerido");
+        if (!id) throw ApiError.badRequest("ID es requerido");
+        if (!empresa_id) throw ApiError.badRequest("empresa_id es requerido");
 
         const camposRequeridos = {
             producto,
-            stock_actual,
             stock_minimo,
             unidad_medida,
             proveedor_id,
@@ -149,7 +158,7 @@ export default class ProductoRepository {
         };
         for (const [campo, valor] of Object.entries(camposRequeridos)) {
             if (valor === undefined || valor === null || valor === "") {
-                throw new Error(`El campo '${campo}' es requerido`);
+                throw ApiError.badRequest(`El campo '${campo}' es requerido`);
             }
         }
 
@@ -174,8 +183,8 @@ export default class ProductoRepository {
                 return null;
             }
 
-            const inventarioResult = await client.query(QUERIES.UPDATE_INVENTARIO, [
-                stock_actual,
+            // El stock_actual NO se modifica aquí: solo se ajusta vía /movimientos (trazabilidad, GAP-06)
+            const inventarioResult = await client.query(QUERIES.UPDATE_INVENTARIO_MINIMO, [
                 stock_minimo,
                 id,
             ]);
@@ -192,8 +201,8 @@ export default class ProductoRepository {
     }
 
     async deleteProducto(id, empresa_id) {
-        if (!id) throw new Error("ID es requerido");
-        if (!empresa_id) throw new Error("empresa_id es requerido");
+        if (!id) throw ApiError.badRequest("ID es requerido");
+        if (!empresa_id) throw ApiError.badRequest("empresa_id es requerido");
         const result = await pool.query(QUERIES.DELETE, [id, empresa_id]);
         return result.rows[0];
     }

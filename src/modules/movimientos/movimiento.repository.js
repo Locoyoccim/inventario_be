@@ -1,4 +1,5 @@
 import pool from "../../config/db.js";
+import ApiError from "../../utils/ApiError.js";
 
 const TIPOS_VALIDOS = ["COMPRA", "VENTA", "MERMA", "AJUSTE", "DEVOLUCION", "PRODUCCION"];
 
@@ -18,12 +19,14 @@ const QUERIES = {
         SELECT
             m.id, m.fecha, m.usuario_id, u.nombre AS usuario, m.producto_id,
             m.tipo_movimiento, m.cantidad, m.costo_unitario,
-            m.stock_anterior, m.stock_nuevo, m.motivo, m.referencia_tipo, m.referencia_id
+            m.stock_anterior, m.stock_nuevo, m.motivo, m.referencia_tipo, m.referencia_id,
+            COUNT(*) OVER()::int AS total
         FROM movimientosinventario m
         JOIN productos p ON p.id = m.producto_id
         LEFT JOIN usuarios u ON u.id = m.usuario_id
         WHERE m.producto_id = $1 AND p.empresa_id = $2
         ORDER BY m.fecha DESC, m.id DESC
+        LIMIT $3 OFFSET $4
     `,
     SELECT_PRODUCTO: `SELECT id, costo_unitario FROM productos WHERE id = $1 AND empresa_id = $2`,
     LOCK_INVENTARIO: `SELECT stock_actual FROM inventario WHERE producto_id = $1 FOR UPDATE`,
@@ -37,9 +40,11 @@ const QUERIES = {
 };
 
 export default class MovimientoRepository {
-    async findAll(producto_id, empresa_id) {
-        const result = await pool.query(QUERIES.SELECT_ALL, [producto_id, empresa_id]);
-        return result.rows;
+    async findAll(producto_id, empresa_id, { limit = 50, offset = 0 } = {}) {
+        const result = await pool.query(QUERIES.SELECT_ALL, [producto_id, empresa_id, limit, offset]);
+        const total = result.rows[0]?.total ?? 0;
+        const rows = result.rows.map(({ total, ...r }) => r);
+        return { rows, total };
     }
 
     // Núcleo reutilizable: aplica UN movimiento usando un client de transacción YA abierto.
@@ -59,10 +64,10 @@ export default class MovimientoRepository {
         } = data;
 
         if (!TIPOS_VALIDOS.includes(tipo_movimiento)) {
-            throw new Error(`tipo_movimiento debe ser uno de: ${TIPOS_VALIDOS.join(", ")}`);
+            throw ApiError.badRequest(`tipo_movimiento debe ser uno de: ${TIPOS_VALIDOS.join(", ")}`);
         }
         if (cantidad === undefined || cantidad === null || Number(cantidad) === 0) {
-            throw new Error("cantidad es requerida y debe ser distinta de 0");
+            throw ApiError.badRequest("cantidad es requerida y debe ser distinta de 0");
         }
 
         const productoResult = await client.query(QUERIES.SELECT_PRODUCTO, [
@@ -86,7 +91,7 @@ export default class MovimientoRepository {
         const stockNuevo = stockAnterior + delta;
 
         if (stockNuevo < 0 && !permitirNegativo) {
-            throw new Error("Stock insuficiente para este movimiento");
+            throw ApiError.badRequest("Stock insuficiente para este movimiento");
         }
 
         await client.query(QUERIES.UPDATE_STOCK, [stockNuevo, producto_id]);
@@ -138,7 +143,7 @@ export default class MovimientoRepository {
                 const { producto_id, ...data } = item;
                 const mov = await this.aplicar(client, producto_id, empresa_id, data, opts);
                 if (!mov) {
-                    throw new Error(`Producto ${producto_id} no encontrado para la empresa ${empresa_id}`);
+                    throw ApiError.notFound(`Producto ${producto_id} no encontrado para la empresa ${empresa_id}`);
                 }
                 resultados.push(mov);
             }

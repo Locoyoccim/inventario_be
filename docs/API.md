@@ -1,5 +1,7 @@
 # Referencia de API — Inventario Backend
 
+> **v2:** todas las respuestas usan un sobre estándar y los POST/PUT validan con zod. Ver **Formato de respuesta estándar (v2)** y **Endpoints nuevos (v2)** al final.
+
 API REST multiempresa para gestionar **empresas, usuarios, proveedores, productos, inventario, movimientos de stock y recetas**.
 
 ---
@@ -475,3 +477,109 @@ curl -X POST http://localhost:4000/api/recetas/1/detalle \
   -H "Content-Type: application/json" \
   -d '{"producto_id":1,"cantidad":0.02}'
 ```
+
+
+---
+
+## Formato de respuesta estándar (v2)
+
+> **Importante:** desde la v2, **todas** las respuestas usan un sobre uniforme. Los ejemplos por endpoint de arriba muestran el contenido de `data`.
+
+Éxito:
+
+```json
+{ "success": true, "data": { } }
+```
+
+Los listados devuelven `data` como arreglo. Las operaciones sin cuerpo (p. ej. borrado) devuelven `{ "success": true, "message": "..." }`.
+
+Error:
+
+```json
+{ "success": false, "error": "Mensaje legible" }
+```
+
+Errores de validación (zod) → **400** con detalle por campo:
+
+```json
+{
+  "success": false,
+  "error": "Validación fallida",
+  "details": [ { "campo": "nombre", "mensaje": "nombre es requerido" } ]
+}
+```
+
+Los errores de base de datos se traducen a mensajes limpios (nunca se expone SQL). Lo inesperado → `500 { "success": false, "error": "Error interno del servidor" }`.
+
+### Validación de entrada
+
+Los endpoints de escritura (POST/PUT) validan el cuerpo con **zod** antes de tocar la base. Reglas clave: cantidades > 0, precios >= 0, `tipo_movimiento` en {COMPRA, VENTA, MERMA, AJUSTE, DEVOLUCION, PRODUCCION}, `tipo` de pos_map en {RECETA, INSUMO, IGNORAR}, `fecha` con formato `YYYY-MM-DD`. Se aceptan numeros como string ("50" -> 50).
+
+---
+
+## Endpoints nuevos (v2)
+
+### Recetas — costeo y creacion con escandallo
+
+`recetas` ahora incluye `costo_produccion` y `proteccion_pct` (default 0). `costo_total` lo calcula el backend con la formula unica:
+`costo_total = (suma de costo_final de ingredientes + costo_produccion) * (1 + proteccion_pct / 100)`; `margen` se deriva de `costo_total` y `precio_venta`.
+
+`POST /api/recetas/:empresa_id` acepta la receta con su escandallo en un solo cuerpo:
+
+```json
+{
+  "nombre": "Turco Arrachera",
+  "categoria": "Plato fuerte",
+  "precio_venta": 155,
+  "activo": true,
+  "costo_produccion": 5,
+  "proteccion_pct": 10,
+  "ingredientes": [ { "producto_id": 137, "cantidad": 100 } ]
+}
+```
+
+Sin `ingredientes`, crea solo el encabezado. El `PUT /api/recetas/:empresa_id/:id` actualiza el encabezado y recalcula el costo.
+
+`POST /api/recetas/:empresa_id/preview` — calcula costo y margen **sin guardar** (para el calculo en vivo del front). Cuerpo: `{ precio_venta?, costo_produccion?, proteccion_pct?, ingredientes:[{producto_id, cantidad}] }`. Devuelve `suma_insumos`, `costo_total`, `margen` y el detalle.
+
+### Detalle de receta
+
+`POST /api/recetas/:receta_id/detalle` con `{ producto_id, cantidad }` agrega un ingrediente suelto y recalcula `costo_total`.
+
+### PosMap — mapeo POS (Toteat) a recetas/insumos
+
+| Metodo | Ruta | Descripcion |
+| --- | --- | --- |
+| GET | `/api/pos-map/:empresa_id` | Listar mapeos |
+| POST | `/api/pos-map/:empresa_id` | Crear/actualizar (upsert por nombre) |
+| POST | `/api/pos-map/:empresa_id/bulk` | Carga masiva (arreglo o `{ "mapeos": [...] }`) |
+| PUT | `/api/pos-map/:empresa_id/:id` | Editar |
+| DELETE | `/api/pos-map/:empresa_id/:id` | Borrar |
+
+Cuerpo: `{ "nombre_pos": "...", "tipo": "RECETA|INSUMO|IGNORAR", "receta_id": n, "producto_id": n, "factor": 1 }` (segun `tipo`: RECETA usa `receta_id`, INSUMO usa `producto_id`, IGNORAR ninguno).
+
+### Ventas — importacion diaria
+
+| Metodo | Ruta | Descripcion |
+| --- | --- | --- |
+| POST | `/api/ventas/:empresa_id/importar` | Importa el mix de ventas y descuenta insumos |
+| GET | `/api/ventas/:empresa_id/:fecha` | Consulta el dia y sus movimientos |
+| DELETE | `/api/ventas/:empresa_id/:fecha` | Revierte el dia (registra DEVOLUCION y libera la fecha) |
+
+`importar` acepta `{ "fecha": "YYYY-MM-DD", "lineas": [{ "nombre_pos", "cantidad" }] }` **o** `{ "fecha": "YYYY-MM-DD", "csv": "<CSV de Toteat>" }`. Un dia ya importado devuelve **409**.
+
+---
+
+## Paginación (v2)
+
+Los listados que pueden crecer aceptan `?limit=&offset=` y devuelven metadatos:
+
+- Endpoints: `GET /api/productos/:empresa_id`, `GET /api/recetas/:empresa_id`, `GET /api/productos/:empresa_id/:id/movimientos`.
+- Defaults: `limit=50` (máx `200`), `offset=0`.
+- Respuesta:
+
+```json
+{ "success": true, "data": [ ], "pagination": { "limit": 50, "offset": 0, "total": 123 } }
+```
+
+Los listados de baja cardinalidad (inventario, proveedores, usuarios, pos-map, empresas) no se paginan por diseño; agregar `limit/offset` ahí es trivial con el mismo helper `parsePagination` si algún día hace falta.

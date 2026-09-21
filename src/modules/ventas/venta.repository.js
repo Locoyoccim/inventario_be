@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import { normalizar } from "../../utils/normalize.js";
+import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
     POS_MAP: `SELECT nombre_pos, tipo, receta_id, producto_id, factor FROM pos_map WHERE empresa_id = $1`,
@@ -108,9 +109,7 @@ export default class VentaRepository {
         ]);
 
         if (existeRes.rows[0]) {
-            const err = new Error(`Ya existe una importación de ventas para ${fecha}. Revierte ese día antes de reimportar.`);
-            err.code = "DIA_YA_PROCESADO";
-            throw err;
+            throw ApiError.conflict(`Ya existe una importación de ventas para ${fecha}. Revierte ese día antes de reimportar.`);
         }
 
         const { consumo, sin_mapeo, ignorados, recetas_sin_escandallo } = calcularConsumo(

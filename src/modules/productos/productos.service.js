@@ -3,8 +3,8 @@ export default class ProductoService {
         this.productoRepository = productoRepository;
     }
 
-    async getAllProductos(empresa_id) {
-        return await this.productoRepository.findAll(empresa_id);
+    async getAllProductos(empresa_id, opts) {
+        return await this.productoRepository.findAll(empresa_id, opts);
     }
 
     async getProductoById(id, empresa_id) {

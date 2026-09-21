@@ -1,106 +1,51 @@
-export default class RecetaDetalle {
+import { asyncHandler } from "../../middlewares/asyncHandler.js";
+import ApiError from "../../utils/ApiError.js";
+
+export default class RecetaDetalleController {
     constructor(recetaService) {
         this.recetaService = recetaService;
     }
 
-    listar = async (req, res) => {
+    listar = asyncHandler(async (req, res) => {
         const { receta_id } = req.params;
-        try {
-            const recetaExists = await this.recetaService.existsReceta(receta_id);
-            if (!recetaExists) {
-                return res.status(404).json({ error: "Receta no encontrada" });
-            }
+        if (!(await this.recetaService.existsReceta(receta_id)))
+            throw ApiError.notFound("Receta no encontrada");
+        res.json({ success: true, data: await this.recetaService.getAllRecetaDetalles(receta_id) });
+    });
 
-            const recetaDetalles =
-                await this.recetaService.getAllRecetaDetalles(receta_id);
-            res.json(recetaDetalles);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
-
-    listarPorId = async (req, res) => {
+    listarPorId = asyncHandler(async (req, res) => {
         const { receta_id, id } = req.params;
-        try {
-            const recetaExists = await this.recetaService.existsReceta(receta_id);
-            if (!recetaExists) {
-                return res.status(404).json({ error: "Receta no encontrada" });
-            }
+        if (!(await this.recetaService.existsReceta(receta_id)))
+            throw ApiError.notFound("Receta no encontrada");
+        const detalle = await this.recetaService.getRecetaDetalleById(receta_id, id);
+        if (!detalle) throw ApiError.notFound("Detalle de receta no encontrado");
+        res.json({ success: true, data: detalle });
+    });
 
-            const recetaDetalle = await this.recetaService.getRecetaDetalleById(
-                receta_id,
-                id,
-            );
-            if (!recetaDetalle) {
-                return res.status(404).json({ error: "Detalle de receta no encontrado" });
-            }
-            res.json(recetaDetalle);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
-
-    crear = async (req, res) => {
+    crear = asyncHandler(async (req, res) => {
         const { receta_id } = req.params;
-        const data = req.body;
-        try {
-            const recetaExists = await this.recetaService.existsReceta(receta_id);
-            if (!recetaExists) {
-                return res.status(404).json({ error: "Receta no encontrada" });
-            }
-            const recetaDetalle = await this.recetaService.createRecetaDetalle(
-                receta_id,
-                data,
-            );
-            if (!recetaDetalle) {
-                return res.status(404).json({ error: "Producto no encontrado" });
-            }
-            res.status(201).json(recetaDetalle);
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.recetaService.existsReceta(receta_id)))
+            throw ApiError.notFound("Receta no encontrada");
+        const detalle = await this.recetaService.createRecetaDetalle(receta_id, req.body);
+        if (!detalle) throw ApiError.notFound("Producto no encontrado");
+        res.status(201).json({ success: true, data: detalle });
+    });
 
-    actualizar = async (req, res) => {
+    actualizar = asyncHandler(async (req, res) => {
         const { receta_id, id } = req.params;
-        const data = req.body;
-        try {
-            const recetaExists = await this.recetaService.existsReceta(receta_id);
-            if (!recetaExists) {
-                return res.status(404).json({ error: "Receta no encontrada" });
-            }
-            const recetaDetalle = await this.recetaService.updateRecetaDetalle(
-                receta_id,
-                id,
-                data,
-            );
-            if (!recetaDetalle) {
-                return res
-                    .status(404)
-                    .json({ error: "Detalle de receta o producto no encontrado" });
-            }
-            res.json(recetaDetalle);
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.recetaService.existsReceta(receta_id)))
+            throw ApiError.notFound("Receta no encontrada");
+        const detalle = await this.recetaService.updateRecetaDetalle(receta_id, id, req.body);
+        if (!detalle) throw ApiError.notFound("Detalle de receta o producto no encontrado");
+        res.json({ success: true, data: detalle });
+    });
 
-    eliminar = async (req, res) => {
+    eliminar = asyncHandler(async (req, res) => {
         const { receta_id, id } = req.params;
-        try {
-            const recetaExists = await this.recetaService.existsReceta(receta_id);
-            if (!recetaExists) {
-                return res.status(404).json({ error: "Receta no encontrada" });
-            }
-            const recetaDetalle = await this.recetaService.deleteRecetaDetalle(
-                receta_id,
-                id,
-            );
-            recetaDetalle
-                ? res.json({ message: "Detalle de receta eliminado correctamente" })
-                : res.status(404).json({ error: "Detalle de receta no encontrado" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.recetaService.existsReceta(receta_id)))
+            throw ApiError.notFound("Receta no encontrada");
+        const detalle = await this.recetaService.deleteRecetaDetalle(receta_id, id);
+        if (!detalle) throw ApiError.notFound("Detalle de receta no encontrado");
+        res.json({ success: true, message: "Detalle de receta eliminado correctamente" });
+    });
 }

@@ -1,73 +1,43 @@
+import { asyncHandler } from "../../middlewares/asyncHandler.js";
+import ApiError from "../../utils/ApiError.js";
+import { parsePagination } from "../../utils/pagination.js";
+
 export default class ProductosController {
     constructor(productosService) {
         this.productosService = productosService;
     }
 
-    listar = async (req, res) => {
+    listar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
-        try {
-            const productos = await this.productosService.getAllProductos(empresa_id);
-            res.json(productos);
-        } catch (error) {
-            res.status(500).json({ error: "Error al obtener los productos" });
-        }
-    };
+        const { limit, offset } = parsePagination(req.query);
+        const { rows, total } = await this.productosService.getAllProductos(empresa_id, { limit, offset });
+        res.json({ success: true, data: rows, pagination: { limit, offset, total } });
+    });
 
-    listarPorId = async (req, res) => {
+    listarPorId = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        try {
-            const producto = await this.productosService.getProductoById(id, empresa_id);
-            producto
-                ? res.json(producto)
-                : res.status(404).json({ error: "Producto no encontrado" });
-        } catch (error) {
-            res.status(500).json({ error: "Error al obtener el producto" });
-        }
-    };
+        const producto = await this.productosService.getProductoById(id, empresa_id);
+        if (!producto) throw ApiError.notFound("Producto no encontrado");
+        res.json({ success: true, data: producto });
+    });
 
-    crearProducto = async (req, res) => {
-        const productoData = req.body;
-        const empresa_id = req.params.empresa_id;
-        try {
-            const newProducto = await this.productosService.createProducto(productoData, empresa_id);
-            res.status(201).json({
-                message: "Producto creado exitosamente",
-                data: newProducto,
-            });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+    crearProducto = asyncHandler(async (req, res) => {
+        const { empresa_id } = req.params;
+        const nuevo = await this.productosService.createProducto(req.body, empresa_id);
+        res.status(201).json({ success: true, data: nuevo });
+    });
 
-    actualizarProducto = async (req, res) => {
+    actualizarProducto = asyncHandler(async (req, res) => {
         const { id, empresa_id } = req.params;
-        const productoData = req.body;
-        try {
-            const updatedProducto = await this.productosService.updateProducto(
-                id,
-                productoData,
-                empresa_id
-            );
-            updatedProducto
-                ? res.json({
-                      message: "Producto actualizado exitosamente",
-                      data: updatedProducto,
-                  })
-                : res.status(404).json({ error: "Producto no encontrado" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        const actualizado = await this.productosService.updateProducto(id, req.body, empresa_id);
+        if (!actualizado) throw ApiError.notFound("Producto no encontrado");
+        res.json({ success: true, data: actualizado });
+    });
 
-    eliminarProducto = async (req, res) => {
+    eliminarProducto = asyncHandler(async (req, res) => {
         const { id, empresa_id } = req.params;
-        try {
-            const eliminado = await this.productosService.deleteProducto(id, empresa_id);
-            eliminado
-                ? res.json({ message: "Producto eliminado exitosamente" })
-                : res.status(404).json({ error: "Producto no encontrado" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        const eliminado = await this.productosService.deleteProducto(id, empresa_id);
+        if (!eliminado) throw ApiError.notFound("Producto no encontrado");
+        res.json({ success: true, message: "Producto eliminado exitosamente" });
+    });
 }

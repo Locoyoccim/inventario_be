@@ -1,75 +1,53 @@
+import { asyncHandler } from "../../middlewares/asyncHandler.js";
+import ApiError from "../../utils/ApiError.js";
+
 export default class PosMapController {
     constructor(posMapService) {
         this.posMapService = posMapService;
     }
 
-    listar = async (req, res) => {
+    listar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
-        try {
-            const existe = await this.posMapService.existsEmpresa(empresa_id);
-            if (!existe) return res.status(404).json({ error: "Empresa no encontrada" });
-            res.json(await this.posMapService.getAll(empresa_id));
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
+        if (!(await this.posMapService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        res.json({ success: true, data: await this.posMapService.getAll(empresa_id) });
+    });
 
-    listarPorId = async (req, res) => {
+    listarPorId = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        try {
-            const fila = await this.posMapService.getById(id, empresa_id);
-            fila ? res.json(fila) : res.status(404).json({ error: "Mapeo no encontrado" });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
+        const fila = await this.posMapService.getById(id, empresa_id);
+        if (!fila) throw ApiError.notFound("Mapeo no encontrado");
+        res.json({ success: true, data: fila });
+    });
 
-    crear = async (req, res) => {
+    crear = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
-        try {
-            const existe = await this.posMapService.existsEmpresa(empresa_id);
-            if (!existe) return res.status(404).json({ error: "Empresa no encontrada" });
-            const fila = await this.posMapService.upsert(empresa_id, req.body);
-            res.status(201).json({ message: "Mapeo guardado", data: fila });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.posMapService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const fila = await this.posMapService.upsert(empresa_id, req.body);
+        res.status(201).json({ success: true, data: fila });
+    });
 
-    crearBulk = async (req, res) => {
+    crearBulk = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         const filas = Array.isArray(req.body) ? req.body : req.body?.mapeos;
-        try {
-            const existe = await this.posMapService.existsEmpresa(empresa_id);
-            if (!existe) return res.status(404).json({ error: "Empresa no encontrada" });
-            const data = await this.posMapService.upsertBulk(empresa_id, filas);
-            res.status(201).json({ message: `${data.length} mapeos guardados`, data });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.posMapService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const data = await this.posMapService.upsertBulk(empresa_id, filas);
+        res.status(201).json({ success: true, data, message: `${data.length} mapeos guardados` });
+    });
 
-    actualizar = async (req, res) => {
+    actualizar = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        try {
-            const fila = await this.posMapService.update(id, empresa_id, req.body);
-            fila
-                ? res.json({ message: "Mapeo actualizado", data: fila })
-                : res.status(404).json({ error: "Mapeo no encontrado" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        const fila = await this.posMapService.update(id, empresa_id, req.body);
+        if (!fila) throw ApiError.notFound("Mapeo no encontrado");
+        res.json({ success: true, data: fila });
+    });
 
-    eliminar = async (req, res) => {
+    eliminar = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        try {
-            const fila = await this.posMapService.remove(id, empresa_id);
-            fila
-                ? res.json({ message: "Mapeo eliminado" })
-                : res.status(404).json({ error: "Mapeo no encontrado" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        const fila = await this.posMapService.remove(id, empresa_id);
+        if (!fila) throw ApiError.notFound("Mapeo no encontrado");
+        res.json({ success: true, message: "Mapeo eliminado" });
+    });
 }

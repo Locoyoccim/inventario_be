@@ -1,3 +1,4 @@
+import ApiError from "./ApiError.js";
 import pool from "../config/db.js";
 
 // ÚNICA definición de la fórmula de costeo del sistema.
@@ -48,23 +49,27 @@ export async function calcularPreview(empresa_id, data) {
         ingredientes = [],
     } = data;
 
+    const ids = ingredientes.map((i) => Number(i.producto_id));
+    const prodRes = await pool.query(
+        "SELECT id, producto, costo_unitario FROM productos WHERE empresa_id = $1 AND id = ANY($2)",
+        [empresa_id, ids]
+    );
+    const prodMap = new Map(prodRes.rows.map((r) => [Number(r.id), r]));
+
     let sumaInsumos = 0;
     const detalle = [];
     for (const ing of ingredientes) {
         const { producto_id, cantidad } = ing;
         if (!producto_id || cantidad === undefined || cantidad === null) {
-            throw new Error("Cada ingrediente requiere 'producto_id' y 'cantidad'");
+            throw ApiError.badRequest("Cada ingrediente requiere 'producto_id' y 'cantidad'");
         }
-        const p = await pool.query(
-            "SELECT producto, costo_unitario FROM productos WHERE id = $1 AND empresa_id = $2",
-            [producto_id, empresa_id]
-        );
-        if (!p.rows[0]) throw new Error(`El producto ${producto_id} no existe en la empresa ${empresa_id}`);
-        const costo_final = Number(cantidad) * Number(p.rows[0].costo_unitario);
+        const p = prodMap.get(Number(producto_id));
+        if (!p) throw ApiError.badRequest(`El producto ${producto_id} no existe en la empresa ${empresa_id}`);
+        const costo_final = Number(cantidad) * Number(p.costo_unitario);
         sumaInsumos += costo_final;
         detalle.push({
-            producto_id, producto: p.rows[0].producto, cantidad,
-            costo_unitario: Number(p.rows[0].costo_unitario),
+            producto_id, producto: p.producto, cantidad,
+            costo_unitario: Number(p.costo_unitario),
             costo_final: Number(costo_final.toFixed(4)),
         });
     }

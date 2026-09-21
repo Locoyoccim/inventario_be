@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import { normalizar } from "../../utils/normalize.js";
+import ApiError from "../../utils/ApiError.js";
 
 const TIPOS_VALIDOS = ["RECETA", "INSUMO", "IGNORAR"];
 
@@ -41,21 +42,21 @@ function prepararFila(empresa_id, data) {
     const tipo = String(data.tipo ?? "").toUpperCase().trim();
     const factor = data.factor === undefined || data.factor === null ? 1 : Number(data.factor);
 
-    if (!nombre_pos) throw new Error("nombre_pos es requerido");
+    if (!nombre_pos) throw ApiError.badRequest("nombre_pos es requerido");
     if (!TIPOS_VALIDOS.includes(tipo)) {
-        throw new Error(`tipo debe ser uno de: ${TIPOS_VALIDOS.join(", ")}`);
+        throw ApiError.badRequest(`tipo debe ser uno de: ${TIPOS_VALIDOS.join(", ")}`);
     }
     if (!Number.isFinite(factor) || factor <= 0) {
-        throw new Error("factor debe ser un número mayor a 0");
+        throw ApiError.badRequest("factor debe ser un número mayor a 0");
     }
 
     let receta_id = null;
     let producto_id = null;
     if (tipo === "RECETA") {
-        if (!data.receta_id) throw new Error("receta_id es requerido cuando tipo = RECETA");
+        if (!data.receta_id) throw ApiError.badRequest("receta_id es requerido cuando tipo = RECETA");
         receta_id = Number(data.receta_id);
     } else if (tipo === "INSUMO") {
-        if (!data.producto_id) throw new Error("producto_id es requerido cuando tipo = INSUMO");
+        if (!data.producto_id) throw ApiError.badRequest("producto_id es requerido cuando tipo = INSUMO");
         producto_id = Number(data.producto_id);
     }
     // IGNORAR: ambas referencias quedan en null.
@@ -85,7 +86,7 @@ export default class PosMapRepository {
     // Carga masiva del mapeo en una sola transacción.
     async upsertBulk(empresa_id, filas) {
         if (!Array.isArray(filas) || filas.length === 0) {
-            throw new Error("Se espera un arreglo de mapeos no vacío");
+            throw ApiError.badRequest("Se espera un arreglo de mapeos no vacío");
         }
         const client = await pool.connect();
         try {

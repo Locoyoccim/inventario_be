@@ -1,103 +1,63 @@
+import { asyncHandler } from "../../middlewares/asyncHandler.js";
+import ApiError from "../../utils/ApiError.js";
+import { parsePagination } from "../../utils/pagination.js";
+
 export default class RecetaController {
     constructor(recetaService) {
         this.recetaService = recetaService;
     }
 
-    listar = async (req, res) => {
+    listar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
-        try {
-            const empresaExists = await this.recetaService.existsEmpresa(empresa_id);
-            if (!empresaExists) {
-                return res.status(404).json({ error: "Empresa no encontrada" });
-            }
+        if (!(await this.recetaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const { limit, offset } = parsePagination(req.query);
+        const { rows, total } = await this.recetaService.getAllRecetas(empresa_id, { limit, offset });
+        res.json({ success: true, data: rows, pagination: { limit, offset, total } });
+    });
 
-            const recetas = await this.recetaService.getAllRecetas(empresa_id);
-            res.json(recetas);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
-
-    listarPorId = async (req, res) => {
+    listarPorId = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        try {
-            const empresaExists = await this.recetaService.existsEmpresa(empresa_id);
-            if (!empresaExists) {
-                return res.status(404).json({ error: "Empresa no encontrada" });
-            }
+        if (!(await this.recetaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const receta = await this.recetaService.getRecetaById(empresa_id, id);
+        if (!receta) throw ApiError.notFound("Receta no encontrada");
+        res.json({ success: true, data: receta });
+    });
 
-            const receta = await this.recetaService.getRecetaById(empresa_id, id);
-            if (!receta) {
-                return res.status(404).json({ error: "Receta no encontrada" });
-            }
-            res.json(receta);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
-
-    crear = async (req, res) => {
+    crear = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         const data = req.body;
-        try {
-            const empresaExists = await this.recetaService.existsEmpresa(empresa_id);
-            if (!empresaExists) {
-                return res.status(404).json({ error: "Empresa no encontrada" });
-            }
-            const receta = Array.isArray(data.ingredientes)
-                ? await this.recetaService.createRecetaConDetalle(empresa_id, data)
-                : await this.recetaService.createReceta(empresa_id, data);
-            res.status(201).json(receta);
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.recetaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const receta = Array.isArray(data.ingredientes)
+            ? await this.recetaService.createRecetaConDetalle(empresa_id, data)
+            : await this.recetaService.createReceta(empresa_id, data);
+        res.status(201).json({ success: true, data: receta });
+    });
 
-    // Preview de costeo SIN guardar (para el cálculo en vivo del front)
-    preview = async (req, res) => {
+    preview = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
-        try {
-            const existe = await this.recetaService.existsEmpresa(empresa_id);
-            if (!existe) return res.status(404).json({ error: "Empresa no encontrada" });
-            const resultado = await this.recetaService.previewCosteo(empresa_id, req.body);
-            res.json(resultado);
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.recetaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        res.json({ success: true, data: await this.recetaService.previewCosteo(empresa_id, req.body) });
+    });
 
-    actualizar = async (req, res) => {
+    actualizar = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        const data = req.body;
-        try {
-            const empresaExists = await this.recetaService.existsEmpresa(empresa_id);
-            if (!empresaExists) {
-                return res.status(404).json({ error: "Empresa no encontrada" });
-            }
+        if (!(await this.recetaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const receta = await this.recetaService.updateReceta(empresa_id, id, req.body);
+        if (!receta) throw ApiError.notFound("Receta no encontrada");
+        res.json({ success: true, data: receta });
+    });
 
-            const receta = await this.recetaService.updateReceta(empresa_id, id, data);
-            receta
-                ? res.json(receta)
-                : res.status(404).json({ error: "Receta no encontrada" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
-
-    eliminar = async (req, res) => {
+    eliminar = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        try {
-            const empresaExists = await this.recetaService.existsEmpresa(empresa_id);
-            if (!empresaExists) {
-                return res.status(404).json({ error: "Empresa no encontrada" });
-            }
-
-            const deleted = await this.recetaService.deleteReceta(empresa_id, id);
-            deleted
-                ? res.json({ message: "Receta eliminada correctamente" })
-                : res.status(404).json({ error: "Receta no encontrada" });
-        } catch (error) {
-            res.status(400).json({ error: error.message });
-        }
-    };
+        if (!(await this.recetaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const deleted = await this.recetaService.deleteReceta(empresa_id, id);
+        if (!deleted) throw ApiError.notFound("Receta no encontrada");
+        res.json({ success: true, message: "Receta eliminada correctamente" });
+    });
 }

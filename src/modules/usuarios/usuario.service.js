@@ -1,3 +1,5 @@
+import bcrypt from "bcryptjs";
+
 export default class UsuarioService {
     constructor(usuarioRepository, empresaRepository) {
         this.usuarioRepository = usuarioRepository;
@@ -17,7 +19,12 @@ export default class UsuarioService {
     }
 
     async createUsuario(empresa_id, data) {
-        return await this.usuarioRepository.create(empresa_id, data);
+        let payload = data;
+        if (data.password) {
+            const password_hash = await bcrypt.hash(data.password, 10);
+            payload = { ...data, password_hash };
+        }
+        return await this.usuarioRepository.create(empresa_id, payload);
     }
 
     async updateUsuario(empresa_id, id, data) {

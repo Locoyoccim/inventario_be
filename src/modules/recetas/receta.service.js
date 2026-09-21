@@ -6,8 +6,8 @@ export default class RecetaService {
         this.empresaRepository = empresaRepository;
     }
 
-    async getAllRecetas(empresa_id) {
-        return await this.recetaRepository.findAll(empresa_id);
+    async getAllRecetas(empresa_id, opts) {
+        return await this.recetaRepository.findAll(empresa_id, opts);
     }
 
     async getRecetaById(empresa_id, id) {

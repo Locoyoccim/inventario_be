@@ -1,13 +1,16 @@
 import pool from "../../config/db.js";
 import { recalcularCostoTotal } from "../../utils/costeo.js";
+import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
     SELECT_ALL: `
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
-           created_at, empresa_id, costo_produccion, proteccion_pct
+           created_at, empresa_id, costo_produccion, proteccion_pct,
+           COUNT(*) OVER()::int AS total
     FROM recetas
     WHERE empresa_id = $1
-    ORDER BY id ASC;`,
+    ORDER BY id ASC
+    LIMIT $2 OFFSET $3;`,
     SELECT_BY_ID: `
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
            created_at, empresa_id, costo_produccion, proteccion_pct
@@ -28,9 +31,11 @@ const QUERIES = {
 };
 
 export default class RecetaRepository {
-    async findAll(empresa_id) {
-        const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id]);
-        return result.rows;
+    async findAll(empresa_id, { limit = 50, offset = 0 } = {}) {
+        const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id, limit, offset]);
+        const total = result.rows[0]?.total ?? 0;
+        const rows = result.rows.map(({ total, ...r }) => r);
+        return { rows, total };
     }
 
     async findById(empresa_id, id) {
@@ -97,7 +102,7 @@ export default class RecetaRepository {
             costo_produccion = 0, proteccion_pct = 0, ingredientes = [],
         } = data;
         if (!Array.isArray(ingredientes) || ingredientes.length === 0) {
-            throw new Error("Se requiere al menos un ingrediente en 'ingredientes'");
+            throw ApiError.badRequest("Se requiere al menos un ingrediente en 'ingredientes'");
         }
 
         const client = await pool.connect();
@@ -110,26 +115,31 @@ export default class RecetaRepository {
             ]);
             const receta = recRes.rows[0];
 
+            // Un solo query para todos los insumos (evita N+1)
+            const ids = ingredientes.map((i) => Number(i.producto_id));
+            const prodRes = await client.query(
+                "SELECT id, producto, costo_unitario FROM productos WHERE empresa_id = $1 AND id = ANY($2)",
+                [empresa_id, ids]
+            );
+            const prodMap = new Map(prodRes.rows.map((r) => [Number(r.id), r]));
+
             const detalles = [];
             for (const ing of ingredientes) {
                 const { producto_id, cantidad } = ing;
                 if (!producto_id || cantidad === undefined || cantidad === null) {
-                    throw new Error("Cada ingrediente requiere 'producto_id' y 'cantidad'");
+                    throw ApiError.badRequest("Cada ingrediente requiere 'producto_id' y 'cantidad'");
                 }
-                const prod = await client.query(
-                    "SELECT costo_unitario, producto FROM productos WHERE id = $1 AND empresa_id = $2",
-                    [producto_id, empresa_id]
-                );
-                if (!prod.rows[0]) {
-                    throw new Error(`El producto ${producto_id} no existe en la empresa ${empresa_id}`);
+                const prod = prodMap.get(Number(producto_id));
+                if (!prod) {
+                    throw ApiError.badRequest(`El producto ${producto_id} no existe en la empresa ${empresa_id}`);
                 }
                 const det = await client.query(
                     `INSERT INTO receta_detalle (receta_id, producto_id, cantidad, costo_unitario)
                      VALUES ($1, $2, $3, $4)
                      RETURNING id, receta_id, producto_id, cantidad, costo_unitario, costo_final`,
-                    [receta.id, producto_id, cantidad, prod.rows[0].costo_unitario]
+                    [receta.id, producto_id, cantidad, prod.costo_unitario]
                 );
-                detalles.push({ ...det.rows[0], producto: prod.rows[0].producto });
+                detalles.push({ ...det.rows[0], producto: prod.producto });
             }
 
             const recetaFinal = await recalcularCostoTotal(client, receta.id);

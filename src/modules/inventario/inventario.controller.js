@@ -1,37 +1,22 @@
+import { asyncHandler } from "../../middlewares/asyncHandler.js";
+import ApiError from "../../utils/ApiError.js";
+
 export default class InventarioController {
     constructor(inventarioService) {
         this.inventarioService = inventarioService;
     }
 
-    listar = async (req, res) => {
+    listar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
-        try {
-            const empresaExists = await this.inventarioService.existsEmpresa(empresa_id);
-            if (!empresaExists) {
-                return res.status(404).json({ error: "Empresa no encontrada" });
-            }
+        if (!(await this.inventarioService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        res.json({ success: true, data: await this.inventarioService.getAllInventario(empresa_id) });
+    });
 
-            const inventario = await this.inventarioService.getAllInventario(empresa_id);
-            res.json(inventario);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
-
-    listarPorId = async (req, res) => {
+    listarPorId = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        try {
-            const inventario = await this.inventarioService.getInventarioById(
-                id,
-                empresa_id,
-            );
-            if (!inventario) {
-                return res.status(404).json({ error: "Inventario no encontrado" });
-            }
-            res.json(inventario);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    };
-
+        const inventario = await this.inventarioService.getInventarioById(id, empresa_id);
+        if (!inventario) throw ApiError.notFound("Inventario no encontrado");
+        res.json({ success: true, data: inventario });
+    });
 }
