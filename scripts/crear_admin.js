@@ -12,7 +12,7 @@ dotenv.config();
 // ------- EDITA ESTO -------
 const EMPRESA_ID = 4;
 const NOMBRE = "Carlos Ramirez";
-const EMAIL = "carlos@cafearoma.com";
+const EMAIL = "carlos@cafearoma.com".trim().toLowerCase();
 const PASSWORD = "cambia_esta_clave";
 const CODIGO_INGRESO = "CR001";
 const PUESTO = "Dueño";

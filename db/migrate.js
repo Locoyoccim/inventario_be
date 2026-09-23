@@ -58,6 +58,9 @@ async function run() {
             try {
                 await client.query("BEGIN");
                 await client.query(sql);
+                // Un dump de pg_dump (001_baseline) deja search_path='' en la sesión: restaurarlo
+                // para que el INSERT y las migraciones siguientes encuentren sus tablas.
+                await client.query("RESET search_path");
                 await client.query("INSERT INTO schema_migrations (filename) VALUES ($1)", [f]);
                 await client.query("COMMIT");
                 console.log("  OK", f);

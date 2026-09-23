@@ -9,7 +9,7 @@ API REST multiempresa (Node/Express + PostgreSQL) para café-restaurante: produc
 | URL base (local) | `http://localhost:4000` |
 | Prefijo | `/api` |
 | Formato | JSON (`Content-Type: application/json` en todo POST/PUT) |
-| Autenticación | **JWT** (7 días) — header `Authorization: Bearer <token>` en todo `/api/*` salvo `/api/auth/login` y `/api/auth/setup` |
+| Autenticación | **JWT** (7 días) en todo `/api/*` salvo `login`, `setup` y `logout`. Dos vías: header `Authorization: Bearer <token>` (Postman/integraciones) o cookie httpOnly `gh_session` (front web). Con cookie, POST/PUT/DELETE exigen el header `X-Requested-With` (anti-CSRF) o responden `403` |
 | Multiempresa | cada recurso cuelga de `:empresa_id`; el token debe corresponder a esa empresa o responde `403` |
 
 ### Seguridad de borde
@@ -71,10 +71,13 @@ Respuesta: `{ "token": "...", "user": { } }`.
 ```json
 { "email": "carlos@aroma.mx", "password": "..." }
 ```
-Respuesta: `{ "token": "...", "user": { } }`. El token dura **7 días** (config `JWT_EXPIRES`).
+Respuesta: `{ "token": "...", "user": { } }` y además `Set-Cookie: gh_session=<token>; HttpOnly; SameSite=Lax`. El token dura **7 días** (config `JWT_EXPIRES`). El front web ignora el `token` del body y usa la cookie (enviar peticiones con `credentials: include` / `withCredentials`).
+
+### `POST /api/auth/logout`
+Público. Borra la cookie de sesión → `{ "success": true, "data": null }`. (Un JWT ya emitido sigue siendo válido hasta expirar si alguien lo copió; no hay lista de revocación.)
 
 ### `GET /api/auth/me`
-Con `Authorization: Bearer <token>` → devuelve el payload del usuario.
+Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email, empresa_id, is_admin, is_owner }` (mismo formato que `user` en login). `401` si el usuario ya no existe.
 
 ### Roles: Admin vs Operativo
 Cada usuario es **Admin** (`is_owner` o `is_admin` = true) u **Operativo** (lo demás).

@@ -31,6 +31,16 @@ export default class AuthService {
         return { token, user: creado };
     }
 
+    // Perfil fresco desde BD (nombre/email/rol pueden cambiar después de emitir el token).
+    async profile(payload) {
+        const u = await this.usuarioRepository.findProfile(payload.empresa_id, payload.id);
+        if (!u) return null;
+        return {
+            id: u.id, nombre: u.nombre, email: u.email,
+            empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
+        };
+    }
+
     async login(email, password) {
         const u = await this.usuarioRepository.findByEmail(email);
         // Mensaje genérico a propósito (no revelar si el correo existe)

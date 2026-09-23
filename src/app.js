@@ -16,10 +16,15 @@ app.set("trust proxy", 1);
 // Cabeceras de seguridad
 app.use(helmet());
 
-// CORS: si CORS_ORIGINS está definido (lista separada por comas) restringe a esos
-// orígenes; si no, permite todos (cómodo en desarrollo).
+// CORS con credenciales (la sesión viaja en cookie httpOnly). Con credenciales no se
+// permite "*": se usa la lista CORS_ORIGINS. Sin lista: en desarrollo refleja cualquier
+// origen; en producción solo acepta peticiones del mismo origen.
 const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean);
-app.use(cors(corsOrigins && corsOrigins.length ? { origin: corsOrigins } : {}));
+const isProduction = process.env.NODE_ENV === "production";
+if (isProduction && !corsOrigins?.length) {
+    console.warn("[cors] CORS_ORIGINS vacío en producción: solo se aceptan peticiones del mismo origen.");
+}
+app.use(cors({ origin: corsOrigins?.length ? corsOrigins : !isProduction, credentials: true }));
 
 // Límite de tamaño del body (evita payloads abusivos)
 app.use(express.json({ limit: "100kb" }));

@@ -17,10 +17,18 @@ const QUERIES = {
         LEFT JOIN roles r ON u.role_id = r.id
         WHERE u.empresa_id = $1 AND u.id = $2
     `,
+    SELECT_PROFILE: `
+        SELECT id, nombre, email, is_admin, is_owner, empresa_id
+        FROM usuarios
+        WHERE empresa_id = $1 AND id = $2
+    `,
     SELECT_COUNT: `SELECT COUNT(*)::int AS total FROM usuarios`,
     SELECT_BY_EMAIL: `
         SELECT id, nombre, email, password_hash, is_admin, is_owner, role_id, empresa_id
-        FROM usuarios WHERE email = $1
+        FROM usuarios
+        WHERE lower(trim(email)) = lower(trim($1))
+        ORDER BY id
+        LIMIT 1
     `,
     INSERT: `
         INSERT INTO usuarios (nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email, password_hash)
@@ -86,6 +94,11 @@ export default class UsuarioRepository {
     async remove(empresa_id, id) {
         if (!id) throw ApiError.badRequest("ID es requerido");
         const result = await pool.query(QUERIES.DELETE, [empresa_id, id]);
+        return result.rows[0];
+    }
+
+    async findProfile(empresa_id, id) {
+        const result = await pool.query(QUERIES.SELECT_PROFILE, [empresa_id, id]);
         return result.rows[0];
     }
 

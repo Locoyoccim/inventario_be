@@ -1,11 +1,25 @@
 import ApiError from "../utils/ApiError.js";
 import { verifyToken } from "../utils/jwt.js";
+import { AUTH_COOKIE, CSRF_HEADER, readCookie } from "../utils/authCookie.js";
 
-// Exige un JWT válido en Authorization: Bearer <token>. Coloca el payload en req.user.
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Exige un JWT válido. Fuentes, en orden:
+//   1. Authorization: Bearer <token>  (Postman, integraciones, scripts)
+//   2. Cookie httpOnly de sesión       (frontend web)
+// Con cookie, las escrituras exigen además el header X-Requested-With (anti-CSRF).
+// Coloca el payload en req.user.
 export function requireAuth(req, _res, next) {
     const header = req.headers.authorization || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+    const bearer = header.startsWith("Bearer ") ? header.slice(7) : null;
+    const cookieToken = bearer ? null : readCookie(req.headers.cookie, AUTH_COOKIE);
+    const token = bearer || cookieToken;
     if (!token) return next(ApiError.unauthorized("Falta el token de autenticación"));
+
+    if (cookieToken && !SAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
+        return next(ApiError.forbidden("Falta el header X-Requested-With"));
+    }
+
     try {
         req.user = verifyToken(token);
         next();

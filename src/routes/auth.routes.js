@@ -13,6 +13,7 @@ const authController = new AuthController(authService);
 
 router.post("/setup", validate(setupSchema), authController.setup);
 router.post("/login", validate(loginSchema), authController.login);
+router.post("/logout", authController.logout);
 router.get("/me", requireAuth, authController.me);
 
 export default router;
