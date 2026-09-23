@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
+import { propagarCostoInsumos } from "../../utils/costeo.js";
 import { normalizarLineaCompra, costoUltimaCompra, costoPresentacionDesde } from "./compra.logic.js";
 
 const QUERIES = {
@@ -124,8 +125,10 @@ export default class CompraRepository {
             }
 
             const cabFinal = (await client.query(QUERIES.UPDATE_TOTAL, [Number(total.toFixed(2)), cab.id])).rows[0];
+            // 3) El costo de los insumos cambió: refresca el costeo de las recetas que los usan
+            const recetasActualizadas = await propagarCostoInsumos(client, detalle.map((d) => d.producto_id));
             await client.query("COMMIT");
-            return { compra: cabFinal, lineas: detalle };
+            return { compra: cabFinal, lineas: detalle, recetas_actualizadas: recetasActualizadas.length };
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;

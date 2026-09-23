@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
+import { propagarCostoInsumos } from "../../utils/costeo.js";
 
 const QUERIES = {
     SELECT_BY_ID: `
@@ -152,8 +153,14 @@ export default class ProductoRepository {
             }
             // stock_actual NO se toca aquí: solo por /movimientos (GAP-06)
             const inventarioResult = await client.query(QUERIES.UPDATE_INVENTARIO_MINIMO, [stock_minimo, id]);
+            // Si cambió el costo (presentación o cantidad), refresca las recetas que lo usan
+            const recetasActualizadas = await propagarCostoInsumos(client, [id]);
             await client.query("COMMIT");
-            return { ...productoActualizado, ...inventarioResult.rows[0] };
+            return {
+                ...productoActualizado,
+                ...inventarioResult.rows[0],
+                recetas_actualizadas: recetasActualizadas.length,
+            };
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;

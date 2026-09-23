@@ -91,10 +91,12 @@ export default class RecetaRepository {
     }
 
     // Actualiza el encabezado y recalcula costo_total con la fórmula única.
+    // Si data.ingredientes viene, reemplaza el escandallo completo en la MISMA
+    // transacción (todo o nada) con los costos vigentes de los insumos.
     async update(empresa_id, id, data) {
         const {
             nombre, categoria, precio_venta, activo = true,
-            costo_produccion = 0, proteccion_pct = 0,
+            costo_produccion = 0, proteccion_pct = 0, ingredientes,
         } = data;
         const client = await pool.connect();
         try {
@@ -107,15 +109,67 @@ export default class RecetaRepository {
                 await client.query("ROLLBACK");
                 return null;
             }
+            let detalles;
+            if (Array.isArray(ingredientes)) {
+                detalles = await this.#reemplazarEscandallo(client, empresa_id, id, ingredientes);
+            }
             const receta = await recalcularCostoTotal(client, id);
             await client.query("COMMIT");
-            return receta;
+            return detalles ? { ...receta, ingredientes: detalles } : receta;
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;
         } finally {
             client.release();
         }
+    }
+
+    // Borra el escandallo de la receta y lo vuelve a insertar con los costos vigentes.
+    // Se llama dentro de una transacción abierta (client).
+    async #reemplazarEscandallo(client, empresa_id, receta_id, ingredientes) {
+        if (ingredientes.length === 0) {
+            throw ApiError.badRequest("Se requiere al menos un ingrediente en 'ingredientes'");
+        }
+        const rec = await client.query(
+            "SELECT producto_elaborado_id FROM recetas WHERE id = $1 AND empresa_id = $2",
+            [receta_id, empresa_id]
+        );
+        const propioElaborado = Number(rec.rows[0]?.producto_elaborado_id) || null;
+
+        const ids = ingredientes.map((i) => Number(i.producto_id));
+        const prodRes = await client.query(
+            "SELECT id, producto, unidad_medida, es_elaborado, costo_unitario FROM productos WHERE empresa_id = $1 AND id = ANY($2)",
+            [empresa_id, ids]
+        );
+        const prodMap = new Map(prodRes.rows.map((r) => [Number(r.id), r]));
+        for (const ing of ingredientes) {
+            const pid = Number(ing.producto_id);
+            if (!prodMap.has(pid)) {
+                throw ApiError.badRequest(`El producto ${pid} no existe en la empresa ${empresa_id}`);
+            }
+            if (propioElaborado && pid === propioElaborado) {
+                throw ApiError.badRequest("Una preparación no puede llevarse a sí misma como ingrediente");
+            }
+        }
+
+        await client.query("DELETE FROM receta_detalle WHERE receta_id = $1", [receta_id]);
+        const detalles = [];
+        for (const ing of ingredientes) {
+            const prod = prodMap.get(Number(ing.producto_id));
+            const det = await client.query(
+                `INSERT INTO receta_detalle (receta_id, producto_id, cantidad, costo_unitario)
+                 VALUES ($1, $2, $3, $4)
+                 RETURNING id, receta_id, producto_id, cantidad, costo_unitario, costo_final`,
+                [receta_id, prod.id, ing.cantidad, prod.costo_unitario]
+            );
+            detalles.push({
+                ...det.rows[0],
+                producto: prod.producto,
+                unidad_medida: prod.unidad_medida,
+                es_elaborado: prod.es_elaborado,
+            });
+        }
+        return detalles;
     }
 
     async remove(empresa_id, id) {

@@ -134,6 +134,7 @@ Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo
 
 ### `PUT /api/productos/:empresa_id/:id`
 Mismos campos (sin `stock_actual`) + opcional `"activo": true|false`. Un producto **elaborado** (preparación) no se edita aquí → `400`.
+Si cambia el costo, las recetas que usan el producto se recalculan en la misma transacción (ver *Cascada de costos*); la respuesta trae `recetas_actualizadas`.
 
 ### `DELETE /api/productos/:empresa_id/:id`
 **Soft-delete**: marca `activo=false` (conserva el historial). No borra físicamente. Reactivar con `PUT ... {"activo": true}`.
@@ -183,6 +184,13 @@ Preparación / subreceta (además se crea un **producto elaborado** en inventari
 ```
 
 ### `PUT /api/recetas/:empresa_id/:id` · `DELETE /api/recetas/:empresa_id/:id`
+Body: `nombre`, `categoria`, `precio_venta`, opcionales `activo`, `costo_produccion`, `proteccion_pct` y **`ingredientes`**.
+- Sin `ingredientes`: solo se actualiza el encabezado (el escandallo no se toca).
+- Con `ingredientes: [{ producto_id, cantidad }]` (mínimo 1): **guardado atómico** — encabezado + escandallo completo se reemplazan en UNA transacción con los costos vigentes; si algo falla (p. ej. un producto inexistente) no cambia nada → `400`. La respuesta incluye `ingredientes` con los renglones nuevos (los `id` de renglón cambian).
+- Una preparación no puede llevarse a sí misma como ingrediente → `400`. `es_preparacion`, `rendimiento` y `unidad` no se editan aquí.
+
+### Cascada de costos
+Cuando cambia el costo de un insumo (compra, `PUT` de producto) o el de una preparación (su receta cambió), se refresca `receta_detalle.costo_unitario` de las recetas que lo usan y se recalcula su `costo_total`; si esas recetas son preparaciones, la cascada continúa (con protección contra ciclos).
 
 ## Detalle de receta (ingredientes)
 - `GET /api/recetas/:receta_id/detalle` · `GET .../detalle/:id`
@@ -213,6 +221,7 @@ Suma stock (`COMPRA`) y actualiza el costo del producto al **precio de la últim
   "lineas": [ { "producto_id": 1, "cantidad": 2000, "costo_total": 60 } ] }
 ```
 Cada línea acepta `costo_total` (lo pagado) **o** `costo_unitario`.
+Respuesta: `{ compra, lineas, recetas_actualizadas }` — las recetas que usan esos insumos se recalculan en la misma transacción (*Cascada de costos*).
 - `GET /api/compras/:empresa_id` (historial) · `GET /api/compras/:empresa_id/:id` (encabezado + líneas)
 
 ## Conteo físico (varianza y reconciliación)

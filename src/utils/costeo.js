@@ -13,9 +13,14 @@ export function margen(precioVenta, costo) {
     return pv > 0 ? ((pv - Number(costo)) / pv) * 100 : 0;
 }
 
+// Contexto de una cascada de costos: productos ya propagados y recetas tocadas.
+const nuevoCtx = () => ({ productos: new Set(), recetas: new Set() });
+
 // Recalcula y PERSISTE costo_total de una receta dentro de una transacción (client).
 // Lee producción y protección del encabezado y la suma del escandallo.
-export async function recalcularCostoTotal(client, recetaId) {
+// Si la receta es una preparación, el nuevo costo se propaga en cascada a las
+// recetas que la usan como insumo. `ctx.productos` (ids ya propagados) evita ciclos.
+export async function recalcularCostoTotal(client, recetaId, ctx = nuevoCtx()) {
     const cab = await client.query(
         "SELECT precio_venta, costo_produccion, proteccion_pct, rendimiento, producto_elaborado_id FROM recetas WHERE id = $1",
         [recetaId]
@@ -49,9 +54,39 @@ export async function recalcularCostoTotal(client, recetaId) {
             "UPDATE productos SET costo_presentacion = $1, cantidad_presentacion = $2 WHERE id = $3",
             [Number(total), rendimiento, prodElabId]
         );
+        await propagarCostoInsumos(client, [prodElabId], ctx);
     }
 
     return upd.rows[0];
+}
+
+// Cuando cambia el costo de uno o más insumos (compra, edición de producto o una
+// preparación recalculada), refresca el snapshot receta_detalle.costo_unitario de
+// las recetas que los usan y recalcula su costo_total (y, si son preparaciones,
+// sigue la cascada). Debe llamarse dentro de la misma transacción (client).
+// Devuelve los ids de TODAS las recetas recalculadas (incluida la cascada).
+
+export async function propagarCostoInsumos(client, productoIds, ctx = nuevoCtx()) {
+    const ids = [...new Set(productoIds.map(Number))].filter((id) => id > 0 && !ctx.productos.has(id));
+    ids.forEach((id) => ctx.productos.add(id));
+    if (ids.length === 0) return [...ctx.recetas];
+
+    const res = await client.query(
+        `UPDATE receta_detalle rd
+         SET costo_unitario = p.costo_unitario
+         FROM productos p
+         WHERE p.id = rd.producto_id
+           AND rd.producto_id = ANY($1)
+           AND rd.costo_unitario IS DISTINCT FROM p.costo_unitario
+         RETURNING rd.receta_id`,
+        [ids]
+    );
+    const recetas = [...new Set(res.rows.map((r) => Number(r.receta_id)))];
+    for (const recetaId of recetas) {
+        ctx.recetas.add(recetaId);
+        await recalcularCostoTotal(client, recetaId, ctx);
+    }
+    return [...ctx.recetas];
 }
 
 // Preview SIN persistir: calcula sobre los costos vigentes de los insumos.

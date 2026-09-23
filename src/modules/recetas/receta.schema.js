@@ -36,6 +36,9 @@ export const recetaUpdateSchema = z.object({
     activo: z.boolean().optional(),
     costo_produccion: z.coerce.number().min(0).optional(),
     proteccion_pct: z.coerce.number().min(0).optional(),
+    // Opcional: si viene, REEMPLAZA el escandallo completo en la misma transacción
+    // que el encabezado (guardado atómico). Si no viene, el escandallo no se toca.
+    ingredientes: z.array(ingrediente).min(1, "incluye al menos un ingrediente").optional(),
 });
 
 export const recetaPreviewSchema = z.object({
