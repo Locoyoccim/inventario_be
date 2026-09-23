@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import routes from "./routes/index.js";
 import authRoutes from "./routes/auth.routes.js";
 import { requireAuth } from "./middlewares/auth.js";
+import { requireActiveUser } from "./middlewares/activeUser.js";
 import { requestLogger } from "./middlewares/requestLogger.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 
@@ -48,7 +49,7 @@ app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
 
 // Resto de la API: requiere token válido
-app.use("/api", requireAuth, routes);
+app.use("/api", requireAuth, requireActiveUser, routes);
 
 // Middleware central de errores (siempre al final)
 app.use(errorHandler);

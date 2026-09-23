@@ -7,6 +7,10 @@ export default class MovimientoService {
         return await this.movimientoRepository.findAll(producto_id, empresa_id, opts);
     }
 
+    async getKardex(empresa_id, opts) {
+        return await this.movimientoRepository.findAllEmpresa(empresa_id, opts);
+    }
+
     async registrarMovimiento(producto_id, empresa_id, data) {
         return await this.movimientoRepository.registrar(producto_id, empresa_id, data);
     }

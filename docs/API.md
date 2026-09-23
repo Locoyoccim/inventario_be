@@ -84,7 +84,8 @@ Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email
 ### Roles: Admin vs Operativo
 Cada usuario es **Admin** (`is_owner` o `is_admin` = true) u **Operativo** (lo demás).
 - **Admin**: acceso total.
-- **Operativo**: puede registrar **ventas**, **conteos** y **compras**, y **leer** todo (productos, inventario, recetas, reportes, categorías). NO puede crear/editar productos, recetas, costos, proveedores, usuarios, pos-map ni categorías, ni confirmar producción, ni revertir ventas → responde `403`.
+- **Operativo**: puede registrar **ventas**, **conteos** y **compras**, y **leer** todo (productos, inventario, recetas, reportes, categorías). También **confirma producción**. NO puede crear/editar productos, recetas, costos, proveedores, usuarios, pos-map ni categorías, ni revertir ventas → responde `403`.
+- Un usuario **desactivado** (`activo: false`) no puede iniciar sesión (`403`) y sus tokens vigentes dejan de servir (`401`, a más tardar en 1 minuto).
 
 Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo `email` + `password` y `is_admin`/`is_owner` en `false`.
 
@@ -99,8 +100,10 @@ Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo
 
 ## Usuarios
 - `GET /api/usuarios/:empresa_id` · `GET /api/usuarios/:empresa_id/:id`
-- `POST /api/usuarios/:empresa_id` — `{ "nombre", "codigo_ingreso", "puesto?", "role_id?", "is_admin?", "is_owner?" }`
-- `PUT /api/usuarios/:empresa_id/:id` · `DELETE /api/usuarios/:empresa_id/:id`
+- Cada usuario trae `email`, `activo`, `role_id` y `rol`.
+- `POST /api/usuarios/:empresa_id` *(Admin)* — `{ "nombre", "codigo_ingreso", "puesto?", "role_id?", "is_admin?", "email?", "password?" }`
+- `PUT /api/usuarios/:empresa_id/:id` *(Admin)* — `nombre` y `codigo_ingreso` requeridos; el resto es opcional y **lo que no se envía se conserva**: `puesto`, `is_admin`, `role_id`, `email`, `password` (se hashea), `activo`. `is_owner` no se cambia por API. Nadie puede desactivarse ni quitarse Admin a sí mismo, y al dueño no se le desactiva ni se le quita Admin (`400`).
+- `DELETE /api/usuarios/:empresa_id/:id` *(Admin)* — borrado físico; para conservar historial usa `activo: false`.
 
 ## Proveedores
 - `GET /api/proveedores/:empresa_id` · `GET /api/proveedores/:empresa_id/:id`
@@ -121,7 +124,7 @@ Una sola lista por empresa para productos y recetas; el front la usa para el sel
 Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion`. El `costo_unitario` es **calculado** (`costo_presentacion / cantidad_presentacion`). El stock vive en inventario y **solo** cambia por `/movimientos`, `/compras`, `/produccion` o `/conteos`.
 
 ### `GET /api/productos/:empresa_id`
-Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `stock_actual`, `stock_minimo`, `es_elaborado` y `activo`.
+Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `proveedor_id`, `proveedor` (nombre), `stock_actual`, `stock_minimo`, `es_elaborado` y `activo`.
 
 ### `POST /api/productos/:empresa_id`
 ```json
@@ -139,13 +142,16 @@ Mismos campos (sin `stock_actual`) + opcional `"activo": true|false`. Un product
 - `GET /api/inventario/:empresa_id` · `GET /api/inventario/:empresa_id/:id`
 
 ## Movimientos de inventario
+- `GET /api/movimientos/:empresa_id` — **kardex de la empresa**, paginado. Filtros: `?producto_id=`, `?tipo=COMPRA|VENTA|MERMA|AJUSTE|DEVOLUCION|PRODUCCION`, `?desde=YYYY-MM-DD`, `?hasta=YYYY-MM-DD`, `?sentido=entrada|salida`. Cada fila trae `producto`, `unidad_medida` y `usuario`.
 - `GET /api/productos/:empresa_id/:id/movimientos` — historial paginado del producto
 - `POST /api/productos/:empresa_id/:id/movimientos` — ajuste manual de stock
 ```json
 { "tipo_movimiento": "COMPRA|VENTA|MERMA|AJUSTE|DEVOLUCION|PRODUCCION", "cantidad": 10,
   "motivo?": "texto", "costo_unitario?": 0.03 }
 ```
-`AJUSTE` usa el signo de `cantidad`; los demás tienen dirección fija. Para compras reales usa `/compras` (actualiza costo).
+`AJUSTE` usa el signo de `cantidad`; los demás tienen dirección fija. El `usuario_id` se toma de la sesión. Para compras reales usa `/compras` (actualiza costo).
+
+`costo_unitario` del movimiento se guarda con 4 decimales (migración 009); los movimientos anteriores a esa migración conservan el valor redondeado a 2 decimales.
 
 ---
 
@@ -182,6 +188,7 @@ Preparación / subreceta (además se crea un **producto elaborado** en inventari
 - `GET /api/recetas/:receta_id/detalle` · `GET .../detalle/:id`
 - `POST /api/recetas/:receta_id/detalle` — `{ "producto_id": 7, "cantidad": 200 }`
 - `PUT .../detalle/:id` · `DELETE .../detalle/:id`
+- Cada renglón trae `producto_id`, `producto`, `unidad_medida`, `es_elaborado`, `cantidad`, `costo_unitario` (costo del insumo al guardar el renglón) y `costo_final`.
 
 ---
 
@@ -190,7 +197,7 @@ Preparación / subreceta (además se crea un **producto elaborado** en inventari
 ### `GET /api/produccion/:empresa_id/sugerencias`
 Preparaciones bajo mínimo con lotes sugeridos e insumos requeridos.
 
-### `POST /api/produccion/:empresa_id/confirmar`
+### `POST /api/produccion/:empresa_id/confirmar` *(Operativo o Admin)*
 Consume insumos y suma stock de la preparación (movimientos `PRODUCCION`, transacción atómica):
 ```json
 { "producciones": [ { "receta_id": 1, "lotes": 1 } ] }

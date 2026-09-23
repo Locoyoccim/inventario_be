@@ -34,7 +34,7 @@ export default class AuthService {
     // Perfil fresco desde BD (nombre/email/rol pueden cambiar después de emitir el token).
     async profile(payload) {
         const u = await this.usuarioRepository.findProfile(payload.empresa_id, payload.id);
-        if (!u) return null;
+        if (!u || u.activo === false) return null;
         return {
             id: u.id, nombre: u.nombre, email: u.email,
             empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
@@ -47,6 +47,8 @@ export default class AuthService {
         if (!u || !u.password_hash) throw ApiError.unauthorized("Credenciales inválidas");
         const ok = await bcrypt.compare(password, u.password_hash);
         if (!ok) throw ApiError.unauthorized("Credenciales inválidas");
+        // Solo tras validar la contrasena, para no revelar que correos existen.
+        if (u.activo === false) throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
 
         const token = signToken({
             id: u.id,

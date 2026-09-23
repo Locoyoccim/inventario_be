@@ -3,7 +3,7 @@ import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
     SELECT_BY_ID: `
-        SELECT p.id, p.producto, p.unidad_medida, prov.nombre AS proveedor, p.categoria, p.empresa_id,
+        SELECT p.id, p.producto, p.unidad_medida, p.proveedor_id, prov.nombre AS proveedor, p.categoria, p.empresa_id,
                p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo,
                i.stock_actual, i.stock_minimo
         FROM productos p
@@ -53,7 +53,7 @@ export default class ProductoRepository {
         if (bajoMinimo) where.push("i.stock_actual < i.stock_minimo");
 
         const sql = `
-            SELECT p.id, p.producto, p.unidad_medida, prov.nombre AS proveedor, p.categoria, p.empresa_id,
+            SELECT p.id, p.producto, p.unidad_medida, p.proveedor_id, prov.nombre AS proveedor, p.categoria, p.empresa_id,
                    p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo,
                    i.stock_actual, i.stock_minimo,
                    COUNT(*) OVER()::int AS total

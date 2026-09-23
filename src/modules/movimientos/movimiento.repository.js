@@ -47,6 +47,34 @@ export default class MovimientoRepository {
         return { rows, total };
     }
 
+    // Kardex de toda la empresa con filtros opcionales (producto, tipo, rango de fechas, sentido).
+    async findAllEmpresa(empresa_id, { limit = 50, offset = 0, productoId = null, tipo = null, desde = null, hasta = null, sentido = null } = {}) {
+        const where = ["p.empresa_id = $1"];
+        const params = [empresa_id];
+        let i = 2;
+        if (productoId) { where.push(`m.producto_id = $${i}`); params.push(productoId); i++; }
+        if (tipo) { where.push(`m.tipo_movimiento = $${i}`); params.push(tipo); i++; }
+        if (desde) { where.push(`m.fecha::date >= $${i}`); params.push(desde); i++; }
+        if (hasta) { where.push(`m.fecha::date <= $${i}`); params.push(hasta); i++; }
+        if (sentido === "entrada") where.push("m.stock_nuevo > m.stock_anterior");
+        if (sentido === "salida") where.push("m.stock_nuevo < m.stock_anterior");
+        const sql = `
+            SELECT m.id, m.fecha, m.usuario_id, u.nombre AS usuario, m.producto_id, p.producto, p.unidad_medida,
+                   m.tipo_movimiento, m.cantidad, m.costo_unitario, m.stock_anterior, m.stock_nuevo,
+                   m.motivo, m.referencia_tipo, m.referencia_id,
+                   COUNT(*) OVER()::int AS total
+            FROM movimientosinventario m
+            JOIN productos p ON p.id = m.producto_id
+            LEFT JOIN usuarios u ON u.id = m.usuario_id
+            WHERE ${where.join(" AND ")}
+            ORDER BY m.fecha DESC, m.id DESC
+            LIMIT $${i} OFFSET $${i + 1}`;
+        params.push(limit, offset);
+        const result = await pool.query(sql, params);
+        const total = result.rows[0]?.total ?? 0;
+        return { rows: result.rows.map(({ total, ...r }) => r), total };
+    }
+
     // Núcleo reutilizable: aplica UN movimiento usando un client de transacción YA abierto.
     // No hace BEGIN/COMMIT (lo controla quien llama). Devuelve la fila del movimiento,
     // o null si el producto o su inventario no existen para esa empresa.

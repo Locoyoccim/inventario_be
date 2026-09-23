@@ -4,13 +4,15 @@ import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
     SELECT_ALL: `
-    SELECT r.id, r.receta_id, p.producto, r.cantidad, r.costo_unitario, r.costo_final
+    SELECT r.id, r.receta_id, r.producto_id, p.producto, p.unidad_medida, p.es_elaborado,
+           r.cantidad, r.costo_unitario, r.costo_final
     FROM receta_detalle r
     INNER JOIN productos p ON p.id = r.producto_id
     WHERE r.receta_id = $1
     ORDER BY r.id ASC;`,
     SELECT_BY_ID: `
-    SELECT r.id, r.receta_id, p.producto, r.cantidad, r.costo_unitario, r.costo_final
+    SELECT r.id, r.receta_id, r.producto_id, p.producto, p.unidad_medida, p.es_elaborado,
+           r.cantidad, r.costo_unitario, r.costo_final
     FROM receta_detalle r
     INNER JOIN productos p ON p.id = r.producto_id
     WHERE r.id = $1 AND r.receta_id = $2;`,
@@ -20,11 +22,11 @@ const QUERIES = {
     FROM productos p, recetas rec
     WHERE r.id = $3 AND r.receta_id = $4 AND p.id = $1 AND rec.id = $4
         AND rec.empresa_id = p.empresa_id
-    RETURNING r.id, r.receta_id, p.producto, r.cantidad, r.costo_unitario, r.costo_final;`,
+    RETURNING r.id, r.receta_id, r.producto_id, p.producto, p.unidad_medida, p.es_elaborado, r.cantidad, r.costo_unitario, r.costo_final;`,
     DELETE: `DELETE FROM receta_detalle WHERE id = $1 AND receta_id = $2 RETURNING id;`,
     INSERT: `
     WITH producto_data AS (
-        SELECT p.id, p.producto, p.costo_unitario
+        SELECT p.id, p.producto, p.unidad_medida, p.es_elaborado, p.costo_unitario
         FROM productos p
         JOIN recetas rec ON rec.empresa_id = p.empresa_id
         WHERE p.id = $3 AND rec.id = $1
@@ -35,7 +37,7 @@ const QUERIES = {
         FROM producto_data p
         RETURNING id, receta_id, producto_id, cantidad, costo_unitario, costo_final
     )
-    SELECT i.id, i.receta_id, p.producto, i.cantidad, i.costo_unitario, i.costo_final
+    SELECT i.id, i.receta_id, i.producto_id, p.producto, p.unidad_medida, p.es_elaborado, i.cantidad, i.costo_unitario, i.costo_final
     FROM inserted i
     INNER JOIN producto_data p ON p.id = i.producto_id;`,
 };
