@@ -35,6 +35,14 @@ export function errorHandler(err, req, res, _next) {
         return res.status(status).json({ success: false, error: message });
     }
 
+    // Errores del parser de body: tamaño excedido (413) o JSON malformado (400).
+    if (err && err.type === "entity.too.large") {
+        return res.status(413).json({ success: false, error: "El cuerpo de la solicitud es demasiado grande" });
+    }
+    if (err && (err.type === "entity.parse.failed" || (err instanceof SyntaxError && "body" in err))) {
+        return res.status(400).json({ success: false, error: "JSON inválido en el cuerpo de la solicitud" });
+    }
+
     // Inesperado: se registra completo, al cliente solo un genérico.
     logger.error("unhandled_error", {
         requestId: req.id,

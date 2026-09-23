@@ -5,12 +5,16 @@
     "main": "server.js",
     "type": "module",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
+        "test": "NODE_ENV=test node --test",
         "start": "node server.js",
         "dev": "nodemon server.js",
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",
-        "migrate:mark": "node db/migrate.js mark"
+        "migrate:mark": "node db/migrate.js mark",
+        "test:watch": "NODE_ENV=test node --test --watch",
+        "lint": "eslint .",
+        "format": "prettier --write .",
+        "format:check": "prettier --check ."
     },
     "keywords": [],
     "author": "",
@@ -22,9 +26,15 @@
         "express": "^5.1.0",
         "jsonwebtoken": "^9.0.3",
         "pg": "^8.16.3",
-        "zod": "^4.6.5"
+        "zod": "^4.6.5",
+        "helmet": "^8.0.0",
+        "express-rate-limit": "^7.4.1"
     },
     "devDependencies": {
-        "nodemon": "^3.1.10"
+        "nodemon": "^3.1.10",
+        "eslint": "^9.13.0",
+        "@eslint/js": "^9.13.0",
+        "globals": "^15.11.0",
+        "prettier": "^3.3.3"
     }
 }

@@ -28,7 +28,7 @@ export function parseToteatCsv(texto) {
         if (IGNORAR_FILA.has(normalizar(nombre))) continue; // header + totales
 
         // Total = última columna. Limpia símbolos ($, espacios) y separadores de miles.
-        const totalRaw = partes[partes.length - 1].replace(/[^0-9.\-]/g, "");
+        const totalRaw = partes[partes.length - 1].replace(/[^0-9.-]/g, "");
         const cantidad = Number.parseFloat(totalRaw);
         if (!Number.isFinite(cantidad) || cantidad === 0) continue;
 

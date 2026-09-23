@@ -28,3 +28,6 @@ export function requireOwnerOrAdmin(req, _res, next) {
     if (req.user && (req.user.is_owner || req.user.is_admin)) return next();
     next(ApiError.forbidden("Requiere permisos de administrador"));
 }
+
+// Rol Admin = dueño o administrador. El resto de usuarios son "Operativo".
+export const requireAdmin = requireOwnerOrAdmin;

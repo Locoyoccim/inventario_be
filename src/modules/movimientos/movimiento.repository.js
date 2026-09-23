@@ -52,7 +52,7 @@ export default class MovimientoRepository {
     // o null si el producto o su inventario no existen para esa empresa.
     // opts.permitirNegativo=true deja que el stock quede negativo (modo importación diaria).
     async aplicar(client, producto_id, empresa_id, data, opts = {}) {
-        const { permitirNegativo = false } = opts;
+        const { permitirNegativo = false, direccion: direccionOverride } = opts;
         const {
             tipo_movimiento,
             cantidad,
@@ -81,7 +81,9 @@ export default class MovimientoRepository {
         const inventario = inventarioResult.rows[0];
         if (!inventario) return null;
 
-        const direccion = DIRECCION[tipo_movimiento];
+        // opts.direccion permite forzar el signo (ej. recepción de producto elaborado
+        // en una PRODUCCION, que SUMA en lugar de restar).
+        const direccion = direccionOverride !== undefined ? direccionOverride : DIRECCION[tipo_movimiento];
         const delta =
             direccion === null
                 ? Number(cantidad)

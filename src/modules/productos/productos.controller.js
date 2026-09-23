@@ -1,6 +1,7 @@
 import { asyncHandler } from "../../middlewares/asyncHandler.js";
 import ApiError from "../../utils/ApiError.js";
 import { parsePagination } from "../../utils/pagination.js";
+import { parseFiltrosProductos } from "./productos.logic.js";
 
 export default class ProductosController {
     constructor(productosService) {
@@ -10,7 +11,8 @@ export default class ProductosController {
     listar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         const { limit, offset } = parsePagination(req.query);
-        const { rows, total } = await this.productosService.getAllProductos(empresa_id, { limit, offset });
+        const filtros = parseFiltrosProductos(req.query);
+        const { rows, total } = await this.productosService.getAllProductos(empresa_id, { limit, offset, ...filtros });
         res.json({ success: true, data: rows, pagination: { limit, offset, total } });
     });
 

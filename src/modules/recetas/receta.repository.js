@@ -6,6 +6,7 @@ const QUERIES = {
     SELECT_ALL: `
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
            created_at, empresa_id, costo_produccion, proteccion_pct,
+           es_preparacion, rendimiento, producto_elaborado_id,
            COUNT(*) OVER()::int AS total
     FROM recetas
     WHERE empresa_id = $1
@@ -13,7 +14,8 @@ const QUERIES = {
     LIMIT $2 OFFSET $3;`,
     SELECT_BY_ID: `
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
-           created_at, empresa_id, costo_produccion, proteccion_pct
+           created_at, empresa_id, costo_produccion, proteccion_pct,
+           es_preparacion, rendimiento, producto_elaborado_id
     FROM recetas
     WHERE id = $1 AND empresa_id = $2;`,
     EXISTS_RECETA: `SELECT 1 FROM recetas WHERE id = $1;`,
@@ -25,14 +27,41 @@ const QUERIES = {
     RETURNING id;`,
     DELETE: `DELETE FROM recetas WHERE id = $1 AND empresa_id = $2 RETURNING id;`,
     INSERT: `
-    INSERT INTO recetas (nombre, categoria, precio_venta, costo_total, activo, empresa_id, costo_produccion, proteccion_pct)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    INSERT INTO recetas (nombre, categoria, precio_venta, costo_total, activo, empresa_id, costo_produccion, proteccion_pct, es_preparacion, rendimiento)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     RETURNING *;`,
+    // Producto elaborado: proveedor_id NULL, costo reutiliza la columna generada.
+    INSERT_PRODUCTO_ELAB: `
+    INSERT INTO productos (producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, es_elaborado)
+    VALUES ($1, $2, NULL, $3, $4, $5, $6, true)
+    RETURNING id, producto, unidad_medida, categoria, cantidad_presentacion, costo_presentacion, costo_unitario, es_elaborado;`,
+    INSERT_INVENTARIO_ELAB: `
+    INSERT INTO inventario (producto_id, stock_actual, stock_minimo, empresa_id, updated_at)
+    VALUES ($1, 0, $2, $3, CURRENT_TIMESTAMP)
+    RETURNING stock_actual, stock_minimo;`,
+    LINK_PRODUCTO_ELAB: `
+    UPDATE recetas SET producto_elaborado_id = $1 WHERE id = $2 RETURNING *;`,
 };
 
 export default class RecetaRepository {
-    async findAll(empresa_id, { limit = 50, offset = 0 } = {}) {
-        const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id, limit, offset]);
+    async findAll(empresa_id, { limit = 50, offset = 0, q = null, categoria = null, incluirInactivos = false } = {}) {
+        const where = ["empresa_id = $1"];
+        const params = [empresa_id];
+        let i = 2;
+        if (!incluirInactivos) where.push("activo = true");
+        if (q) { where.push(`nombre ILIKE $${i}`); params.push(`%${q}%`); i++; }
+        if (categoria) { where.push(`categoria = $${i}`); params.push(categoria); i++; }
+        const sql = `
+            SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
+                   created_at, empresa_id, costo_produccion, proteccion_pct,
+                   es_preparacion, rendimiento, producto_elaborado_id,
+                   COUNT(*) OVER()::int AS total
+            FROM recetas
+            WHERE ${where.join(" AND ")}
+            ORDER BY id ASC
+            LIMIT $${i} OFFSET $${i + 1}`;
+        params.push(limit, offset);
+        const result = await pool.query(sql, params);
         const total = result.rows[0]?.total ?? 0;
         const rows = result.rows.map(({ total, ...r }) => r);
         return { rows, total };
@@ -56,7 +85,7 @@ export default class RecetaRepository {
         } = data;
         const result = await pool.query(QUERIES.INSERT, [
             nombre, categoria, precio_venta, costo_total, activo, empresa_id,
-            costo_produccion, proteccion_pct,
+            costo_produccion, proteccion_pct, false, 1,
         ]);
         return result.rows[0];
     }
@@ -95,14 +124,22 @@ export default class RecetaRepository {
     }
 
     // Crea la receta y todo su escandallo en UNA transacción. Usa la fórmula única.
-    // data: { nombre, categoria, precio_venta, activo?, costo_produccion?, proteccion_pct?, ingredientes: [{producto_id, cantidad}] }
+    // Si data.es_preparacion === true, además crea el producto elaborado + su fila de
+    // inventario y enlaza recetas.producto_elaborado_id (Opción A: subrecetas).
+    // data: { nombre, categoria, precio_venta, activo?, costo_produccion?, proteccion_pct?,
+    //         ingredientes: [{producto_id, cantidad}],
+    //         es_preparacion?, rendimiento?, unidad?, stock_minimo? }
     async createConDetalle(empresa_id, data) {
         const {
             nombre, categoria, precio_venta, activo = true,
             costo_produccion = 0, proteccion_pct = 0, ingredientes = [],
+            es_preparacion = false, rendimiento = 1, unidad = null, stock_minimo = 0,
         } = data;
         if (!Array.isArray(ingredientes) || ingredientes.length === 0) {
             throw ApiError.badRequest("Se requiere al menos un ingrediente en 'ingredientes'");
+        }
+        if (es_preparacion && (rendimiento == null || Number(rendimiento) <= 0 || !unidad)) {
+            throw ApiError.badRequest("Una preparación requiere 'rendimiento' > 0 y 'unidad'");
         }
 
         const client = await pool.connect();
@@ -111,7 +148,7 @@ export default class RecetaRepository {
 
             const recRes = await client.query(QUERIES.INSERT, [
                 nombre, categoria, precio_venta, 0, activo, empresa_id,
-                costo_produccion, proteccion_pct,
+                costo_produccion, proteccion_pct, es_preparacion, es_preparacion ? rendimiento : 1,
             ]);
             const receta = recRes.rows[0];
 
@@ -142,9 +179,37 @@ export default class RecetaRepository {
                 detalles.push({ ...det.rows[0], producto: prod.producto });
             }
 
-            const recetaFinal = await recalcularCostoTotal(client, receta.id);
+            let recetaFinal = await recalcularCostoTotal(client, receta.id);
+
+            // Alta del producto elaborado (subreceta) y enlace
+            let productoElaborado = null;
+            if (es_preparacion) {
+                const prodElab = await client.query(QUERIES.INSERT_PRODUCTO_ELAB, [
+                    nombre,
+                    unidad,
+                    "Preparación",
+                    empresa_id,
+                    rendimiento,                    // cantidad_presentacion = rendimiento
+                    Number(recetaFinal.costo_total), // costo_presentacion = costo_total
+                ]);
+                productoElaborado = prodElab.rows[0];
+
+                const inv = await client.query(QUERIES.INSERT_INVENTARIO_ELAB, [
+                    productoElaborado.id,
+                    stock_minimo,
+                    empresa_id,
+                ]);
+                productoElaborado = { ...productoElaborado, ...inv.rows[0] };
+
+                const linked = await client.query(QUERIES.LINK_PRODUCTO_ELAB, [
+                    productoElaborado.id,
+                    receta.id,
+                ]);
+                recetaFinal = linked.rows[0];
+            }
+
             await client.query("COMMIT");
-            return { ...recetaFinal, ingredientes: detalles };
+            return { ...recetaFinal, ingredientes: detalles, producto_elaborado: productoElaborado };
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;

@@ -1,0 +1,1206 @@
+{
+  "info": {
+    "name": "Inventario Café Aroma — API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Backend de inventario multiempresa. Configura baseUrl y empresa_id; corre Auth > Login para guardar el token automáticamente."
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000"
+    },
+    {
+      "key": "empresa_id",
+      "value": "4"
+    },
+    {
+      "key": "token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Setup (primer usuario)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/setup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "setup"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"empresa_id\": 4,\n  \"nombre\": \"Carlos\",\n  \"email\": \"carlos@aroma.mx\",\n  \"password\": \"secret123\",\n  \"codigo_ingreso\": \"0001\",\n  \"puesto\": \"Dueño\",\n  \"role_id\": 1\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"carlos@aroma.mx\",\n  \"password\": \"secret123\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d=pm.response.json();",
+                  "if(d.success){ pm.collectionVariables.set('token', d.data.token); pm.collectionVariables.set('empresa_id', String(d.data.user.empresa_id)); }",
+                  "pm.test('token guardado', ()=>pm.expect(pm.collectionVariables.get('token')).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Empresas",
+      "item": [
+        {
+          "name": "Listar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/empresas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "empresas"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Obtener",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/empresas/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "empresas",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Usuarios",
+      "item": [
+        {
+          "name": "Listar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/usuarios/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "usuarios",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/usuarios/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "usuarios",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Barista 1\",\n  \"codigo_ingreso\": \"0002\",\n  \"puesto\": \"Barista\",\n  \"role_id\": 1\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Proveedores",
+      "item": [
+        {
+          "name": "Listar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/proveedores/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proveedores",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/proveedores/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proveedores",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Central de Abastos\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Productos",
+      "item": [
+        {
+          "name": "Listar (con filtros)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/productos/{{empresa_id}}?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "productos",
+                "{{empresa_id}}"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "categoria",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "bajo_minimo",
+                  "value": "true",
+                  "disabled": true
+                },
+                {
+                  "key": "incluir_inactivos",
+                  "value": "true",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Obtener",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/productos/{{empresa_id}}/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "productos",
+                "{{empresa_id}}",
+                "1"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/productos/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "productos",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"producto\": \"Tomate Verde\",\n  \"unidad_medida\": \"g\",\n  \"proveedor_id\": 1,\n  \"categoria\": \"Insumo\",\n  \"cantidad_presentacion\": 1000,\n  \"costo_presentacion\": 25,\n  \"stock_actual\": 5000,\n  \"stock_minimo\": 1000\n}"
+            }
+          }
+        },
+        {
+          "name": "Actualizar",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/productos/{{empresa_id}}/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "productos",
+                "{{empresa_id}}",
+                "1"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"producto\": \"Tomate Verde\",\n  \"unidad_medida\": \"g\",\n  \"proveedor_id\": 1,\n  \"categoria\": \"Insumo\",\n  \"cantidad_presentacion\": 1000,\n  \"costo_presentacion\": 25,\n  \"stock_minimo\": 1000,\n  \"activo\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Desactivar (soft-delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/productos/{{empresa_id}}/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "productos",
+                "{{empresa_id}}",
+                "1"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Movimientos",
+      "item": [
+        {
+          "name": "Listar del producto",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/productos/{{empresa_id}}/1/movimientos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "productos",
+                "{{empresa_id}}",
+                "1",
+                "movimientos"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear (ajuste manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/productos/{{empresa_id}}/1/movimientos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "productos",
+                "{{empresa_id}}",
+                "1",
+                "movimientos"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_movimiento\": \"AJUSTE\",\n  \"cantidad\": -10,\n  \"motivo\": \"merma cocina\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Inventario",
+      "item": [
+        {
+          "name": "Listar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/inventario/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "inventario",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Recetas",
+      "item": [
+        {
+          "name": "Listar (con filtros)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/recetas/{{empresa_id}}?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "recetas",
+                "{{empresa_id}}"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "categoria",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "incluir_inactivos",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Preview de costeo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recetas/{{empresa_id}}/preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "recetas",
+                "{{empresa_id}}",
+                "preview"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"precio_venta\": 85,\n  \"ingredientes\": [\n    {\n      \"producto_id\": 7,\n      \"cantidad\": 200\n    },\n    {\n      \"producto_id\": 8,\n      \"cantidad\": 120\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Crear receta (platillo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recetas/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "recetas",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Chilaquiles Verdes\",\n  \"categoria\": \"Platillos\",\n  \"precio_venta\": 85,\n  \"ingredientes\": [\n    {\n      \"producto_id\": 7,\n      \"cantidad\": 200\n    },\n    {\n      \"producto_id\": 8,\n      \"cantidad\": 120\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Crear preparación (salsa)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recetas/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "recetas",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Salsa Verde\",\n  \"categoria\": \"Salsas\",\n  \"precio_venta\": 0,\n  \"es_preparacion\": true,\n  \"rendimiento\": 1000,\n  \"unidad\": \"ml\",\n  \"stock_minimo\": 500,\n  \"ingredientes\": [\n    {\n      \"producto_id\": 1,\n      \"cantidad\": 700\n    },\n    {\n      \"producto_id\": 2,\n      \"cantidad\": 100\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Detalle de receta",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/recetas/1/detalle",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "recetas",
+                "1",
+                "detalle"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Agregar ingrediente",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/recetas/1/detalle",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "recetas",
+                "1",
+                "detalle"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"producto_id\": 3,\n  \"cantidad\": 50\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Producción",
+      "item": [
+        {
+          "name": "Sugerencias",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/produccion/{{empresa_id}}/sugerencias",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "produccion",
+                "{{empresa_id}}",
+                "sugerencias"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Confirmar",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/produccion/{{empresa_id}}/confirmar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "produccion",
+                "{{empresa_id}}",
+                "confirmar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"producciones\": [\n    {\n      \"receta_id\": 1,\n      \"lotes\": 1\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Compras",
+      "item": [
+        {
+          "name": "Registrar compra",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/compras/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "compras",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"2026-09-21\",\n  \"proveedor_id\": 1,\n  \"referencia\": \"F-001\",\n  \"lineas\": [\n    {\n      \"producto_id\": 1,\n      \"cantidad\": 2000,\n      \"costo_total\": 60\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Historial",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/compras/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "compras",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Detalle",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/compras/{{empresa_id}}/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "compras",
+                "{{empresa_id}}",
+                "1"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Conteos",
+      "item": [
+        {
+          "name": "Plantilla",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conteos/{{empresa_id}}/plantilla",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conteos",
+                "{{empresa_id}}",
+                "plantilla"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Registrar conteo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conteos/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conteos",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"2026-09-21\",\n  \"motivo\": \"Corte semanal\",\n  \"lineas\": [\n    {\n      \"producto_id\": 1,\n      \"stock_fisico\": 4850\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Historial",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conteos/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conteos",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Detalle",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conteos/{{empresa_id}}/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conteos",
+                "{{empresa_id}}",
+                "1"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ventas & PosMap",
+      "item": [
+        {
+          "name": "PosMap listar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pos-map/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "pos-map",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "PosMap crear",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/pos-map/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "pos-map",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre_pos\": \"Chilaquiles Verdes\",\n  \"tipo\": \"RECETA\",\n  \"receta_id\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Importar ventas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ventas/{{empresa_id}}/importar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ventas",
+                "{{empresa_id}}",
+                "importar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"2026-09-20\",\n  \"lineas\": [\n    {\n      \"nombre_pos\": \"Chilaquiles Verdes\",\n      \"cantidad\": 4\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Consultar día",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ventas/{{empresa_id}}/2026-09-20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ventas",
+                "{{empresa_id}}",
+                "2026-09-20"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Revertir día",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ventas/{{empresa_id}}/2026-09-20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ventas",
+                "{{empresa_id}}",
+                "2026-09-20"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reportes",
+      "item": [
+        {
+          "name": "Estado diario",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reportes/{{empresa_id}}/estado?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reportes",
+                "{{empresa_id}}",
+                "estado"
+              ],
+              "query": [
+                {
+                  "key": "fecha",
+                  "value": "2026-09-21",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Inventario valorizado",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reportes/{{empresa_id}}/inventario",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reportes",
+                "{{empresa_id}}",
+                "inventario"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Alertas de stock bajo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reportes/{{empresa_id}}/alertas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reportes",
+                "{{empresa_id}}",
+                "alertas"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Actividad por periodo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reportes/{{empresa_id}}/actividad?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reportes",
+                "{{empresa_id}}",
+                "actividad"
+              ],
+              "query": [
+                {
+                  "key": "desde",
+                  "value": "2026-09-01",
+                  "disabled": true
+                },
+                {
+                  "key": "hasta",
+                  "value": "2026-09-30",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Top consumo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reportes/{{empresa_id}}/consumo?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reportes",
+                "{{empresa_id}}",
+                "consumo"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Categorías",
+      "item": [
+        {
+          "name": "Listar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categorias/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categorias",
+                "{{empresa_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Crear (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categorias/{{empresa_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categorias",
+                "{{empresa_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Bebidas\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Actualizar (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categorias/{{empresa_id}}/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categorias",
+                "{{empresa_id}}",
+                "1"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Bebidas Frías\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Eliminar (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categorias/{{empresa_id}}/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categorias",
+                "{{empresa_id}}",
+                "1"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

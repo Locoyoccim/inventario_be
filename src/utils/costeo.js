@@ -17,7 +17,7 @@ export function margen(precioVenta, costo) {
 // Lee producción y protección del encabezado y la suma del escandallo.
 export async function recalcularCostoTotal(client, recetaId) {
     const cab = await client.query(
-        "SELECT precio_venta, costo_produccion, proteccion_pct FROM recetas WHERE id = $1",
+        "SELECT precio_venta, costo_produccion, proteccion_pct, rendimiento, producto_elaborado_id FROM recetas WHERE id = $1",
         [recetaId]
     );
     if (!cab.rows[0]) return null;
@@ -37,6 +37,20 @@ export async function recalcularCostoTotal(client, recetaId) {
         "UPDATE recetas SET costo_total = $1 WHERE id = $2 RETURNING *",
         [total, recetaId]
     );
+
+    // Si la receta es una preparación, propaga el costo al producto elaborado enlazado.
+    // productos.costo_unitario es GENERATED = costo_presentacion / cantidad_presentacion,
+    // así que con costo_presentacion = costo_total y cantidad_presentacion = rendimiento
+    // el costo por unidad de la preparación queda siempre fresco.
+    const prodElabId = cab.rows[0].producto_elaborado_id;
+    if (prodElabId) {
+        const rendimiento = Number(cab.rows[0].rendimiento) || 1;
+        await client.query(
+            "UPDATE productos SET costo_presentacion = $1, cantidad_presentacion = $2 WHERE id = $3",
+            [Number(total), rendimiento, prodElabId]
+        );
+    }
+
     return upd.rows[0];
 }
 

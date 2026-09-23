@@ -12,7 +12,10 @@ export default class RecetaController {
         if (!(await this.recetaService.existsEmpresa(empresa_id)))
             throw ApiError.notFound("Empresa no encontrada");
         const { limit, offset } = parsePagination(req.query);
-        const { rows, total } = await this.recetaService.getAllRecetas(empresa_id, { limit, offset });
+        const q = (req.query.q ?? "").toString().trim() || null;
+        const categoria = (req.query.categoria ?? "").toString().trim() || null;
+        const incluirInactivos = ["true", "1"].includes(String(req.query.incluir_inactivos));
+        const { rows, total } = await this.recetaService.getAllRecetas(empresa_id, { limit, offset, q, categoria, incluirInactivos });
         res.json({ success: true, data: rows, pagination: { limit, offset, total } });
     });
 

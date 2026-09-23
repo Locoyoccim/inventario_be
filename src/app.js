@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import routes from "./routes/index.js";
 import authRoutes from "./routes/auth.routes.js";
 import { requireAuth } from "./middlewares/auth.js";
@@ -8,10 +10,34 @@ import { errorHandler } from "./middlewares/errorHandler.js";
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// Detrás de proxy (Railway) para que req.ip sea la IP real del cliente (rate limit correcto).
+app.set("trust proxy", 1);
+
+// Cabeceras de seguridad
+app.use(helmet());
+
+// CORS: si CORS_ORIGINS está definido (lista separada por comas) restringe a esos
+// orígenes; si no, permite todos (cómodo en desarrollo).
+const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean);
+app.use(cors(corsOrigins && corsOrigins.length ? { origin: corsOrigins } : {}));
+
+// Límite de tamaño del body (evita payloads abusivos)
+app.use(express.json({ limit: "100kb" }));
 app.use((req, _res, next) => { if (req.body === undefined || req.body === null) req.body = {}; next(); });
 app.use(requestLogger);
+
+// Healthcheck público (sin auth ni rate limit) — liveness para monitoreo/deploy
+app.get("/health", (_req, res) => res.json({ status: "ok", uptime: process.uptime(), ts: new Date().toISOString() }));
+
+// Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio.
+const limiter = (max, error) =>
+    rateLimit({ windowMs: 60 * 1000, max, standardHeaders: true, legacyHeaders: false, message: { success: false, error } });
+const authLimiter = limiter(10, "Demasiados intentos de acceso. Espera un minuto.");
+const apiLimiter = limiter(300, "Demasiadas solicitudes. Intenta de nuevo en un momento.");
+
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/setup", authLimiter);
+app.use("/api", apiLimiter);
 
 // Rutas de autenticación (login abierto)
 app.use("/api/auth", authRoutes);

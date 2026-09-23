@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 
 const SECRET = process.env.JWT_SECRET;
-const EXPIRES = process.env.JWT_EXPIRES || "8h";
+const EXPIRES = process.env.JWT_EXPIRES || "7d";
 
 export function signToken(payload) {
     if (!SECRET) throw new Error("JWT_SECRET no está configurado en el entorno");

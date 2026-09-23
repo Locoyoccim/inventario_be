@@ -27,3 +27,5 @@ coverage
 *.tmp
 *.sql
 *.dump
+# Migraciones SÍ deben versionarse (Railway las necesita para npm run migrate)
+!db/migrations/*.sql

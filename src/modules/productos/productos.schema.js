@@ -13,4 +13,6 @@ export const productoCreateSchema = z.object({
 
 // Mismos campos para actualizar
 // En update, stock_actual NO se acepta: el stock se ajusta por /movimientos (GAP-06)
-export const productoUpdateSchema = productoCreateSchema.omit({ stock_actual: true });
+export const productoUpdateSchema = productoCreateSchema
+    .omit({ stock_actual: true })
+    .extend({ activo: z.boolean().optional() });

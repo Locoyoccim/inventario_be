@@ -18,14 +18,16 @@ const pool = process.env.DATABASE_URL
           port: process.env.DB_PORT,
       });
 
-// Prueba de conexión
-pool.connect()
-    .then((client) => {
-        client.release();
-        console.log("Conexión a la base de datos exitosa");
-    })
-    .catch((err) => {
-        console.error("Error al conectar a la base de datos:", err.message);
-    });
+// Prueba de conexión (se omite en pruebas: no queremos abrir conexiones ni ruido en node:test)
+if (process.env.NODE_ENV !== "test") {
+    pool.connect()
+        .then((client) => {
+            client.release();
+            console.log("Conexión a la base de datos exitosa");
+        })
+        .catch((err) => {
+            console.error("Error al conectar a la base de datos:", err.message);
+        });
+}
 
 export default pool;
