@@ -7,6 +7,7 @@
     "scripts": {
         "test": "NODE_ENV=test node --test",
         "start": "node server.js",
+        "diagnosticar:login": "node scripts/diagnosticar_login.js",
         "dev": "nodemon server.js",
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",

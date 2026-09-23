@@ -1,14 +1,17 @@
 import jwt from "jsonwebtoken";
 
-const SECRET = process.env.JWT_SECRET;
-const EXPIRES = process.env.JWT_EXPIRES || "7d";
+// Se leen en cada llamada (no al importar el módulo): así no dependen del orden en que
+// se cargue .env respecto a los imports.
+function secret() {
+    const value = process.env.JWT_SECRET;
+    if (!value) throw new Error("JWT_SECRET no está configurado en el entorno");
+    return value;
+}
 
 export function signToken(payload) {
-    if (!SECRET) throw new Error("JWT_SECRET no está configurado en el entorno");
-    return jwt.sign(payload, SECRET, { expiresIn: EXPIRES });
+    return jwt.sign(payload, secret(), { expiresIn: process.env.JWT_EXPIRES || "7d" });
 }
 
 export function verifyToken(token) {
-    if (!SECRET) throw new Error("JWT_SECRET no está configurado en el entorno");
-    return jwt.verify(token, SECRET);
+    return jwt.verify(token, secret());
 }

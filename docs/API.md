@@ -73,6 +73,8 @@ Respuesta: `{ "token": "...", "user": { } }`.
 ```
 Respuesta: `{ "token": "...", "user": { } }` y además `Set-Cookie: gh_session=<token>; HttpOnly; SameSite=Lax`. El token dura **7 días** (config `JWT_EXPIRES`). El front web ignora el `token` del body y usa la cookie (enviar peticiones con `credentials: include` / `withCredentials`).
 
+El correo se compara sin distinguir mayúsculas ni espacios (`lower(trim(email))`), y se guarda en minúsculas al crear usuarios. Si un usuario no puede entrar: `LOGIN_PASSWORD='clave' npm run diagnosticar:login -- correo@dominio.com`.
+
 ### `POST /api/auth/logout`
 Público. Borra la cookie de sesión → `{ "success": true, "data": null }`. (Un JWT ya emitido sigue siendo válido hasta expirar si alguien lo copió; no hay lista de revocación.)
 
