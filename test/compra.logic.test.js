@@ -20,7 +20,8 @@ test("compra: normalizarLineaCompra rechaza cantidad <= 0 y costo negativo", () 
     assert.throws(() => normalizarLineaCompra({ producto_id: 1, cantidad: 5, costo_total: -1 }));
 });
 
-test("compra: costoPresentacionDesde = costo_unitario * cantidad_presentacion (2 dec)", () => {
+test("compra: costoPresentacionDesde = costo_unitario * cantidad_presentacion (4 dec)", () => {
     assert.equal(costoPresentacionDesde(0.03, 1000), 30);
-    assert.equal(costoPresentacionDesde(0.021046, 1000), 21.05);
+    assert.equal(costoPresentacionDesde(0.021046, 1000), 21.046);
+    assert.equal(costoPresentacionDesde(0.0123, 1), 0.0123); // presentacion chica: ya no se trunca a 0.01
 });

@@ -106,9 +106,12 @@ Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo
 - `DELETE /api/usuarios/:empresa_id/:id` *(Admin)* — borrado físico; para conservar historial usa `activo: false`.
 
 ## Proveedores
-- `GET /api/proveedores/:empresa_id` · `GET /api/proveedores/:empresa_id/:id`
+Cada proveedor trae `activo`. El borrado es **lógico** (soft-delete): nunca se elimina físicamente, para conservar el historial de compras y productos.
+- `GET /api/proveedores/:empresa_id` — solo **activos** por defecto; `?incluir_inactivos=true` incluye los desactivados. `GET /api/proveedores/:empresa_id/:id`.
 - `POST /api/proveedores/:empresa_id` — `{ "nombre", "telefono?", "email?", "domicilio?" }`
-- `PUT` · `DELETE` (mismos campos)
+- `PUT /api/proveedores/:empresa_id/:id` — mismos campos; acepta `"activo": true` para **reactivar** un proveedor desactivado.
+- `DELETE /api/proveedores/:empresa_id/:id` — **desactiva** (`activo=false`) y devuelve el proveedor.
+- Un producto o compra **no** puede usar un proveedor inactivo (o de otra empresa) → `400`. Un producto que ya referencia un proveedor desactivado sigue mostrando su nombre y puede editarse mientras no cambie de proveedor.
 
 ## Categorías (lista compartida, administrable)
 Una sola lista por empresa para productos y recetas; el front la usa para el selector. Se siembra con las categorías que ya usabas.
@@ -121,7 +124,7 @@ Una sola lista por empresa para productos y recetas; el front la usa para el sel
 
 ## Productos
 
-Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion`. El `costo_unitario` es **calculado** (`costo_presentacion / cantidad_presentacion`). El stock vive en inventario y **solo** cambia por `/movimientos`, `/compras`, `/produccion` o `/conteos`.
+Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion`. El `costo_unitario` es **calculado** (`costo_presentacion / cantidad_presentacion`) con 4 decimales; `costo_presentacion` admite hasta 4 decimales (migración 011), de modo que insumos con presentación chica (p.ej. `cantidad_presentacion=1`) conservan el costo real (ej. `0.0123`) sin redondear a `0.01`. El stock vive en inventario y **solo** cambia por `/movimientos`, `/compras`, `/produccion` o `/conteos`.
 
 ### `GET /api/productos/:empresa_id`
 Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `proveedor_id`, `proveedor` (nombre), `stock_actual`, `stock_minimo`, `es_elaborado` y `activo`.

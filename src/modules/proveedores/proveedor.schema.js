@@ -5,4 +5,7 @@ export const proveedorCreateSchema = z.object({
     email: z.string().trim().optional(),
     domicilio: z.string().trim().optional(),
 });
-export const proveedorUpdateSchema = proveedorCreateSchema;
+// En update se permite 'activo' para reactivar un proveedor desactivado.
+export const proveedorUpdateSchema = proveedorCreateSchema.extend({
+    activo: z.boolean().optional(),
+});

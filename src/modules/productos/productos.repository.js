@@ -97,6 +97,14 @@ export default class ProductoRepository {
             }
         }
 
+        // Proveedor: debe existir en la empresa y estar activo (B-A3)
+        const prov = await pool.query(
+            "SELECT activo FROM proveedores WHERE id = $1 AND empresa_id = $2",
+            [proveedor_id, empresa_id]
+        );
+        if (prov.rowCount === 0) throw ApiError.badRequest("El proveedor no existe en la empresa");
+        if (prov.rows[0].activo === false) throw ApiError.badRequest("El proveedor está inactivo");
+
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -137,6 +145,21 @@ export default class ProductoRepository {
             if (valor === undefined || valor === null || valor === "") {
                 throw ApiError.badRequest(`El campo '${campo}' es requerido`);
             }
+        }
+
+        // Proveedor: solo se valida si CAMBIA; se permite conservar el actual aunque esté inactivo (B-A3)
+        const actual = await pool.query(
+            "SELECT proveedor_id FROM productos WHERE id = $1 AND empresa_id = $2",
+            [id, empresa_id]
+        );
+        const proveedorActual = actual.rows[0]?.proveedor_id;
+        if (proveedor_id != null && Number(proveedor_id) !== Number(proveedorActual)) {
+            const prov = await pool.query(
+                "SELECT activo FROM proveedores WHERE id = $1 AND empresa_id = $2",
+                [proveedor_id, empresa_id]
+            );
+            if (prov.rowCount === 0) throw ApiError.badRequest("El proveedor no existe en la empresa");
+            if (prov.rows[0].activo === false) throw ApiError.badRequest("El proveedor está inactivo");
         }
 
         const client = await pool.connect();

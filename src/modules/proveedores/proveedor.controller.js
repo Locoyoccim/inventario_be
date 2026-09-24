@@ -10,7 +10,9 @@ export default class ProveedorController {
         const { empresa_id } = req.params;
         if (!(await this.proveedorService.existsEmpresa(empresa_id)))
             throw ApiError.notFound("Empresa no encontrada");
-        res.json({ success: true, data: await this.proveedorService.getAllProveedores(empresa_id) });
+        const incluirInactivos = req.query.incluir_inactivos === "true" || req.query.incluir_inactivos === "1";
+        const data = await this.proveedorService.getAllProveedores(empresa_id, { incluirInactivos });
+        res.json({ success: true, data });
     });
 
     listarPorId = asyncHandler(async (req, res) => {
@@ -35,9 +37,10 @@ export default class ProveedorController {
         res.json({ success: true, data: actualizado });
     });
 
+    // Soft-delete: desactiva y devuelve el proveedor.
     eliminar = asyncHandler(async (req, res) => {
         const { id, empresa_id } = req.params;
-        await this.proveedorService.deleteProveedor(id, empresa_id);
-        res.json({ success: true, message: "Proveedor eliminado exitosamente" });
+        const desactivado = await this.proveedorService.deleteProveedor(id, empresa_id);
+        res.json({ success: true, data: desactivado, message: "Proveedor desactivado" });
     });
 }

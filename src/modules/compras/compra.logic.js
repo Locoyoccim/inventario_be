@@ -27,5 +27,5 @@ export function normalizarLineaCompra(linea) {
 // Persistencia del costo reutilizando la columna generada:
 // costo_presentacion = costo_unitario * cantidad_presentacion (=> costo_unitario se mantiene).
 export function costoPresentacionDesde(costoUnitario, cantidadPresentacion) {
-    return Number((Number(costoUnitario) * Number(cantidadPresentacion)).toFixed(2));
+    return Number((Number(costoUnitario) * Number(cantidadPresentacion)).toFixed(4));
 }

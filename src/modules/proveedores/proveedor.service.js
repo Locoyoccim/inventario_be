@@ -4,8 +4,8 @@ export default class ProveedorService {
         this.empresaRepository = empresaRepository;
     }
 
-    async getAllProveedores(empresa_id) {
-        return await this.proveedorRepository.findAll(empresa_id);
+    async getAllProveedores(empresa_id, opts = {}) {
+        return await this.proveedorRepository.findAll(empresa_id, opts);
     }
 
     async getProveedorById(empresa_id, id) {

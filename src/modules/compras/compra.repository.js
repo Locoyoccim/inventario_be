@@ -70,6 +70,16 @@ export default class CompraRepository {
             throw ApiError.badRequest("Se requiere al menos una línea en 'lineas'");
         }
 
+        // Proveedor (opcional): si viene, debe existir en la empresa y estar activo (B-A3)
+        if (proveedor_id != null) {
+            const prov = await pool.query(
+                "SELECT activo FROM proveedores WHERE id = $1 AND empresa_id = $2",
+                [proveedor_id, empresa_id]
+            );
+            if (prov.rowCount === 0) throw ApiError.badRequest("El proveedor no existe en la empresa");
+            if (prov.rows[0].activo === false) throw ApiError.badRequest("El proveedor está inactivo");
+        }
+
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
