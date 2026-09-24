@@ -34,6 +34,22 @@ const QUERIES = {
         WHERE referencia_tipo = 'VENTA_DIARIA' AND referencia_id = $1 AND tipo_movimiento = 'VENTA'
     `,
     DELETE_VENTA: `DELETE FROM venta_diaria WHERE id = $1 AND empresa_id = $2 RETURNING id`,
+    // Días importados con conteo de insumos que quedaron en negativo AL MOMENTO del import.
+    LIST_DIAS: `
+        SELECT vd.id, vd.fecha, vd.total_lineas, vd.total_unidades, vd.procesado_at,
+               COALESCE(neg.insumos_negativos, 0) AS insumos_negativos
+        FROM venta_diaria vd
+        LEFT JOIN (
+            SELECT referencia_id, COUNT(DISTINCT producto_id) AS insumos_negativos
+            FROM movimientosinventario
+            WHERE referencia_tipo = 'VENTA_DIARIA' AND tipo_movimiento = 'VENTA' AND stock_nuevo < 0
+            GROUP BY referencia_id
+        ) neg ON neg.referencia_id = vd.id
+        WHERE vd.empresa_id = $1
+          AND ($2::date IS NULL OR vd.fecha >= $2::date)
+          AND ($3::date IS NULL OR vd.fecha <= $3::date)
+        ORDER BY vd.fecha DESC
+    `,
 };
 
 // --- Lógica pura (testeable sin BD) --------------------------------------
@@ -198,6 +214,45 @@ export default class VentaRepository {
         } finally {
             client.release();
         }
+    }
+
+    // Lista los días importados (encabezados) con su conteo de insumos en negativo.
+    async listarDias(empresa_id, { desde = null, hasta = null } = {}) {
+        const res = await pool.query(QUERIES.LIST_DIAS, [empresa_id, desde, hasta]);
+        return res.rows;
+    }
+
+    // Previsualiza el efecto de un mix de ventas SIN escribir nada (mapeo + consumo).
+    async previsualizar(empresa_id, lineas) {
+        const [posMapRes, detalleRes, prodRes] = await Promise.all([
+            pool.query(QUERIES.POS_MAP, [empresa_id]),
+            pool.query(QUERIES.RECETA_DETALLE, [empresa_id]),
+            pool.query(QUERIES.PRODUCTOS_EMPRESA, [empresa_id]),
+        ]);
+        const { consumo, sin_mapeo, ignorados, recetas_sin_escandallo } = calcularConsumo(
+            lineas,
+            posMapRes.rows,
+            detalleRes.rows,
+        );
+        const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
+        const consumoList = [];
+        const errores = [];
+        for (const [producto_id, cantidad] of consumo.entries()) {
+            if (!nombrePorId.has(producto_id)) {
+                errores.push({ producto_id, motivo: "El mapeo apunta a un insumo inexistente en la empresa" });
+            } else {
+                consumoList.push({ producto_id, producto: nombrePorId.get(producto_id), cantidad });
+            }
+        }
+        return {
+            total_lineas: lineas.length,
+            total_unidades: lineas.reduce((sum, l) => sum + Number(l.cantidad), 0),
+            consumo: consumoList,
+            sin_mapeo,
+            ignorados,
+            recetas_sin_escandallo,
+            errores,
+        };
     }
 
     async consultarDia(empresa_id, fecha) {
