@@ -101,7 +101,9 @@ export default class ProduccionRepository {
                 // 1) Consumir insumos del escandallo (PRODUCCION -, estricto: no permite negativo)
                 const detRes = await client.query(QUERIES.SELECT_DETALLE_RECETA, [receta_id]);
                 const insumosConsumidos = [];
-                for (const d of detRes.rows) {
+                // Bloqueo en orden por producto_id: evita deadlocks entre producciones concurrentes.
+                const detOrden = [...detRes.rows].sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
+                for (const d of detOrden) {
                     const cantidad = cantidadInsumo(d.cantidad, nLotes);
                     const mov = await this.movimientoRepository.aplicar(
                         client,

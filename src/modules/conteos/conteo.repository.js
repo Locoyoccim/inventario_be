@@ -84,7 +84,9 @@ export default class ConteoRepository {
             const cab = (await client.query(QUERIES.INSERT_HEADER, [empresa_id, fecha, usuario_id, motivo])).rows[0];
 
             const detalle = [];
-            for (const l of lineas) {
+            // Bloqueo en orden por producto_id: evita deadlocks entre conteos concurrentes.
+            const lineasOrden = [...lineas].sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
+            for (const l of lineasOrden) {
                 const producto_id = Number(l.producto_id);
                 const stockFisico = Number(l.stock_fisico);
                 if (!Number.isFinite(stockFisico) || stockFisico < 0) {

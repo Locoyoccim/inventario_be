@@ -89,7 +89,9 @@ export default class CompraRepository {
 
             const detalle = [];
             let total = 0;
-            for (const l of lineas) {
+            // Bloqueo en orden por producto_id: evita deadlocks entre compras concurrentes.
+            const lineasOrden = [...lineas].sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
+            for (const l of lineasOrden) {
                 const producto_id = Number(l.producto_id);
                 const { cantidad, costoTotal, precioCompra } = normalizarLineaCompra(l);
 

@@ -161,6 +161,8 @@ export default class VentaRepository {
             ]);
             const venta = ventaRes.rows[0];
 
+            // Bloqueo en orden por producto_id: evita deadlocks entre importaciones concurrentes.
+            aDescontar.sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
             for (const item of aDescontar) {
                 const mov = await this.movimientoRepository.aplicar(
                     client,

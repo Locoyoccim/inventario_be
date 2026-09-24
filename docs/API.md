@@ -16,7 +16,8 @@ API REST multiempresa (Node/Express + PostgreSQL) para café-restaurante: produc
 Cabeceras de seguridad (`helmet`), body limitado a 100 KB, y **rate limiting**: 10 req/min por IP en `login`/`setup` (anti fuerza bruta) y 300 req/min por IP en el resto de `/api` → responde `429` al excederlo.
 
 ### Healthcheck
-`GET /health` (público, sin token) → `{ "status": "ok", "uptime": ..., "ts": "..." }`. Útil para monitoreo y deploy.
+`GET /health` (público, sin token) → `{ "status": "ok", "uptime": ..., "ts": "..." }` — liveness, no toca la BD.
+`GET /health/ready` → readiness: hace `SELECT 1` contra la BD; `200` si responde, `503` si no.
 
 ### CORS
 Por defecto permite todos los orígenes (desarrollo). En producción, define `CORS_ORIGINS` (lista separada por comas) para restringir a los dominios del front.
@@ -76,7 +77,10 @@ Respuesta: `{ "token": "...", "user": { } }` y además `Set-Cookie: gh_session=<
 El correo se compara sin distinguir mayúsculas ni espacios (`lower(trim(email))`), y se guarda en minúsculas al crear usuarios. Si un usuario no puede entrar: `LOGIN_PASSWORD='clave' npm run diagnosticar:login -- correo@dominio.com`.
 
 ### `POST /api/auth/logout`
-Público. Borra la cookie de sesión → `{ "success": true, "data": null }`. (Un JWT ya emitido sigue siendo válido hasta expirar si alguien lo copió; no hay lista de revocación.)
+Público. Borra la cookie de **este** dispositivo → `{ "success": true, "data": null }`. No revoca otros tokens.
+
+### `POST /api/auth/logout-all`
+Requiere sesión. Sube la `token_version` del usuario → **revoca todas** sus sesiones vigentes (cookie y Bearer) y borra la cookie actual. La revocación surte efecto a más tardar en 1 minuto (caché). Un admin puede forzar el cierre de otro usuario con `forzar_cierre_sesion: true` en el `PUT` de usuarios.
 
 ### `GET /api/auth/me`
 Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email, empresa_id, is_admin, is_owner }` (mismo formato que `user` en login). `401` si el usuario ya no existe.
@@ -94,15 +98,15 @@ Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo
 ## Empresas
 - `GET /api/empresas` — lista (solo la propia)
 - `GET /api/empresas/:id`
-- `POST /api/empresas` *(owner/admin)* — `{ "nombre", "titular?", "telefono?", "email?", "domicilio?" }`
+- `POST /api/empresas` *(plataforma)* — crea un tenant nuevo; exige el header `x-platform-token: <PLATFORM_TOKEN>` (sin esa variable, el endpoint queda cerrado). `{ "nombre", "titular?", "telefono?", "email?", "domicilio?" }`
 - `PUT /api/empresas/:id` *(owner/admin)*
-- `DELETE /api/empresas/:id` *(owner/admin)*
+- `DELETE /api/empresas/:id` *(solo dueño)* — borra la empresa (en cascada); requiere `is_owner`.
 
 ## Usuarios
 - `GET /api/usuarios/:empresa_id` · `GET /api/usuarios/:empresa_id/:id`
 - Cada usuario trae `email`, `activo`, `role_id` y `rol`.
 - `POST /api/usuarios/:empresa_id` *(Admin)* — `{ "nombre", "codigo_ingreso", "puesto?", "role_id?", "is_admin?", "email?", "password?" }`
-- `PUT /api/usuarios/:empresa_id/:id` *(Admin)* — `nombre` y `codigo_ingreso` requeridos; el resto es opcional y **lo que no se envía se conserva**: `puesto`, `is_admin`, `role_id`, `email`, `password` (se hashea), `activo`. `is_owner` no se cambia por API. Nadie puede desactivarse ni quitarse Admin a sí mismo, y al dueño no se le desactiva ni se le quita Admin (`400`).
+- `PUT /api/usuarios/:empresa_id/:id` *(Admin)* — `nombre` y `codigo_ingreso` requeridos; el resto es opcional y **lo que no se envía se conserva**: `puesto`, `is_admin`, `role_id`, `email`, `password` (se hashea), `activo` y `forzar_cierre_sesion` (revoca las sesiones vigentes del usuario). `is_owner` no se cambia por API. Nadie puede desactivarse ni quitarse Admin a sí mismo, y al dueño no se le desactiva ni se le quita Admin (`400`).
 - `DELETE /api/usuarios/:empresa_id/:id` *(Admin)* — borrado físico; para conservar historial usa `activo: false`.
 
 ## Proveedores
@@ -246,7 +250,7 @@ Respuesta: `data.detalle` (varianza y valor por producto) + `data.resumen` (`val
 ### PosMap — mapea nombres del reporte a recetas/insumos
 - `GET /api/pos-map/:empresa_id`
 - `POST /api/pos-map/:empresa_id` — `{ "nombre_pos": "Chilaquiles Verdes", "tipo": "RECETA|INSUMO|IGNORAR", "receta_id?": 2, "producto_id?": null, "factor?": 1 }`
-- `POST /api/pos-map/:empresa_id/bulk` — arreglo de mapeos · `PUT` · `DELETE`
+- `POST /api/pos-map/:empresa_id/bulk` — arreglo de mapeos (devuelve los creados) · `PUT` · `DELETE`. `receta_id`/`producto_id` deben ser de la misma empresa, o `400`.
 
 ### Importar ventas
 - `POST /api/ventas/:empresa_id/importar`
@@ -255,6 +259,8 @@ Respuesta: `data.detalle` (varianza y valor por producto) + `data.resumen` (`val
 ```
 También acepta `"csv": "<reporte Toteat crudo>"`. Explota recetas a insumos y descuenta stock. Reimportar el mismo día → `409` (revierte primero).
 - `GET /api/ventas/:empresa_id/:fecha` (consultar) · `DELETE /api/ventas/:empresa_id/:fecha` (revertir)
+- `GET /api/ventas/:empresa_id?desde=&hasta=` — días importados: `{ fecha, total_lineas, total_unidades, procesado_at, insumos_negativos }` (insumos que quedaron en negativo al importar).
+- `POST /api/ventas/:empresa_id/preview` — `{ csv | lineas }` devuelve el mapeo y el consumo resultante **sin guardar nada**.
 
 ## Reportes (solo lectura)
 - `GET /api/reportes/:empresa_id/estado?fecha=YYYY-MM-DD` — KPIs del día: valor de inventario, alertas, compras/consumo/mermas del día.
