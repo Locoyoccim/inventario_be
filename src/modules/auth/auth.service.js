@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { signToken } from "../../utils/jwt.js";
 import ApiError from "../../utils/ApiError.js";
+import { invalidarUsuarioActivo } from "../../middlewares/activeUser.js";
 
 export default class AuthService {
     constructor(usuarioRepository) {
@@ -26,7 +27,7 @@ export default class AuthService {
         });
         const token = signToken({
             id: creado.id, empresa_id: creado.empresa_id,
-            is_admin: true, is_owner: true, role_id: creado.role_id,
+            is_admin: true, is_owner: true, role_id: creado.role_id, tv: 0,
         });
         return { token, user: creado };
     }
@@ -56,6 +57,7 @@ export default class AuthService {
             is_admin: u.is_admin,
             is_owner: u.is_owner,
             role_id: u.role_id,
+            tv: u.token_version ?? 0,
         });
         return {
             token,
@@ -64,5 +66,11 @@ export default class AuthService {
                 empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
             },
         };
+    }
+
+    // Cierra TODAS las sesiones del usuario: sube token_version (revoca los JWT vigentes).
+    async logoutAll(user) {
+        await this.usuarioRepository.bumpTokenVersion(user.empresa_id, user.id);
+        invalidarUsuarioActivo(user.id);
     }
 }

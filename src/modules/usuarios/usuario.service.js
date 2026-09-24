@@ -46,8 +46,13 @@ export default class UsuarioService {
         }
         const payload = { ...data };
         delete payload.password;
+        delete payload.forzar_cierre_sesion;
         if (data.password) payload.password_hash = await bcrypt.hash(data.password, 10);
         const actualizado = await this.usuarioRepository.update(empresa_id, id, payload);
+        // Admin fuerza el cierre de sesión del usuario objetivo (revoca sus JWT vigentes).
+        if (data.forzar_cierre_sesion) {
+            await this.usuarioRepository.bumpTokenVersion(empresa_id, id);
+        }
         invalidarUsuarioActivo(id);
         return actualizado;
     }

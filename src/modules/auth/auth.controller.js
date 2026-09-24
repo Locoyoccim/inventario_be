@@ -28,8 +28,15 @@ export default class AuthController {
         res.json({ success: true, data });
     });
 
-    // Público e idempotente: borra la cookie aunque ya no haya sesión.
+    // Público e idempotente: borra la cookie aunque ya no haya sesión (solo este dispositivo).
     logout = asyncHandler(async (_req, res) => {
+        res.clearCookie(AUTH_COOKIE, clearAuthCookieOptions());
+        res.json({ success: true, data: null });
+    });
+
+    // Cierra la sesión en TODOS los dispositivos (revoca los JWT vigentes del usuario).
+    logoutAll = asyncHandler(async (req, res) => {
+        await this.authService.logoutAll(req.user);
         res.clearCookie(AUTH_COOKIE, clearAuthCookieOptions());
         res.json({ success: true, data: null });
     });

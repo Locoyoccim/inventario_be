@@ -10,4 +10,6 @@ export const usuarioCreateSchema = z.object({
     password: z.string().min(6, "password debe tener al menos 6 caracteres").optional(),
 });
 // Update: password opcional (solo si se cambia), activo para activar/desactivar; is_owner no se toca.
-export const usuarioUpdateSchema = usuarioCreateSchema.omit({ is_owner: true }).extend({ activo: z.boolean().optional() });
+export const usuarioUpdateSchema = usuarioCreateSchema
+    .omit({ is_owner: true })
+    .extend({ activo: z.boolean().optional(), forzar_cierre_sesion: z.boolean().optional() });

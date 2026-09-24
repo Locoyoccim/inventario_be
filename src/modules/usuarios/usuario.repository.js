@@ -24,7 +24,7 @@ const QUERIES = {
     `,
     SELECT_COUNT: `SELECT COUNT(*)::int AS total FROM usuarios`,
     SELECT_BY_EMAIL: `
-        SELECT id, nombre, email, password_hash, is_admin, is_owner, role_id, empresa_id, activo
+        SELECT id, nombre, email, password_hash, is_admin, is_owner, role_id, empresa_id, activo, token_version
         FROM usuarios
         WHERE lower(trim(email)) = lower(trim($1))
         ORDER BY id
@@ -55,6 +55,7 @@ const QUERIES = {
         LEFT JOIN roles r ON u.role_id = r.id
     `,
     DELETE: `DELETE FROM usuarios WHERE empresa_id = $1 AND id = $2 RETURNING id`,
+    BUMP_TOKEN: `UPDATE usuarios SET token_version = token_version + 1 WHERE id = $1 AND empresa_id = $2 RETURNING token_version`,
 };
 
 export default class UsuarioRepository {
@@ -108,6 +109,12 @@ export default class UsuarioRepository {
 
     async findProfile(empresa_id, id) {
         const result = await pool.query(QUERIES.SELECT_PROFILE, [empresa_id, id]);
+        return result.rows[0];
+    }
+
+    // Sube la versión de token del usuario: invalida todas sus sesiones (JWT) vigentes.
+    async bumpTokenVersion(empresa_id, id) {
+        const result = await pool.query(QUERIES.BUMP_TOKEN, [id, empresa_id]);
         return result.rows[0];
     }
 
