@@ -1,4 +1,5 @@
 import pool from "../../config/db.js";
+import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
     SELECT_ALL: `SELECT * FROM empresas ORDER BY id ASC`,
@@ -35,33 +36,25 @@ export default class EmpresaRepository {
     }
 
     async create({ nombre, titular, telefono, email, domicilio }) {
-        if (!nombre || !titular || !telefono || !email || !domicilio) {
-            throw new Error("Todos los campos son requeridos");
-        }
+        if (!nombre) throw ApiError.badRequest("nombre es requerido");
 
-        const values = [nombre, titular, telefono, email, domicilio];
+        const values = [nombre, titular ?? null, telefono ?? null, email ?? null, domicilio ?? null];
         const result = await pool.query(QUERIES.INSERT, values);
         return result.rows[0];
     }
 
     async update(id, { nombre, titular, telefono, email, domicilio }) {
-        if (!id) throw new Error("ID es requerido");
-        if (!nombre || !titular || !telefono || !email || !domicilio) {
-            throw new Error("Todos los campos son requeridos");
-        }
+        if (!id) throw ApiError.badRequest("ID es requerido");
+        if (!nombre) throw ApiError.badRequest("nombre es requerido");
 
-        const values = [nombre, titular, telefono, email, domicilio, id];
+        const values = [nombre, titular ?? null, telefono ?? null, email ?? null, domicilio ?? null, id];
         const result = await pool.query(QUERIES.UPDATE, values);
         return result.rows[0];
     }
 
     async remove(id) {
-        try {
-            if (!id) throw new Error("ID es requerido");
-            const result = await pool.query(QUERIES.DELETE, [id]);
-            return result.rows[0];
-        } catch (error) {
-            throw new Error(`Error al eliminar empresa: ${error.message}`);
-        }
+        if (!id) throw ApiError.badRequest("ID es requerido");
+        const result = await pool.query(QUERIES.DELETE, [id]);
+        return result.rows[0];
     }
 }

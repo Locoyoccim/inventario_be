@@ -8,6 +8,7 @@ import { requireAuth } from "./middlewares/auth.js";
 import { requireActiveUser } from "./middlewares/activeUser.js";
 import { requestLogger } from "./middlewares/requestLogger.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
+import pool from "./config/db.js";
 
 const app = express();
 
@@ -34,6 +35,17 @@ app.use(requestLogger);
 
 // Healthcheck público (sin auth ni rate limit) — liveness para monitoreo/deploy
 app.get("/health", (_req, res) => res.json({ status: "ok", uptime: process.uptime(), ts: new Date().toISOString() }));
+
+// Readiness: verifica la BD (SELECT 1). 503 si no responde. Separado de /health (liveness)
+// para que un parpadeo de la base no provoque reinicios del contenedor.
+app.get("/health/ready", async (_req, res) => {
+    try {
+        await pool.query("SELECT 1");
+        res.json({ status: "ready", ts: new Date().toISOString() });
+    } catch {
+        res.status(503).json({ status: "unavailable" });
+    }
+});
 
 // Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio.
 const limiter = (max, error) =>

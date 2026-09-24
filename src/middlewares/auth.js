@@ -43,5 +43,21 @@ export function requireOwnerOrAdmin(req, _res, next) {
     next(ApiError.forbidden("Requiere permisos de administrador"));
 }
 
+// Exige rol de dueño (is_owner). Para acciones destructivas a nivel empresa.
+export function requireOwner(req, _res, next) {
+    if (req.user && req.user.is_owner) return next();
+    next(ApiError.forbidden("Requiere ser dueño de la empresa"));
+}
+
+// Exige el token de plataforma para operaciones de nivel plataforma (p. ej. crear empresas).
+// Sin PLATFORM_TOKEN configurado en el entorno, el endpoint queda cerrado.
+export function requirePlatformToken(req, _res, next) {
+    const expected = process.env.PLATFORM_TOKEN;
+    if (!expected || req.headers["x-platform-token"] !== expected) {
+        return next(ApiError.forbidden("Operación no permitida"));
+    }
+    next();
+}
+
 // Rol Admin = dueño o administrador. El resto de usuarios son "Operativo".
 export const requireAdmin = requireOwnerOrAdmin;

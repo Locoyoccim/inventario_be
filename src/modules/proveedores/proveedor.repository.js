@@ -1,4 +1,5 @@
 import pool from "../../config/db.js";
+import ApiError from "../../utils/ApiError.js";
 
 // Columnas expuestas del proveedor (incluye 'activo' para soft-delete)
 const COLS = "P.id, P.nombre, P.telefono, P.email, P.domicilio, P.empresa_id, P.activo";
@@ -40,8 +41,8 @@ export default class ProveedorRepository {
     }
 
     async findByID(empresa_id, id) {
-        if (!empresa_id) throw new Error("empresa_id es requerido");
-        if (!id) throw new Error("ID es requerido");
+        if (!empresa_id) throw ApiError.badRequest("empresa_id es requerido");
+        if (!id) throw ApiError.badRequest("ID es requerido");
         const result = await pool.query(QUERIES.SELECT_BY_ID, [empresa_id, id]);
         return result.rows[0];
     }
@@ -54,16 +55,16 @@ export default class ProveedorRepository {
 
     async create(data, empresa_id) {
         const { nombre, domicilio = null, telefono = null, email = null } = data;
-        if (!nombre || !empresa_id) throw new Error("nombre y empresa_id son requeridos");
+        if (!nombre || !empresa_id) throw ApiError.badRequest("nombre y empresa_id son requeridos");
         const result = await pool.query(QUERIES.INSERT, [nombre, telefono, email, domicilio, empresa_id]);
         return result.rows[0];
     }
 
     async update(id, data, empresa_id) {
-        if (!id) throw new Error("ID es requerido");
-        if (!empresa_id) throw new Error("empresa_id es requerido");
+        if (!id) throw ApiError.badRequest("ID es requerido");
+        if (!empresa_id) throw ApiError.badRequest("empresa_id es requerido");
         const { nombre, telefono = null, email = null, domicilio = null, activo } = data;
-        if (!nombre) throw new Error("nombre es requerido");
+        if (!nombre) throw ApiError.badRequest("nombre es requerido");
         const result = await pool.query(QUERIES.UPDATE, [
             nombre, telefono, email, domicilio, id, empresa_id, activo ?? null,
         ]);
@@ -72,10 +73,10 @@ export default class ProveedorRepository {
 
     // Soft-delete: devuelve el proveedor desactivado (o lanza si no existe).
     async remove(id, empresa_id) {
-        if (!empresa_id) throw new Error("empresa_id es requerido");
-        if (!id) throw new Error("ID es requerido");
+        if (!empresa_id) throw ApiError.badRequest("empresa_id es requerido");
+        if (!id) throw ApiError.badRequest("ID es requerido");
         const result = await pool.query(QUERIES.SOFT_DELETE, [id, empresa_id]);
-        if (result.rowCount === 0) throw new Error("Proveedor no encontrado");
+        if (result.rowCount === 0) throw ApiError.notFound("Proveedor no encontrado");
         return result.rows[0];
     }
 }

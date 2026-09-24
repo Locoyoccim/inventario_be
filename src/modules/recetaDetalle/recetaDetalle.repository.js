@@ -68,7 +68,7 @@ export default class RecetaDetalleRepository {
             return detalle;
         } catch (error) {
             await client.query("ROLLBACK");
-            throw new Error(`Error al crear detalle de receta: ${error.message}`);
+            throw error;
         } finally {
             client.release();
         }
@@ -89,7 +89,7 @@ export default class RecetaDetalleRepository {
             return detalle;
         } catch (error) {
             await client.query("ROLLBACK");
-            throw new Error(`Error al actualizar detalle de receta: ${error.message}`);
+            throw error;
         } finally {
             client.release();
         }
@@ -106,7 +106,7 @@ export default class RecetaDetalleRepository {
             return detalle;
         } catch (error) {
             await client.query("ROLLBACK");
-            throw new Error(`Error al eliminar detalle de receta: ${error.message}`);
+            throw error;
         } finally {
             client.release();
         }

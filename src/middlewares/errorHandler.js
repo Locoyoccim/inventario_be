@@ -9,6 +9,8 @@ const PG_ERRORS = {
     "23514": [400, "Un valor no cumple una restricción de la base"],
     "22P02": [400, "Formato de dato inválido"],
     "22003": [400, "Un número está fuera de rango"],
+    "22007": [400, "Fecha inválida"],
+    "22008": [400, "Fecha inválida"],
 };
 
 // Middleware central de errores (debe ir DESPUÉS de las rutas).

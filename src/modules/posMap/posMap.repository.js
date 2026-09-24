@@ -34,6 +34,8 @@ const QUERIES = {
         RETURNING id, empresa_id, nombre_pos, tipo, receta_id, producto_id, factor, created_at
     `,
     DELETE: `DELETE FROM pos_map WHERE id = $1 AND empresa_id = $2 RETURNING id`,
+    EXISTS_RECETA: `SELECT 1 FROM recetas WHERE id = $1 AND empresa_id = $2`,
+    EXISTS_PRODUCTO: `SELECT 1 FROM productos WHERE id = $1 AND empresa_id = $2`,
 };
 
 // Deja el registro coherente con la restricción de la BD y normaliza el nombre.
@@ -64,6 +66,18 @@ function prepararFila(empresa_id, data) {
     return { empresa_id, nombre_pos, tipo, receta_id, producto_id, factor };
 }
 
+// Valida que la referencia (receta o producto) pertenezca a la MISMA empresa.
+// q es una función de consulta (pool.query o client.query dentro de una transacción).
+async function validarReferencia(q, empresa_id, fila) {
+    if (fila.tipo === "RECETA") {
+        const r = await q(QUERIES.EXISTS_RECETA, [fila.receta_id, empresa_id]);
+        if (r.rowCount === 0) throw ApiError.badRequest("receta_id no pertenece a la empresa");
+    } else if (fila.tipo === "INSUMO") {
+        const r = await q(QUERIES.EXISTS_PRODUCTO, [fila.producto_id, empresa_id]);
+        if (r.rowCount === 0) throw ApiError.badRequest("producto_id no pertenece a la empresa");
+    }
+}
+
 export default class PosMapRepository {
     async findAll(empresa_id) {
         const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id]);
@@ -77,6 +91,7 @@ export default class PosMapRepository {
 
     async upsert(empresa_id, data) {
         const f = prepararFila(empresa_id, data);
+        await validarReferencia((sql, p) => pool.query(sql, p), empresa_id, f);
         const result = await pool.query(QUERIES.UPSERT, [
             f.empresa_id, f.nombre_pos, f.tipo, f.receta_id, f.producto_id, f.factor,
         ]);
@@ -94,6 +109,7 @@ export default class PosMapRepository {
             const resultados = [];
             for (const fila of filas) {
                 const f = prepararFila(empresa_id, fila);
+                await validarReferencia((sql, p) => client.query(sql, p), empresa_id, f);
                 const r = await client.query(QUERIES.UPSERT, [
                     f.empresa_id, f.nombre_pos, f.tipo, f.receta_id, f.producto_id, f.factor,
                 ]);
@@ -111,6 +127,7 @@ export default class PosMapRepository {
 
     async update(id, empresa_id, data) {
         const f = prepararFila(empresa_id, data);
+        await validarReferencia((sql, p) => pool.query(sql, p), empresa_id, f);
         const result = await pool.query(QUERIES.UPDATE_BY_ID, [
             f.nombre_pos, f.tipo, f.receta_id, f.producto_id, f.factor, id, empresa_id,
         ]);
