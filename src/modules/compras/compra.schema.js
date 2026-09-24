@@ -18,3 +18,7 @@ export const compraCreateSchema = z.object({
     referencia: z.string().trim().optional(),
     lineas: z.array(lineaCompra).min(1, "incluye al menos una línea de compra"),
 });
+
+export const compraAnularSchema = z.object({
+    motivo: z.string().trim().min(1, "motivo es requerido"),
+});

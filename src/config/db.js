@@ -4,6 +4,10 @@ import dotenv from "dotenv";
 dotenv.config();
 const { Pool } = pg;
 
+// Fechas DATE (OID 1082) como texto 'YYYY-MM-DD', no como Date: evita corrimientos de
+// zona horaria (un timestamp UTC podía mostrar el día anterior).
+pg.types.setTypeParser(1082, (v) => v);
+
 // Blindaje del pool: tope de conexiones, cierre de inactivas, y timeouts para que una
 // query o una conexión colgada no bloqueen el proceso.
 const POOL_OPTS = {

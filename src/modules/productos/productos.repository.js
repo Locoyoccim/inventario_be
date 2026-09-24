@@ -82,6 +82,20 @@ export default class ProductoRepository {
         return result.rowCount > 0;
     }
 
+    // Dónde se usa un producto: recetas que lo llevan y mapeos POS que lo referencian.
+    async uso(empresa_id, id) {
+        const recetas = (await pool.query(
+            `SELECT DISTINCT r.id, r.nombre FROM receta_detalle rd JOIN recetas r ON r.id = rd.receta_id
+             WHERE rd.producto_id = $1 AND r.empresa_id = $2 ORDER BY r.nombre`,
+            [id, empresa_id]
+        )).rows;
+        const mapeos_pos = (await pool.query(
+            `SELECT id, nombre_pos FROM pos_map WHERE producto_id = $1 AND empresa_id = $2 ORDER BY nombre_pos`,
+            [id, empresa_id]
+        )).rows;
+        return { recetas, mapeos_pos };
+    }
+
     async createProducto(data, empresa_id) {
         const {
             producto, stock_actual, stock_minimo, unidad_medida,

@@ -11,6 +11,7 @@ export default function registerProductos(router) {
     router.put("/productos/:empresa_id/:id", requireAdmin, validate(productoUpdateSchema), productoController.actualizarProducto);
     router.delete("/productos/:empresa_id/:id", requireAdmin, productoController.eliminarProducto);
     // Movimientos de inventario (cuelgan del producto)
+    router.get("/productos/:empresa_id/:id/uso", productoController.uso);
     router.get("/productos/:empresa_id/:id/movimientos", movimientoController.listar);
     router.post("/productos/:empresa_id/:id/movimientos", requireAdmin, validate(movimientoCreateSchema), movimientoController.crear);
 }

@@ -15,4 +15,7 @@ export default class CompraService {
     async crear(empresa_id, data) {
         return await this.compraRepository.crear(empresa_id, data);
     }
+    async anular(empresa_id, id, usuario_id, motivo) {
+        return await this.compraRepository.anular(empresa_id, id, usuario_id, motivo);
+    }
 }

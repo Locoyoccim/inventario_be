@@ -33,4 +33,12 @@ export default class CompraController {
         const data = await this.compraService.crear(empresa_id, { ...req.body, usuario_id });
         res.status(201).json({ success: true, data });
     });
+
+    anular = asyncHandler(async (req, res) => {
+        const { empresa_id, id } = req.params;
+        if (!(await this.compraService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const data = await this.compraService.anular(empresa_id, id, req.user?.id ?? null, req.body.motivo);
+        res.json({ success: true, data });
+    });
 }

@@ -23,7 +23,7 @@ const QUERIES = {
     UPDATE_TOTAL: `UPDATE compra SET total = $1 WHERE id = $2 RETURNING id, empresa_id, fecha, proveedor_id, referencia, total, usuario_id, created_at;`,
     LIST: `
         SELECT c.id, c.empresa_id, c.fecha, c.proveedor_id, prov.nombre AS proveedor,
-               c.referencia, c.total, c.usuario_id, c.created_at,
+               c.referencia, c.total, c.usuario_id, c.created_at, c.anulado,
                COUNT(*) OVER()::int AS total_rows
         FROM compra c
         LEFT JOIN proveedores prov ON prov.id = c.proveedor_id
@@ -32,10 +32,17 @@ const QUERIES = {
         LIMIT $2 OFFSET $3;`,
     HEADER_BY_ID: `
         SELECT c.id, c.empresa_id, c.fecha, c.proveedor_id, prov.nombre AS proveedor,
-               c.referencia, c.total, c.usuario_id, c.created_at
+               c.referencia, c.total, c.usuario_id, c.created_at, c.anulado, c.anulado_at, c.motivo_anulacion
         FROM compra c
         LEFT JOIN proveedores prov ON prov.id = c.proveedor_id
         WHERE c.id = $1 AND c.empresa_id = $2;`,
+    FETCH_ANULAR: `SELECT id, referencia, anulado FROM compra WHERE id = $1 AND empresa_id = $2`,
+    LOCK_INV: `SELECT stock_actual FROM inventario WHERE producto_id = $1 FOR UPDATE`,
+    LAST_COMPRA_MOV: `SELECT m.referencia_id, m.costo_unitario FROM movimientosinventario m
+        WHERE m.producto_id = $1 AND m.referencia_tipo = 'COMPRA' ORDER BY m.fecha DESC, m.id DESC LIMIT 2`,
+    MARK_ANULADA: `UPDATE compra SET anulado=true, anulado_at=now(), anulado_por=$3, motivo_anulacion=$4
+        WHERE id=$1 AND empresa_id=$2
+        RETURNING id, empresa_id, fecha, proveedor_id, referencia, total, usuario_id, created_at, anulado, anulado_at, anulado_por, motivo_anulacion`,
     LINEAS_BY_COMPRA: `
         SELECT m.producto_id, p.producto, m.cantidad, m.costo_unitario,
                (m.cantidad * m.costo_unitario) AS costo_total,
@@ -55,6 +62,72 @@ export default class CompraRepository {
         const res = await pool.query(QUERIES.LIST, [empresa_id, limit, offset]);
         const total = res.rows[0]?.total_rows ?? 0;
         return { rows: res.rows.map(({ total_rows, ...r }) => r), total };
+    }
+
+    // Anula una compra: revierte el stock (AJUSTE negativo) y, si esta compra fue la última
+    // que fijó el costo del producto, restaura el costo anterior. 409 si dejaría stock negativo.
+    async anular(empresa_id, id, usuario_id, motivo) {
+        const cab = (await pool.query(QUERIES.FETCH_ANULAR, [id, empresa_id])).rows[0];
+        if (!cab) throw ApiError.notFound("Compra no encontrada");
+        if (cab.anulado) throw ApiError.conflict("La compra ya está anulada");
+
+        const lineas = (await pool.query(QUERIES.LINEAS_BY_COMPRA, [id])).rows;
+        const porProducto = new Map();
+        for (const l of lineas) {
+            const pid = Number(l.producto_id);
+            porProducto.set(pid, (porProducto.get(pid) ?? 0) + Number(l.cantidad));
+        }
+        const ids = [...porProducto.keys()].sort((a, b) => a - b);
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            // 1) Chequeo de stock negativo (bloqueando la fila) — 409 si no alcanza.
+            for (const pid of ids) {
+                const inv = (await client.query(QUERIES.LOCK_INV, [pid])).rows[0];
+                const actual = Number(inv?.stock_actual ?? 0);
+                if (actual - porProducto.get(pid) < 0) {
+                    throw ApiError.conflict(`Anular dejaría stock negativo en el producto ${pid} (actual ${actual}, a revertir ${porProducto.get(pid)})`);
+                }
+            }
+
+            // 2) Reversa de stock: AJUSTE negativo, en orden por producto_id.
+            for (const pid of ids) {
+                await this.movimientoRepository.aplicar(client, pid, empresa_id, {
+                    tipo_movimiento: "AJUSTE",
+                    cantidad: -porProducto.get(pid),
+                    usuario_id,
+                    motivo: `Anulación de compra${cab.referencia ? " " + cab.referencia : ""}`,
+                    referencia_tipo: "COMPRA_ANULADA",
+                    referencia_id: Number(id),
+                });
+            }
+
+            // 3) Restaurar costo solo si esta compra fue la ÚLTIMA que lo actualizó.
+            const afectados = [];
+            for (const pid of ids) {
+                const movs = (await client.query(QUERIES.LAST_COMPRA_MOV, [pid])).rows;
+                if (movs.length && Number(movs[0].referencia_id) === Number(id) && movs.length >= 2) {
+                    const prev = Number(movs[1].costo_unitario);
+                    const prod = (await client.query("SELECT cantidad_presentacion FROM productos WHERE id = $1", [pid])).rows[0];
+                    const nuevoCostoPres = Number((prev * Number(prod.cantidad_presentacion)).toFixed(4));
+                    await client.query("UPDATE productos SET costo_presentacion = $1 WHERE id = $2", [nuevoCostoPres, pid]);
+                    afectados.push(pid);
+                }
+            }
+            if (afectados.length) await propagarCostoInsumos(client, afectados);
+
+            // 4) Marcar la compra como anulada.
+            const upd = (await client.query(QUERIES.MARK_ANULADA, [id, empresa_id, usuario_id, motivo])).rows[0];
+            await client.query("COMMIT");
+            return { ...upd, productos_reajustados: ids.length, recetas_actualizadas: afectados.length };
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
     async findById(empresa_id, id) {

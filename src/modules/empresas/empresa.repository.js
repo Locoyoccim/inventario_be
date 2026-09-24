@@ -39,8 +39,29 @@ export default class EmpresaRepository {
         if (!nombre) throw ApiError.badRequest("nombre es requerido");
 
         const values = [nombre, titular ?? null, telefono ?? null, email ?? null, domicilio ?? null];
-        const result = await pool.query(QUERIES.INSERT, values);
-        return result.rows[0];
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            const result = await client.query(QUERIES.INSERT, values);
+            const empresa = result.rows[0];
+            // Sembrar las categorías de gasto base para la nueva empresa (FINANZAS).
+            await client.query(
+                `INSERT INTO categorias_gasto (empresa_id, nombre)
+                 SELECT $1, c.nombre FROM (VALUES
+                    ('Renta'),('Luz'),('Agua'),('Gas'),('Sueldos'),
+                    ('Mantenimiento'),('Publicidad'),('Impuestos y comisiones'),('Otros')
+                 ) AS c(nombre)
+                 ON CONFLICT (empresa_id, lower(nombre)) DO NOTHING`,
+                [empresa.id]
+            );
+            await client.query("COMMIT");
+            return empresa;
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
     async update(id, { nombre, titular, telefono, email, domicilio }) {

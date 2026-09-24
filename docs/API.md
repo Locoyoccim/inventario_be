@@ -115,6 +115,9 @@ Cada proveedor trae `activo`. El borrado es **lógico** (soft-delete): nunca se 
 - `POST /api/proveedores/:empresa_id` — `{ "nombre", "telefono?", "email?", "domicilio?" }`
 - `PUT /api/proveedores/:empresa_id/:id` — mismos campos; acepta `"activo": true` para **reactivar** un proveedor desactivado.
 - `DELETE /api/proveedores/:empresa_id/:id` — **desactiva** (`activo=false`) y devuelve el proveedor.
+- `DELETE /api/proveedores/:empresa_id/:id?definitivo=true` *(Admin)* — **borrado físico**. Solo procede si el proveedor no tiene referencias (productos, compras ni gastos); si las tiene → `409` con `details` = conteos `{ productos, compras, gastos }`. Para eliminar uno con historial, primero **fusiónalo**.
+- `POST /api/proveedores/:empresa_id/:id/fusionar` *(Admin)* — `{ "destino_id": <id> }`. Reasigna productos, compras y gastos del proveedor origen al destino (misma empresa) y luego **desactiva** el origen. Transaccional.
+- `GET /api/proveedores/:empresa_id/:id/resumen` *(Admin)* — historial del proveedor: `{ ultimas_compras: [...10], total_30d, total_90d, ultimo_precio_por_producto: [{ producto_id, producto, costo_unitario, fecha }] }`.
 - Un producto o compra **no** puede usar un proveedor inactivo (o de otra empresa) → `400`. Un producto que ya referencia un proveedor desactivado sigue mostrando su nombre y puede editarse mientras no cambie de proveedor.
 
 ## Categorías (lista compartida, administrable)
@@ -145,6 +148,9 @@ Si cambia el costo, las recetas que usan el producto se recalculan en la misma t
 
 ### `DELETE /api/productos/:empresa_id/:id`
 **Soft-delete**: marca `activo=false` (conserva el historial). No borra físicamente. Reactivar con `PUT ... {"activo": true}`.
+
+### `GET /api/productos/:empresa_id/:id/uso`
+Dónde se usa el producto, para decidir antes de desactivarlo. Respuesta: `{ recetas: [{ id, nombre }], mapeos_pos: [{ id, nombre_pos }] }` — recetas que lo incluyen como ingrediente y mapeos POS tipo `INSUMO` que apuntan a él. Producto inexistente en la empresa → `404`.
 
 ## Inventario (solo lectura)
 - `GET /api/inventario/:empresa_id` · `GET /api/inventario/:empresa_id/:id`
@@ -230,6 +236,7 @@ Suma stock (`COMPRA`) y actualiza el costo del producto al **precio de la últim
 Cada línea acepta `costo_total` (lo pagado) **o** `costo_unitario`.
 Respuesta: `{ compra, lineas, recetas_actualizadas }` — las recetas que usan esos insumos se recalculan en la misma transacción (*Cascada de costos*).
 - `GET /api/compras/:empresa_id` (historial) · `GET /api/compras/:empresa_id/:id` (encabezado + líneas)
+- `POST /api/compras/:empresa_id/:id/anular` *(Admin)* — `{ "motivo?": "..." }`. Revierte la compra: descuenta con un movimiento `AJUSTE` negativo (`referencia_tipo=COMPRA_ANULADA`) el stock que había sumado y marca `anulado=true` (`anulado_at`, `anulado_por`, `motivo_anulacion`). Reglas: si al revertir alguna línea el stock quedaría **negativo** → `409` y **no** se anula nada. El costo del producto se **restaura** solo si esta compra fue la **última** que fijó su costo (si hubo compras posteriores, el costo vigente no se toca). Las compras anuladas se excluyen del libro de finanzas. Idempotente: reintentar sobre una compra ya anulada → `409`.
 
 ## Conteo físico (varianza y reconciliación)
 
@@ -268,6 +275,68 @@ También acepta `"csv": "<reporte Toteat crudo>"`. Explota recetas a insumos y d
 - `GET /api/reportes/:empresa_id/alertas` — bajo mínimo con acción (`comprar`/`producir`).
 - `GET /api/reportes/:empresa_id/actividad?desde=&hasta=` — movimientos por tipo + merma (default últimos 30 días).
 - `GET /api/reportes/:empresa_id/consumo?desde=&hasta=&limit=` — top productos consumidos por ventas.
+
+---
+
+## Finanzas (ingresos y gastos)
+
+Todo cuelga de `/api/finanzas/:empresa_id/...`. Dinero `numeric(12,2)` y **> 0**; fechas `YYYY-MM-DD` reales y **no futuras** (`400`). Nada se borra: se **anula** (`anulado=true`). Las columnas de tipo fecha se devuelven como texto `YYYY-MM-DD`. Cada alta y anulación registra el `usuario_id` de la sesión. Listados con `?limit/offset` y sobre `{pagination}`.
+
+**Visibilidad por rol:** Admin ve todo; **Operativo** solo crea y ve **lo que él capturó**; editar, anular, `resumen` y `movimientos` (libro) son **solo Admin** (`403` al Operativo).
+
+### Categorías de gasto
+- `GET /api/finanzas/:e/categorias-gasto` — activas por defecto; `?incluir_inactivas=true`.
+- `POST /api/finanzas/:e/categorias-gasto` *(Admin)* — `{ "nombre": "Renta" }`. Únicas por empresa sin distinguir mayúsculas (`409` si se repite).
+- `PUT /api/finanzas/:e/categorias-gasto/:id` *(Admin)* — `{ "nombre"?, "activo"? }`. No se borran; se desactivan.
+
+Al crear una empresa se siembran: Renta, Luz, Agua, Gas, Sueldos, Mantenimiento, Publicidad, Impuestos y comisiones, Otros.
+
+### Gastos
+- `GET /api/finanzas/:e/gastos?desde&hasta&categoria_id&incluir_anulados&limit&offset`
+- `POST /api/finanzas/:e/gastos` *(Admin y Operativo)*
+```json
+{ "fecha": "2026-09-21", "categoria_id": 3, "concepto": "Pago de renta", "monto": 12000.00,
+  "metodo_pago": "TRANSFERENCIA", "proveedor_id": null, "nota": null }
+```
+Valida categoría activa y de la empresa, y proveedor (si viene) de la empresa y activo → `400`. `metodo_pago` ∈ `EFECTIVO|TARJETA|TRANSFERENCIA|OTRO`.
+- `PUT /api/finanzas/:e/gastos/:id` *(Admin)* — mismos campos; `409` si está anulado.
+- `POST /api/finanzas/:e/gastos/:id/anular` *(Admin)* — `{ "motivo": "..." }` → `anulado`, `anulado_at`, `anulado_por`.
+
+### Ingresos
+Se permiten varios por día (uno por método o varios conceptos).
+- `GET /api/finanzas/:e/ingresos?desde&hasta&metodo_pago&incluir_anulados&limit&offset`
+- `POST /api/finanzas/:e/ingresos` *(Admin y Operativo)* — `{ "fecha", "metodo_pago", "monto", "concepto"?, "nota"? }` (`concepto` default `"Venta del día"`).
+- `POST /api/finanzas/:e/ingresos/lote` *(Admin y Operativo)* — cierre del día en una transacción:
+```json
+{ "fecha": "2026-09-21", "lineas": [ { "metodo_pago": "EFECTIVO", "monto": 3200 }, { "metodo_pago": "TARJETA", "monto": 1850 } ] }
+```
+- `PUT /api/finanzas/:e/ingresos/:id` *(Admin)*; `POST /api/finanzas/:e/ingresos/:id/anular` *(Admin)* `{ "motivo" }`.
+
+### Libro (vista unificada) *(Admin)*
+- `GET /api/finanzas/:e/movimientos?desde&hasta&origen=INGRESO|GASTO|COMPRA&limit&offset`
+
+UNION de ingresos, gastos (no anulados) y **compras** (lectura directa de la tabla `compra`), ordenado por fecha desc, id desc. Cada fila: `{ origen, id, fecha, concepto, categoria, metodo_pago, monto, proveedor, usuario }`. En compras: `categoria = "Compras de insumos"`, `metodo_pago = null`, `concepto = "Compra <referencia>"` (o `"Compra"` sin folio).
+
+### Resumen *(Admin)*
+- `GET /api/finanzas/:e/resumen?desde&hasta&agrupar=dia|semana|mes` — rango máximo 366 días, `desde <= hasta`, anulados excluidos.
+```json
+{
+  "periodo": { "desde": "2026-09-01", "hasta": "2026-09-30" },
+  "ingresos": { "total": 42000, "por_metodo": [ { "metodo_pago": "EFECTIVO", "total": 25000 } ] },
+  "gastos": { "compras": 18000, "extra": 9000, "total": 27000,
+              "por_categoria": [ { "categoria_id": 3, "categoria": "Renta", "total": 12000 } ] },
+  "flujo": 15000,
+  "costo_ventas": 14000,
+  "merma": 350,
+  "resultado_operacion": 19000,
+  "food_cost_pct": 33.33,
+  "ingreso_esperado": 41250,
+  "ingresos_comparables": 41000,
+  "dias_sin_ingreso": ["2026-09-14"],
+  "serie": [ { "periodo": "2026-09-01", "ingresos": 1500, "compras": 600, "gastos_extra": 0, "costo_ventas": 500 } ]
+}
+```
+`costo_ventas` = Σ movimientos `VENTA`×costo − Σ `DEVOLUCION` de reversas (`referencia_tipo='VENTA_DIARIA'`). `resultado_operacion` = ingresos − costo_ventas − gastos.extra (las compras entran como inventario, no aquí). `food_cost_pct` = null si no hay ingresos. `ingreso_esperado` = Σ `venta_diaria_detalle.cantidad × precio_unitario` (snapshot de `recetas.precio_venta` al importar); null si ningún día del rango tiene detalle. `ingresos_comparables` = ingresos no anulados **solo** en las fechas del rango que tienen detalle (para comparar contra `ingreso_esperado`); null cuando `ingreso_esperado` es null. Los días importados antes de la migración 014 no tienen detalle.
 
 ---
 

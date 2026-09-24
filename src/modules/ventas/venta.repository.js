@@ -12,6 +12,8 @@ const QUERIES = {
     `,
     PRODUCTOS_EMPRESA: `SELECT id, producto FROM productos WHERE empresa_id = $1`,
     VENTA_EXISTE: `SELECT id FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2`,
+    RECETAS_PRECIO: `SELECT id, precio_venta FROM recetas WHERE empresa_id = $1`,
+    INSERT_DETALLE: `INSERT INTO venta_diaria_detalle (venta_diaria_id, nombre_pos, cantidad, tipo, receta_id, producto_id, precio_unitario) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     INSERT_VENTA: `
         INSERT INTO venta_diaria (empresa_id, fecha, total_lineas, total_unidades)
         VALUES ($1, $2, $3, $4)
@@ -117,11 +119,12 @@ export default class VentaRepository {
         const { permitirNegativo = true } = opts;
 
         // Lecturas (fuera de transacción; solo lectura)
-        const [posMapRes, detalleRes, prodRes, existeRes] = await Promise.all([
+        const [posMapRes, detalleRes, prodRes, existeRes, recetasPrecioRes] = await Promise.all([
             pool.query(QUERIES.POS_MAP, [empresa_id]),
             pool.query(QUERIES.RECETA_DETALLE, [empresa_id]),
             pool.query(QUERIES.PRODUCTOS_EMPRESA, [empresa_id]),
             pool.query(QUERIES.VENTA_EXISTE, [empresa_id, fecha]),
+            pool.query(QUERIES.RECETAS_PRECIO, [empresa_id]),
         ]);
 
         if (existeRes.rows[0]) {
@@ -160,6 +163,27 @@ export default class VentaRepository {
                 empresa_id, fecha, total_lineas, total_unidades,
             ]);
             const venta = ventaRes.rows[0];
+
+            // Snapshot del detalle de la venta (habilita el "ingreso esperado" en Finanzas).
+            const posIndex = new Map(posMapRes.rows.map((m) => [normalizar(m.nombre_pos), m]));
+            const precioReceta = new Map(recetasPrecioRes.rows.map((r) => [Number(r.id), r.precio_venta]));
+            for (const l of lineas) {
+                const m = posIndex.get(normalizar(l.nombre_pos));
+                let tipo = "SIN_MAPEO";
+                let dReceta = null;
+                let dProducto = null;
+                let dPrecio = null;
+                if (m) {
+                    tipo = m.tipo;
+                    if (m.tipo === "RECETA") {
+                        dReceta = Number(m.receta_id);
+                        dPrecio = precioReceta.get(dReceta) ?? null;
+                    } else if (m.tipo === "INSUMO") {
+                        dProducto = Number(m.producto_id);
+                    }
+                }
+                await client.query(QUERIES.INSERT_DETALLE, [venta.id, l.nombre_pos, Number(l.cantidad), tipo, dReceta, dProducto, dPrecio]);
+            }
 
             // Bloqueo en orden por producto_id: evita deadlocks entre importaciones concurrentes.
             aDescontar.sort((a, b) => Number(a.producto_id) - Number(b.producto_id));

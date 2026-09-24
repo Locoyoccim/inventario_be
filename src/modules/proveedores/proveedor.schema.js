@@ -9,3 +9,7 @@ export const proveedorCreateSchema = z.object({
 export const proveedorUpdateSchema = proveedorCreateSchema.extend({
     activo: z.boolean().optional(),
 });
+
+export const fusionarSchema = z.object({
+    destino_id: z.coerce.number().int().positive("destino_id es requerido"),
+});

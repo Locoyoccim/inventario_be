@@ -26,4 +26,8 @@ export default class ProductoService {
     async deleteProducto(id, empresa_id) {
         return await this.productoRepository.deleteProducto(id, empresa_id);
     }
+
+    async getUso(empresa_id, id) {
+        return await this.productoRepository.uso(empresa_id, id);
+    }
 }

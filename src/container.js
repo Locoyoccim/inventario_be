@@ -43,6 +43,9 @@ import CompraRepository from "./modules/compras/compra.repository.js";
 import ReporteController from "./modules/reportes/reporte.controller.js";
 import ReporteService from "./modules/reportes/reporte.service.js";
 import ReporteRepository from "./modules/reportes/reporte.repository.js";
+import FinanzasController from "./modules/finanzas/finanzas.controller.js";
+import FinanzasService from "./modules/finanzas/finanzas.service.js";
+import FinanzasRepository from "./modules/finanzas/finanzas.repository.js";
 import CategoriaController from "./modules/categorias/categoria.controller.js";
 import CategoriaService from "./modules/categorias/categoria.service.js";
 import CategoriaRepository from "./modules/categorias/categoria.repository.js";
@@ -68,3 +71,4 @@ export const conteoController = new ConteoController(new ConteoService(new Conte
 export const compraController = new CompraController(new CompraService(new CompraRepository(movimientoRepo), empresaRepo));
 export const reporteController = new ReporteController(new ReporteService(new ReporteRepository(), empresaRepo));
 export const categoriaController = new CategoriaController(new CategoriaService(new CategoriaRepository(), empresaRepo));
+export const finanzasController = new FinanzasController(new FinanzasService(new FinanzasRepository()));

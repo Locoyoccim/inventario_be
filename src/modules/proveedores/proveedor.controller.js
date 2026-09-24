@@ -40,7 +40,23 @@ export default class ProveedorController {
     // Soft-delete: desactiva y devuelve el proveedor.
     eliminar = asyncHandler(async (req, res) => {
         const { id, empresa_id } = req.params;
+        // ?definitivo=true borra de verdad (solo si no tiene historial); si no, soft-delete.
+        if (req.query.definitivo === "true" || req.query.definitivo === "1") {
+            const r = await this.proveedorService.eliminarDefinitivo(empresa_id, id);
+            return res.json({ success: true, data: r, message: "Proveedor eliminado definitivamente" });
+        }
         const desactivado = await this.proveedorService.deleteProveedor(id, empresa_id);
         res.json({ success: true, data: desactivado, message: "Proveedor desactivado" });
+    });
+
+    fusionar = asyncHandler(async (req, res) => {
+        const { id, empresa_id } = req.params;
+        const r = await this.proveedorService.fusionarProveedor(empresa_id, id, req.body.destino_id);
+        res.json({ success: true, data: r, message: "Proveedor fusionado" });
+    });
+
+    resumen = asyncHandler(async (req, res) => {
+        const { id, empresa_id } = req.params;
+        res.json({ success: true, data: await this.proveedorService.resumenProveedor(empresa_id, id) });
     });
 }

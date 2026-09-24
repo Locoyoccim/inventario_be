@@ -36,6 +36,13 @@ export default class ProductosController {
         res.json({ success: true, data: actualizado });
     });
 
+    uso = asyncHandler(async (req, res) => {
+        const { empresa_id, id } = req.params;
+        const producto = await this.productosService.getProductoById(id, empresa_id);
+        if (!producto) throw ApiError.notFound("Producto no encontrado");
+        res.json({ success: true, data: await this.productosService.getUso(empresa_id, id) });
+    });
+
     eliminarProducto = asyncHandler(async (req, res) => {
         const { id, empresa_id } = req.params;
         const eliminado = await this.productosService.deleteProducto(id, empresa_id);

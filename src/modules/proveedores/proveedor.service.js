@@ -16,6 +16,18 @@ export default class ProveedorService {
         return await this.proveedorRepository.remove(id, empresa_id);
     }
 
+    async eliminarDefinitivo(empresa_id, id) {
+        return await this.proveedorRepository.eliminarDefinitivo(empresa_id, id);
+    }
+
+    async fusionarProveedor(empresa_id, id, destino_id) {
+        return await this.proveedorRepository.fusionar(empresa_id, id, destino_id);
+    }
+
+    async resumenProveedor(empresa_id, id) {
+        return await this.proveedorRepository.resumenProveedor(empresa_id, id);
+    }
+
     async createProveedor(data, empresa_id) {
         return await this.proveedorRepository.create(data, empresa_id);
     }
