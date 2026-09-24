@@ -214,4 +214,17 @@ describe("Integración HTTP", { skip: SKIP }, () => {
         const cross = await req("GET", `/api/productos/${A}`, { token: tokAdminB });
         assert.equal(cross.status, 403, "token de empresa B no accede a empresa A");
     });
+
+    it("sesión revocada: /me responde 401 tras logout-all", async () => {
+        const meId = (await pool.query(
+            "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ('MeUser','A-me',false,false,$1) RETURNING id",
+            [A])).rows[0].id;
+        const tok = signToken({ id: meId, empresa_id: A, is_admin: false, is_owner: false, tv: 0 });
+        const antes = await req("GET", "/api/auth/me", { token: tok });
+        assert.equal(antes.status, 200, "sesión válida ve /me");
+        const all = await req("POST", "/api/auth/logout-all", { token: tok });
+        assert.equal(all.status, 200);
+        const despues = await req("GET", "/api/auth/me", { token: tok });
+        assert.equal(despues.status, 401, "sesión revocada -> 401 en /me");
+    });
 });

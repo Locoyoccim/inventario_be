@@ -83,7 +83,7 @@ Público. Borra la cookie de **este** dispositivo → `{ "success": true, "data"
 Requiere sesión. Sube la `token_version` del usuario → **revoca todas** sus sesiones vigentes (cookie y Bearer) y borra la cookie actual. La revocación surte efecto a más tardar en 1 minuto (caché). Un admin puede forzar el cierre de otro usuario con `forzar_cierre_sesion: true` en el `PUT` de usuarios.
 
 ### `GET /api/auth/me`
-Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email, empresa_id, is_admin, is_owner }` (mismo formato que `user` en login). `401` si el usuario ya no existe.
+Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email, empresa_id, is_admin, is_owner }` (mismo formato que `user` en login). Pasa por `requireActiveUser`: `401` si el usuario ya no existe, está desactivado o su sesión fue revocada (`logout-all`).
 
 ### Roles: Admin vs Operativo
 Cada usuario es **Admin** (`is_owner` o `is_admin` = true) u **Operativo** (lo demás).

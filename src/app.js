@@ -53,9 +53,12 @@ const limiter = (max, error) =>
 const authLimiter = limiter(10, "Demasiados intentos de acceso. Espera un minuto.");
 const apiLimiter = limiter(300, "Demasiadas solicitudes. Intenta de nuevo en un momento.");
 
-app.use("/api/auth/login", authLimiter);
-app.use("/api/auth/setup", authLimiter);
-app.use("/api", apiLimiter);
+// En pruebas se desactiva para que las E2E con login real no topen el límite (429).
+if (process.env.NODE_ENV !== "test") {
+    app.use("/api/auth/login", authLimiter);
+    app.use("/api/auth/setup", authLimiter);
+    app.use("/api", apiLimiter);
+}
 
 // Rutas de autenticación (login abierto)
 app.use("/api/auth", authRoutes);

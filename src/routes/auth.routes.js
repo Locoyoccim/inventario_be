@@ -5,6 +5,7 @@ import AuthController from "../modules/auth/auth.controller.js";
 import { validate } from "../middlewares/validate.js";
 import { loginSchema, setupSchema } from "../modules/auth/auth.schema.js";
 import { requireAuth } from "../middlewares/auth.js";
+import { requireActiveUser } from "../middlewares/activeUser.js";
 
 const router = Router();
 const usuarioRepo = new UsuarioRepository();
@@ -15,6 +16,6 @@ router.post("/setup", validate(setupSchema), authController.setup);
 router.post("/login", validate(loginSchema), authController.login);
 router.post("/logout", authController.logout);
 router.post("/logout-all", requireAuth, authController.logoutAll);
-router.get("/me", requireAuth, authController.me);
+router.get("/me", requireAuth, requireActiveUser, authController.me);
 
 export default router;
