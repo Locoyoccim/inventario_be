@@ -225,5 +225,34 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
         assert.ok(Array.isArray(r.json.data.ultimas_compras));
         assert.ok(Number(r.json.data.total_90_dias) > 0);
         assert.ok(r.json.data.ultimo_precio_por_producto.find((x) => x.producto_id === insumoId));
+        assert.ok(r.json.data.referencias, "el resumen incluye referencias");
+        assert.equal(r.json.data.puede_eliminar, false, "con historial no se puede eliminar");
+        assert.ok(r.json.data.referencias.compras > 0);
+    });
+
+    it("proveedor: referencias/puede_eliminar coinciden con el borrado definitivo (7b)", async () => {
+        // Nuevo sin referencias -> puede_eliminar true y DELETE definitivo 200
+        const nuevo = (await req("POST", `/api/proveedores/${A}`, { token: tokAdminA, body: { nombre: "Nuevo 7b" } })).json.data.id;
+        const rn = await req("GET", `/api/proveedores/${A}/${nuevo}/resumen`, { token: tokAdminA });
+        assert.equal(rn.json.data.puede_eliminar, true);
+        assert.deepEqual(rn.json.data.referencias, { productos: 0, compras: 0, gastos: 0 });
+        assert.equal((await req("DELETE", `/api/proveedores/${A}/${nuevo}?definitivo=true`, { token: tokAdminA })).status, 200);
+
+        // Solo una compra anulada -> ultimas_compras vacío, referencias.compras=1, false, DELETE 409
+        const cProv = (await req("POST", `/api/proveedores/${A}`, { token: tokAdminA, body: { nombre: "Solo compra 7b" } })).json.data.id;
+        const cc = await req("POST", `/api/compras/${A}`, { token: tokAdminA, body: { proveedor_id: cProv, referencia: "7B-C", lineas: [{ producto_id: insumoId, cantidad: 10, costo_total: 5 }] } });
+        await req("POST", `/api/compras/${A}/${cc.json.data.compra.id}/anular`, { token: tokAdminA, body: { motivo: "x" } });
+        const rc = await req("GET", `/api/proveedores/${A}/${cProv}/resumen`, { token: tokAdminA });
+        assert.equal(rc.json.data.ultimas_compras.length, 0, "la compra anulada no aparece en ultimas_compras");
+        assert.equal(rc.json.data.referencias.compras, 1, "pero sí cuenta como referencia");
+        assert.equal(rc.json.data.puede_eliminar, false);
+        assert.equal((await req("DELETE", `/api/proveedores/${A}/${cProv}?definitivo=true`, { token: tokAdminA })).status, 409);
+
+        // Solo un gasto -> false
+        const gProv = (await req("POST", `/api/proveedores/${A}`, { token: tokAdminA, body: { nombre: "Solo gasto 7b" } })).json.data.id;
+        await req("POST", `/api/finanzas/${A}/gastos`, { token: tokAdminA, body: { fecha: "2026-09-10", categoria_id: catId, concepto: "g", monto: 10, metodo_pago: "EFECTIVO", proveedor_id: gProv } });
+        const rg = await req("GET", `/api/proveedores/${A}/${gProv}/resumen`, { token: tokAdminA });
+        assert.equal(rg.json.data.referencias.gastos, 1);
+        assert.equal(rg.json.data.puede_eliminar, false);
     });
 });

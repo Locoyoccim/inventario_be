@@ -117,33 +117,41 @@ Cada proveedor trae `activo`. El borrado es **lógico** (soft-delete): nunca se 
 - `DELETE /api/proveedores/:empresa_id/:id` — **desactiva** (`activo=false`) y devuelve el proveedor.
 - `DELETE /api/proveedores/:empresa_id/:id?definitivo=true` *(Admin)* — **borrado físico**. Solo procede si el proveedor no tiene referencias (productos, compras ni gastos); si las tiene → `409` con `details` = conteos `{ productos, compras, gastos }`. Para eliminar uno con historial, primero **fusiónalo**.
 - `POST /api/proveedores/:empresa_id/:id/fusionar` *(Admin)* — `{ "destino_id": <id> }`. Reasigna productos, compras y gastos del proveedor origen al destino (misma empresa) y luego **desactiva** el origen. Transaccional.
-- `GET /api/proveedores/:empresa_id/:id/resumen` *(Admin)* — historial del proveedor: `{ ultimas_compras: [...10], total_30d, total_90d, ultimo_precio_por_producto: [{ producto_id, producto, costo_unitario, fecha }] }`.
+- `GET /api/proveedores/:empresa_id/:id/resumen` *(Admin)* — historial del proveedor: `{ ultimas_compras: [...10], total_30_dias, total_90_dias, ultimo_precio_por_producto: [{ producto_id, producto, costo_unitario, fecha }], referencias: { productos, compras, gastos }, puede_eliminar }`. `ultimas_compras`, los totales y `ultimo_precio_por_producto` **excluyen compras anuladas**. `referencias` cuenta productos (activos e inactivos), compras (incluidas anuladas) y gastos (incluidos anulados); `puede_eliminar` es `true` solo si las tres son 0 — es exactamente la condición que usa `DELETE ?definitivo=true` para el `409`.
 - Un producto o compra **no** puede usar un proveedor inactivo (o de otra empresa) → `400`. Un producto que ya referencia un proveedor desactivado sigue mostrando su nombre y puede editarse mientras no cambie de proveedor.
 
 ## Categorías (lista compartida, administrable)
-Una sola lista por empresa para productos y recetas; el front la usa para el selector. Se siembra con las categorías que ya usabas.
-- `GET /api/categorias/:empresa_id` — lista (cualquier usuario autenticado)
-- `POST /api/categorias/:empresa_id` *(Admin)* — `{ "nombre": "Bebidas" }` (nombre único por empresa → `409` si se repite)
-- `PUT /api/categorias/:empresa_id/:id` *(Admin)* — `{ "nombre": "Bebidas Frías" }`
-- `DELETE /api/categorias/:empresa_id/:id` *(Admin)*
+Una sola lista por empresa para productos y recetas; el front la usa para el selector. Productos y recetas guardan el **nombre** de la categoría (columna de texto), no el id. Nombre único por empresa **sin distinguir mayúsculas** (índice único `(empresa_id, lower(nombre))`, migración 017). Cada categoría trae `tipo` ∈ `PRODUCTO | RECETA | AMBAS`.
+- `GET /api/categorias/:empresa_id[?tipo=PRODUCTO|RECETA]` — lista (cualquier usuario autenticado). Con `tipo=PRODUCTO` devuelve las `PRODUCTO` **y** las `AMBAS` (igual con `RECETA`); sin `tipo`, todas.
+- `POST /api/categorias/:empresa_id` *(Admin)* — `{ "nombre": "Bebidas", "tipo?": "AMBAS" }` (`tipo` opcional, default `AMBAS`). Nombre repetido (case-insensitive) → `409`.
+- `PUT /api/categorias/:empresa_id/:id` *(Admin)* — `{ "nombre?": "Bebidas Frías", "tipo?": "PRODUCTO" }` (al menos uno; lo que no se envía se conserva). **Renombra en cascada** en una transacción: actualiza el nombre en `categorias`, en `productos` y en `recetas` que usaban el nombre viejo. Respuesta: la categoría + `productos_actualizados` + `recetas_actualizadas`. Si el nuevo nombre ya existe (case-insensitive) → `409` y no cambia nada.
+- `DELETE /api/categorias/:empresa_id/:id[?reasignar_a=<id>]` *(Admin)*:
+  - Sin uso → se borra.
+  - En uso y sin `reasignar_a` → `409` con `details: { productos, recetas }`.
+  - Con `reasignar_a` (otra categoría de la misma empresa) → mueve productos y recetas al nombre destino y borra la categoría, todo en una transacción; responde `productos_movidos` y `recetas_movidas`.
+  - `reasignar_a` igual a la misma categoría, o de otra empresa/inexistente → `400`.
+
+Al crear una **preparación**, se asegura que la categoría `Preparación` (tipo `PRODUCTO`) exista en la lista, que es la que recibe el producto elaborado. La migración 017 además da de alta los nombres que ya usaban productos/recetas y no estaban en la lista (con su `tipo` según el uso), y fusiona variantes que solo difieren en mayúsculas.
 
 ---
 
 ## Productos
 
 Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion`. El `costo_unitario` es **calculado** (`costo_presentacion / cantidad_presentacion`) con 4 decimales; `costo_presentacion` admite hasta 4 decimales (migración 011), de modo que insumos con presentación chica (p.ej. `cantidad_presentacion=1`) conservan el costo real (ej. `0.0123`) sin redondear a `0.01`. El stock vive en inventario y **solo** cambia por `/movimientos`, `/compras`, `/produccion` o `/conteos`.
+Campo opcional **`compra_al_producir`** (boolean, default `false`, migración 016): marca insumos perecederos que se compran justo al producir; nunca alertan por mínimo (ver *Reportes*) y su necesidad aparece en las sugerencias de producción. Solo aplica a insumos comprados; en productos elaborados se ignora.
 
 ### `GET /api/productos/:empresa_id`
-Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `proveedor_id`, `proveedor` (nombre), `stock_actual`, `stock_minimo`, `es_elaborado` y `activo`.
+Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `proveedor_id`, `proveedor` (nombre), `stock_actual`, `stock_minimo`, `es_elaborado`, `compra_al_producir` y `activo`. El detalle (`GET /:id`) incluye los mismos campos.
 
 ### `POST /api/productos/:empresa_id`
 ```json
 { "producto": "Tomate Verde", "unidad_medida": "g", "proveedor_id": 1, "categoria": "Insumo",
-  "cantidad_presentacion": 1000, "costo_presentacion": 25, "stock_actual": 5000, "stock_minimo": 1000 }
+  "cantidad_presentacion": 1000, "costo_presentacion": 25, "stock_actual": 5000, "stock_minimo": 1000,
+  "compra_al_producir": false }
 ```
 
 ### `PUT /api/productos/:empresa_id/:id`
-Mismos campos (sin `stock_actual`) + opcional `"activo": true|false`. Un producto **elaborado** (preparación) no se edita aquí → `400`.
+Mismos campos (sin `stock_actual`) + opcionales `"activo": true|false` y `"compra_al_producir": true|false` (si no se envía, se conserva). Un producto **elaborado** (preparación) no se edita aquí → `400`.
 Si cambia el costo, las recetas que usan el producto se recalculan en la misma transacción (ver *Cascada de costos*); la respuesta trae `recetas_actualizadas`.
 
 ### `DELETE /api/productos/:empresa_id/:id`
@@ -216,7 +224,7 @@ Cuando cambia el costo de un insumo (compra, `PUT` de producto) o el de una prep
 ## Producción (preparaciones)
 
 ### `GET /api/produccion/:empresa_id/sugerencias`
-Preparaciones bajo mínimo con lotes sugeridos e insumos requeridos.
+Preparaciones bajo mínimo con lotes sugeridos. Cada sugerencia trae `insumos_requeridos` (compat) y **`insumos`**: `[{ producto_id, producto, unidad, requerido, disponible, faltante, compra_al_producir }]` calculado para los lotes sugeridos (`faltante = max(requerido − disponible, 0)`). `confirmar` sigue estricto: no permite insumos en negativo.
 
 ### `POST /api/produccion/:empresa_id/confirmar` *(Operativo o Admin)*
 Consume insumos y suma stock de la preparación (movimientos `PRODUCCION`, transacción atómica):
@@ -265,14 +273,18 @@ Respuesta: `data.detalle` (varianza y valor por producto) + `data.resumen` (`val
 { "fecha": "2026-09-20", "lineas": [ { "nombre_pos": "Chilaquiles Verdes", "cantidad": 4 } ] }
 ```
 También acepta `"csv": "<reporte Toteat crudo>"`. Explota recetas a insumos y descuenta stock. Reimportar el mismo día → `409` (revierte primero).
-- `GET /api/ventas/:empresa_id/:fecha` (consultar) · `DELETE /api/ventas/:empresa_id/:fecha` (revertir)
-- `GET /api/ventas/:empresa_id?desde=&hasta=` — días importados: `{ fecha, total_lineas, total_unidades, procesado_at, insumos_negativos }` (insumos que quedaron en negativo al importar).
-- `POST /api/ventas/:empresa_id/preview` — `{ csv | lineas }` devuelve el mapeo y el consumo resultante **sin guardar nada**.
+
+**Auto-producción de preparaciones:** si un platillo lleva una preparación (p. ej. salsa) y el stock de esa preparación no alcanza, el faltante se **auto-produce** desde sus insumos dentro de la misma transacción (recursivo, tope de 5 niveles; un ciclo entre preparaciones → `400`). Movimientos: `PRODUCCION` de salida por los insumos (permite negativo), `PRODUCCION` de entrada por el elaborado (costo = costo vigente del elaborado) y la `VENTA` normal del consumo — así la preparación queda en 0 y no negativa. Si un insumo no alcanza, queda negativo y el import **no** se detiene.
+
+La respuesta de `importar` (y de `preview`) agrega `auto_produccion: [{ producto_id, producto, receta_id, cantidad, unidad, lotes_equivalentes, insumos: [{ producto_id, producto, cantidad, stock_resultante }] }]`. En `preview`, el `consumo` lista cada producto con `{ producto_id, producto, cantidad, existencia_resultante, negativo }` (incluye los insumos crudos de la auto-producción).
+- `GET /api/ventas/:empresa_id/:fecha` (consultar) — devuelve `movimientos` y `auto_produccion` (reconstruida desde los movimientos) · `DELETE /api/ventas/:empresa_id/:fecha` (revertir) — deshace **todos** los movimientos del día (VENTA→DEVOLUCION; la auto-producción se revierte con el inverso de `PRODUCCION`, que **no** afecta `costo_ventas` ni la merma), dejando cada existencia exactamente como estaba.
+- `GET /api/ventas/:empresa_id?desde=&hasta=` — días importados: `{ fecha, total_lineas, total_unidades, procesado_at, insumos_negativos }`. `insumos_negativos` cuenta los productos que quedaron en negativo al importar, tanto por `VENTA` como por la `PRODUCCION` de la auto-producción.
+- `POST /api/ventas/:empresa_id/preview` — `{ csv | lineas }` devuelve el mapeo, el consumo resultante y la auto-producción **sin guardar nada**.
 
 ## Reportes (solo lectura)
 - `GET /api/reportes/:empresa_id/estado?fecha=YYYY-MM-DD` — KPIs del día: valor de inventario, alertas, compras/consumo/mermas del día.
-- `GET /api/reportes/:empresa_id/inventario` — valorización por producto + totales.
-- `GET /api/reportes/:empresa_id/alertas` — bajo mínimo con acción (`comprar`/`producir`).
+- `GET /api/reportes/:empresa_id/inventario` — valorización por producto + totales. Los productos con `compra_al_producir = true` nunca salen como `bajo_minimo`.
+- `GET /api/reportes/:empresa_id/alertas` — bajo mínimo con acción (`comprar`/`producir`). Excluye los productos con `compra_al_producir = true`.
 - `GET /api/reportes/:empresa_id/actividad?desde=&hasta=` — movimientos por tipo + merma (default últimos 30 días).
 - `GET /api/reportes/:empresa_id/consumo?desde=&hasta=&limit=` — top productos consumidos por ventas.
 

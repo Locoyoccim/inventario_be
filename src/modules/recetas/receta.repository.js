@@ -248,6 +248,14 @@ export default class RecetaRepository {
                 ]);
                 productoElaborado = prodElab.rows[0];
 
+                // Asegura que la categoría "Preparación" (tipo PRODUCTO) exista en la lista compartida.
+                await client.query(
+                    `INSERT INTO categorias (empresa_id, nombre, tipo)
+                     SELECT $1, 'Preparación', 'PRODUCTO'
+                     WHERE NOT EXISTS (SELECT 1 FROM categorias WHERE empresa_id = $1 AND lower(nombre) = lower('Preparación'))`,
+                    [empresa_id]
+                );
+
                 const inv = await client.query(QUERIES.INSERT_INVENTARIO_ELAB, [
                     productoElaborado.id,
                     stock_minimo,

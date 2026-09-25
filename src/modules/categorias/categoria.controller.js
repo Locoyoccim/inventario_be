@@ -12,7 +12,8 @@ export default class CategoriaController {
     listar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         await this.#assertEmpresa(empresa_id);
-        res.json({ success: true, data: await this.categoriaService.getAll(empresa_id) });
+        const tipo = req.query.tipo || null;
+        res.json({ success: true, data: await this.categoriaService.getAll(empresa_id, { tipo }) });
     });
 
     crear = asyncHandler(async (req, res) => {
@@ -32,8 +33,9 @@ export default class CategoriaController {
     eliminar = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
         await this.#assertEmpresa(empresa_id);
-        const del = await this.categoriaService.eliminar(empresa_id, id);
+        const reasignar_a = req.query.reasignar_a ?? null;
+        const del = await this.categoriaService.eliminar(empresa_id, id, reasignar_a);
         if (!del) throw ApiError.notFound("Categoría no encontrada");
-        res.json({ success: true, message: "Categoría eliminada" });
+        res.json({ success: true, message: "Categoría eliminada", data: del });
     });
 }

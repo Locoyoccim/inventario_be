@@ -5,7 +5,7 @@ import { propagarCostoInsumos } from "../../utils/costeo.js";
 const QUERIES = {
     SELECT_BY_ID: `
         SELECT p.id, p.producto, p.unidad_medida, p.proveedor_id, prov.nombre AS proveedor, p.categoria, p.empresa_id,
-               p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo,
+               p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo, p.compra_al_producir,
                i.stock_actual, i.stock_minimo
         FROM productos p
         LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
@@ -16,9 +16,9 @@ const QUERIES = {
     ES_ELABORADO: `SELECT es_elaborado FROM productos WHERE id = $1 AND empresa_id = $2`,
     INSERT_PRODUCTO: `
         INSERT INTO productos
-        (producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo
+        (producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, compra_al_producir)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false))
+        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo, compra_al_producir
     `,
     INSERT_INVENTARIO: `
         INSERT INTO inventario (producto_id, stock_actual, stock_minimo, empresa_id, updated_at)
@@ -28,9 +28,10 @@ const QUERIES = {
     UPDATE_PRODUCTO: `
         UPDATE productos
         SET producto = $1, unidad_medida = $2, proveedor_id = $3, categoria = $4,
-            cantidad_presentacion = $5, costo_presentacion = $6, activo = COALESCE($9, activo)
+            cantidad_presentacion = $5, costo_presentacion = $6, activo = COALESCE($9, activo),
+            compra_al_producir = COALESCE($10, compra_al_producir)
         WHERE id = $7 AND empresa_id = $8
-        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo
+        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo, compra_al_producir
     `,
     UPDATE_INVENTARIO_MINIMO: `
         UPDATE inventario
@@ -55,7 +56,7 @@ export default class ProductoRepository {
 
         const sql = `
             SELECT p.id, p.producto, p.unidad_medida, p.proveedor_id, prov.nombre AS proveedor, p.categoria, p.empresa_id,
-                   p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo,
+                   p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo, p.compra_al_producir,
                    i.stock_actual, i.stock_minimo,
                    COUNT(*) OVER()::int AS total
             FROM productos p
@@ -99,7 +100,7 @@ export default class ProductoRepository {
     async createProducto(data, empresa_id) {
         const {
             producto, stock_actual, stock_minimo, unidad_medida,
-            proveedor_id, categoria, cantidad_presentacion, costo_presentacion,
+            proveedor_id, categoria, cantidad_presentacion, costo_presentacion, compra_al_producir,
         } = data;
         const camposRequeridos = {
             producto, stock_actual, stock_minimo, unidad_medida,
@@ -124,6 +125,7 @@ export default class ProductoRepository {
             await client.query("BEGIN");
             const productoResult = await client.query(QUERIES.INSERT_PRODUCTO, [
                 producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion,
+                compra_al_producir ?? null,
             ]);
             const nuevoProducto = productoResult.rows[0];
             const inventarioResult = await client.query(QUERIES.INSERT_INVENTARIO, [
@@ -141,7 +143,7 @@ export default class ProductoRepository {
 
     async updateProducto(
         id,
-        { producto, stock_minimo, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion, activo },
+        { producto, stock_minimo, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion, activo, compra_al_producir },
         empresa_id
     ) {
         if (!id) throw ApiError.badRequest("ID es requerido");
@@ -181,7 +183,7 @@ export default class ProductoRepository {
             await client.query("BEGIN");
             const productoResult = await client.query(QUERIES.UPDATE_PRODUCTO, [
                 producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion,
-                id, empresa_id, activo ?? null,
+                id, empresa_id, activo ?? null, compra_al_producir ?? null,
             ]);
             const productoActualizado = productoResult.rows[0];
             if (!productoActualizado) {

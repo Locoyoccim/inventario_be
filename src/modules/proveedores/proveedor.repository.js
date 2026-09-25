@@ -146,6 +146,16 @@ export default class ProveedorRepository {
              JOIN productos p ON p.id = m.producto_id
              WHERE c.empresa_id = $1 AND c.proveedor_id = $2 AND c.anulado = false
              ORDER BY m.producto_id, m.fecha DESC, m.id DESC`, [empresa_id, id])).rows;
-        return { ultimas_compras: ultimas, total_30_dias: tot.d30, total_90_dias: tot.d90, ultimo_precio_por_producto: precios };
+        // Mismas referencias que usa DELETE ?definitivo para el 409 (productos + compras + gastos, incluidos inactivos/anulados).
+        const referencias = await this.contarReferencias(empresa_id, id);
+        const puede_eliminar = referencias.productos + referencias.compras + referencias.gastos === 0;
+        return {
+            ultimas_compras: ultimas,
+            total_30_dias: tot.d30,
+            total_90_dias: tot.d90,
+            ultimo_precio_por_producto: precios,
+            referencias,
+            puede_eliminar,
+        };
     }
 }

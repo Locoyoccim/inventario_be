@@ -16,9 +16,11 @@ const QUERIES = {
     // Escandallo de varias recetas de una vez (evita N+1)
     SELECT_DETALLE_LOTE: `
         SELECT rd.receta_id, rd.producto_id, rd.cantidad, rd.costo_unitario,
-               pr.producto, pr.unidad_medida
+               pr.producto, pr.unidad_medida, pr.compra_al_producir,
+               COALESCE(inv.stock_actual, 0) AS stock_actual
         FROM receta_detalle rd
         JOIN productos pr ON pr.id = rd.producto_id
+        LEFT JOIN inventario inv ON inv.producto_id = rd.producto_id
         WHERE rd.receta_id = ANY($1);`,
     SELECT_RECETA_PREP: `
         SELECT id, nombre, es_preparacion, rendimiento, producto_elaborado_id
@@ -56,13 +58,29 @@ export default class ProduccionRepository {
         return candidatos.map((r) => {
             const { rendimiento, faltante, lotes, cantidad_a_producir } =
                 calcularSugerencia(r.stock_actual, r.stock_minimo, r.rendimiento);
-            const insumos = (detalleByReceta.get(Number(r.receta_id)) || []).map((d) => ({
+            const detalleInsumos = detalleByReceta.get(Number(r.receta_id)) || [];
+            const insumos_requeridos = detalleInsumos.map((d) => ({
                 producto_id: d.producto_id,
                 producto: d.producto,
                 unidad_medida: d.unidad_medida,
                 cantidad_por_lote: Number(d.cantidad),
                 cantidad_requerida: cantidadInsumo(d.cantidad, lotes),
             }));
+            // Necesidad de insumos para los lotes sugeridos (marca compra_al_producir para el front).
+            const insumos = detalleInsumos.map((d) => {
+                const requerido = cantidadInsumo(d.cantidad, lotes);
+                const disponible = Number(d.stock_actual);
+                const faltante = Number(Math.max(requerido - disponible, 0).toFixed(3));
+                return {
+                    producto_id: d.producto_id,
+                    producto: d.producto,
+                    unidad: d.unidad_medida,
+                    requerido,
+                    disponible,
+                    faltante,
+                    compra_al_producir: d.compra_al_producir === true,
+                };
+            });
             return {
                 receta_id: r.receta_id,
                 producto_elaborado_id: r.producto_elaborado_id,
@@ -74,7 +92,8 @@ export default class ProduccionRepository {
                 faltante,
                 lotes_sugeridos: lotes,
                 cantidad_a_producir,
-                insumos_requeridos: insumos,
+                insumos_requeridos,
+                insumos,
             };
         });
     }

@@ -5,7 +5,7 @@ const QUERIES = {
         SELECT p.id AS producto_id, p.producto, p.unidad_medida, p.es_elaborado,
                i.stock_actual, i.stock_minimo, p.costo_unitario,
                (i.stock_actual * p.costo_unitario)::numeric(14,2) AS valor,
-               (i.stock_actual < i.stock_minimo) AS bajo_minimo
+               (i.stock_actual < i.stock_minimo AND p.compra_al_producir = false) AS bajo_minimo
         FROM productos p
         JOIN inventario i ON i.producto_id = p.id
         WHERE p.empresa_id = $1
@@ -16,7 +16,7 @@ const QUERIES = {
                (i.stock_minimo - i.stock_actual) AS faltante, p.costo_unitario
         FROM productos p
         JOIN inventario i ON i.producto_id = p.id
-        WHERE p.empresa_id = $1 AND i.stock_actual < i.stock_minimo
+        WHERE p.empresa_id = $1 AND i.stock_actual < i.stock_minimo AND p.compra_al_producir = false
         ORDER BY (i.stock_minimo - i.stock_actual) DESC;`,
     // Resumen de movimientos por tipo en un rango. valor = magnitud real (|Δstock|) * costo.
     ACTIVIDAD: `
