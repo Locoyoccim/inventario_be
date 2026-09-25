@@ -256,7 +256,8 @@ export default class FinanzasRepository {
     async resumenRaw(empresa_id, { desde, hasta, unit }) {
         const rango = [empresa_id, desde, hasta];
         const rangoUnit = [empresa_id, desde, hasta, unit];
-        const [ingMetodo, gastCat, comprasT, costos, esperado, sinIngreso, comparables, sIng, sCom, sGas, sCosto] = await Promise.all([
+        const [cfgRes, ingMetodo, gastCat, comprasT, costos, esperado, sinIngreso, comparables, sIng, sCom, sGas, sCosto] = await Promise.all([
+            pool.query("SELECT iva_pct, precios_incluyen_iva FROM empresas WHERE id=$1", [empresa_id]),
             pool.query("SELECT metodo_pago, SUM(monto)::numeric AS total FROM ingresos WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY metodo_pago ORDER BY metodo_pago", rango),
             pool.query("SELECT g.categoria_id, cg.nombre AS categoria, SUM(g.monto)::numeric AS total FROM gastos g JOIN categorias_gasto cg ON cg.id=g.categoria_id WHERE g.empresa_id=$1 AND g.fecha BETWEEN $2 AND $3 AND g.anulado=false GROUP BY g.categoria_id, cg.nombre ORDER BY cg.nombre", rango),
             pool.query("SELECT COALESCE(SUM(total),0)::numeric AS total FROM compra WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false", rango),
@@ -290,7 +291,10 @@ export default class FinanzasRepository {
 
         const c = costos.rows[0];
         const esp = esperado.rows[0];
+        const cfg = cfgRes.rows[0] || { iva_pct: 0, precios_incluyen_iva: true };
         return {
+            ivaPct: Number(cfg.iva_pct) || 0,
+            preciosIncluyenIva: cfg.precios_incluyen_iva !== false,
             ingresosPorMetodo: ingMetodo.rows,
             gastosPorCategoria: gastCat.rows,
             comprasTotal: comprasT.rows[0].total,

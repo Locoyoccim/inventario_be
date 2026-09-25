@@ -1,6 +1,7 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
 import { normalizarLotes, validarPreparacion, cantidadProducida, cantidadInsumo, calcularSugerencia } from "./produccion.logic.js";
+import { netoABruto } from "../../utils/costeo.js";
 
 const QUERIES = {
     // Preparaciones (productos elaborados) con su receta e inventario
@@ -16,7 +17,7 @@ const QUERIES = {
     // Escandallo de varias recetas de una vez (evita N+1)
     SELECT_DETALLE_LOTE: `
         SELECT rd.receta_id, rd.producto_id, rd.cantidad, rd.costo_unitario,
-               pr.producto, pr.unidad_medida, pr.compra_al_producir,
+               pr.producto, pr.unidad_medida, pr.compra_al_producir, COALESCE(pr.merma_pct,0) AS merma_pct,
                COALESCE(inv.stock_actual, 0) AS stock_actual
         FROM receta_detalle rd
         JOIN productos pr ON pr.id = rd.producto_id
@@ -26,7 +27,9 @@ const QUERIES = {
         SELECT id, nombre, es_preparacion, rendimiento, producto_elaborado_id
         FROM recetas WHERE id = $1 AND empresa_id = $2;`,
     SELECT_DETALLE_RECETA: `
-        SELECT producto_id, cantidad FROM receta_detalle WHERE receta_id = $1;`,
+        SELECT rd.producto_id, rd.cantidad, COALESCE(p.merma_pct,0) AS merma_pct
+        FROM receta_detalle rd JOIN productos p ON p.id = rd.producto_id
+        WHERE rd.receta_id = $1;`,
     SELECT_PRODUCTO_ELAB: `
         SELECT producto, unidad_medida FROM productos WHERE id = $1;`,
 };
@@ -68,7 +71,8 @@ export default class ProduccionRepository {
             }));
             // Necesidad de insumos para los lotes sugeridos (marca compra_al_producir para el front).
             const insumos = detalleInsumos.map((d) => {
-                const requerido = cantidadInsumo(d.cantidad, lotes);
+                // Requerido en BRUTO (lo que hay que comprar): neto por lotes / (1 - merma).
+                const requerido = netoABruto(cantidadInsumo(d.cantidad, lotes), d.merma_pct);
                 const disponible = Number(d.stock_actual);
                 const faltante = Number(Math.max(requerido - disponible, 0).toFixed(3));
                 return {
@@ -123,7 +127,8 @@ export default class ProduccionRepository {
                 // Bloqueo en orden por producto_id: evita deadlocks entre producciones concurrentes.
                 const detOrden = [...detRes.rows].sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
                 for (const d of detOrden) {
-                    const cantidad = cantidadInsumo(d.cantidad, nLotes);
+                    // Descuento en BRUTO (aplica merma de limpieza); validación estricta de existencia.
+                    const cantidad = netoABruto(cantidadInsumo(d.cantidad, nLotes), d.merma_pct);
                     const mov = await this.movimientoRepository.aplicar(
                         client,
                         d.producto_id,

@@ -101,6 +101,8 @@ Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo
 - `POST /api/empresas` *(plataforma)* — crea un tenant nuevo; exige el header `x-platform-token: <PLATFORM_TOKEN>` (sin esa variable, el endpoint queda cerrado). `{ "nombre", "titular?", "telefono?", "email?", "domicilio?" }`
 - `PUT /api/empresas/:id` *(owner/admin)*
 - `DELETE /api/empresas/:id` *(solo dueño)* — borra la empresa (en cascada); requiere `is_owner`.
+- `GET /api/empresas/:id/configuracion` — `{ iva_pct, precios_incluyen_iva, food_cost_objetivo }` (cualquier usuario de la empresa).
+- `PUT /api/empresas/:id/configuracion` *(owner/admin)* — campos opcionales (`iva_pct`, `precios_incluyen_iva`, `food_cost_objetivo`). Cambiar el IVA de la empresa **no** modifica recetas existentes; solo aplica a las nuevas. Con `?aplicar_a_recetas=true` propaga el IVA a **todas** las recetas y responde `recetas_actualizadas`. (migración 018)
 
 ## Usuarios
 - `GET /api/usuarios/:empresa_id` · `GET /api/usuarios/:empresa_id/:id`
@@ -141,18 +143,18 @@ Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion
 Campo opcional **`compra_al_producir`** (boolean, default `false`, migración 016): marca insumos perecederos que se compran justo al producir; nunca alertan por mínimo (ver *Reportes*) y su necesidad aparece en las sugerencias de producción. Solo aplica a insumos comprados; en productos elaborados se ignora.
 
 ### `GET /api/productos/:empresa_id`
-Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `proveedor_id`, `proveedor` (nombre), `stock_actual`, `stock_minimo`, `es_elaborado`, `compra_al_producir` y `activo`. El detalle (`GET /:id`) incluye los mismos campos.
+Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `proveedor_id`, `proveedor` (nombre), `stock_actual`, `stock_minimo`, `es_elaborado`, `compra_al_producir`, `merma_pct` y `costo_util` (= `costo_unitario / (1 − merma_pct/100)`, 4 decimales; `costo_unitario` sigue siendo el costo **bruto** de compra) y `activo`. El detalle (`GET /:id`) incluye los mismos campos.
 
 ### `POST /api/productos/:empresa_id`
 ```json
 { "producto": "Tomate Verde", "unidad_medida": "g", "proveedor_id": 1, "categoria": "Insumo",
   "cantidad_presentacion": 1000, "costo_presentacion": 25, "stock_actual": 5000, "stock_minimo": 1000,
-  "compra_al_producir": false }
+  "compra_al_producir": false, "merma_pct": 0 }
 ```
 
 ### `PUT /api/productos/:empresa_id/:id`
-Mismos campos (sin `stock_actual`) + opcionales `"activo": true|false` y `"compra_al_producir": true|false` (si no se envía, se conserva). Un producto **elaborado** (preparación) no se edita aquí → `400`.
-Si cambia el costo, las recetas que usan el producto se recalculan en la misma transacción (ver *Cascada de costos*); la respuesta trae `recetas_actualizadas`.
+Mismos campos (sin `stock_actual`) + opcionales `"activo": true|false`, `"compra_al_producir": true|false` y `"merma_pct"` (0–89.99; si no se envía, se conserva). En elaborados se ignora. Un producto **elaborado** (preparación) no se edita aquí → `400`.
+Si cambia el costo **o la merma**, las recetas que usan el producto se recalculan en la misma transacción (ver *Cascada de costos*); la respuesta trae `recetas_actualizadas`.
 
 ### `DELETE /api/productos/:empresa_id/:id`
 **Soft-delete**: marca `activo=false` (conserva el historial). No borra físicamente. Reactivar con `PUT ... {"activo": true}`.
@@ -179,7 +181,9 @@ Dónde se usa el producto, para decidir antes de desactivarlo. Respuesta: `{ rec
 
 ## Recetas
 
-Campos: `nombre, categoria, precio_venta, costo_produccion?, proteccion_pct?, ingredientes[]`. `costo_total` y `margen` se calculan en el backend con la fórmula única `(insumos + producción) × (1 + protección%)`.
+Campos: `nombre, categoria, precio_venta, costo_produccion?, proteccion_pct?, ingredientes[]`, y opcionales `iva_pct` y `precio_incluye_iva` (al crear, si no vienen, se toman de la empresa). `costo_total` se calcula con la fórmula única `(insumos + producción) × (1 + protección%)`, usando el **costo útil** de cada insumo (con merma). Los precios se capturan con **IVA incluido** por defecto; `margen`, `precio_neto` y `costo_pct` se calculan sobre el precio **sin IVA**.
+
+**Campos derivados** (en listado, detalle y `preview`): `precio_neto` (precio sin IVA), `iva_monto` (`precio_venta − precio_neto`), `costo_pct` (`costo_total / precio_neto × 100`), `margen` (sobre neto), `utilidad` (`precio_neto − costo_total`) y `precio_sugerido` (`costo_total / (food_cost_objetivo/100)`, más IVA si aplica, redondeado al múltiplo de $5 más cercano). Ej.: precio 110, IVA 16%, costo 35 → `precio_neto` 94.83, `iva_monto` 15.17, `costo_pct` 36.91, `margen` 63.09, `utilidad` 59.83, `precio_sugerido` 135.
 
 ### `GET /api/recetas/:empresa_id`
 Filtros: `?q=`, `?categoria=`, `?incluir_inactivos=true`.
@@ -211,7 +215,7 @@ Body: `nombre`, `categoria`, `precio_venta`, opcionales `activo`, `costo_producc
 - Una preparación no puede llevarse a sí misma como ingrediente → `400`. `es_preparacion`, `rendimiento` y `unidad` no se editan aquí.
 
 ### Cascada de costos
-Cuando cambia el costo de un insumo (compra, `PUT` de producto) o el de una preparación (su receta cambió), se refresca `receta_detalle.costo_unitario` de las recetas que lo usan y se recalcula su `costo_total`; si esas recetas son preparaciones, la cascada continúa (con protección contra ciclos).
+Cuando cambia el costo o la **merma** de un insumo (compra, `PUT` de producto) o el costo de una preparación (su receta cambió), se refresca `receta_detalle.costo_unitario` (= **costo útil**) de las recetas que lo usan y se recalcula su `costo_total`; si esas recetas son preparaciones, la cascada continúa (con protección contra ciclos).
 
 ## Detalle de receta (ingredientes)
 - `GET /api/recetas/:receta_id/detalle` · `GET .../detalle/:id`
@@ -224,7 +228,7 @@ Cuando cambia el costo de un insumo (compra, `PUT` de producto) o el de una prep
 ## Producción (preparaciones)
 
 ### `GET /api/produccion/:empresa_id/sugerencias`
-Preparaciones bajo mínimo con lotes sugeridos. Cada sugerencia trae `insumos_requeridos` (compat) y **`insumos`**: `[{ producto_id, producto, unidad, requerido, disponible, faltante, compra_al_producir }]` calculado para los lotes sugeridos (`faltante = max(requerido − disponible, 0)`). `confirmar` sigue estricto: no permite insumos en negativo.
+Preparaciones bajo mínimo con lotes sugeridos. Cada sugerencia trae `insumos_requeridos` (compat) y **`insumos`**: `[{ producto_id, producto, unidad, requerido, disponible, faltante, compra_al_producir }]` para los lotes sugeridos, con `requerido`/`disponible`/`faltante` en **bruto** (lo que hay que comprar; `requerido = neto / (1 − merma/100)`). `confirmar` sigue estricto: consume en **bruto** y no permite insumos en negativo.
 
 ### `POST /api/produccion/:empresa_id/confirmar` *(Operativo o Admin)*
 Consume insumos y suma stock de la preparación (movimientos `PRODUCCION`, transacción atómica):
@@ -273,6 +277,8 @@ Respuesta: `data.detalle` (varianza y valor por producto) + `data.resumen` (`val
 { "fecha": "2026-09-20", "lineas": [ { "nombre_pos": "Chilaquiles Verdes", "cantidad": 4 } ] }
 ```
 También acepta `"csv": "<reporte Toteat crudo>"`. Explota recetas a insumos y descuenta stock. Reimportar el mismo día → `409` (revierte primero).
+
+**Descuento en bruto (merma):** las recetas se capturan en **neto** (lo que va al plato); al descontar inventario, cada insumo con `merma_pct` se descuenta en **bruto** = `neto / (1 − merma/100)`, redondeado a 3 decimales (ej. 100 g netos con 8% → 108.696 g). Aplica a importar/preview de ventas, auto-producción y `produccion`. Los mapeos POS tipo **INSUMO** se descuentan tal cual (sin merma); compras y conteo siguen en bruto. El movimiento usa el costo **bruto**, así el valor cuadra (bruto × costo bruto = neto × costo útil).
 
 **Auto-producción de preparaciones:** si un platillo lleva una preparación (p. ej. salsa) y el stock de esa preparación no alcanza, el faltante se **auto-produce** desde sus insumos dentro de la misma transacción (recursivo, tope de 5 niveles; un ciclo entre preparaciones → `400`). Movimientos: `PRODUCCION` de salida por los insumos (permite negativo), `PRODUCCION` de entrada por el elaborado (costo = costo vigente del elaborado) y la `VENTA` normal del consumo — así la preparación queda en 0 y no negativa. Si un insumo no alcanza, queda negativo y el import **no** se detiene.
 
@@ -330,11 +336,11 @@ Se permiten varios por día (uno por método o varios conceptos).
 UNION de ingresos, gastos (no anulados) y **compras** (lectura directa de la tabla `compra`), ordenado por fecha desc, id desc. Cada fila: `{ origen, id, fecha, concepto, categoria, metodo_pago, monto, proveedor, usuario }`. En compras: `categoria = "Compras de insumos"`, `metodo_pago = null`, `concepto = "Compra <referencia>"` (o `"Compra"` sin folio).
 
 ### Resumen *(Admin)*
-- `GET /api/finanzas/:e/resumen?desde&hasta&agrupar=dia|semana|mes` — rango máximo 366 días, `desde <= hasta`, anulados excluidos.
+- `GET /api/finanzas/:e/resumen?desde&hasta&agrupar=dia|semana|mes` — rango máximo 366 días, `desde <= hasta`, anulados excluidos. El resumen se calcula **sin IVA**: `ingresos` agrega `neto` (= `total / (1 + iva/100)` si la empresa captura con IVA) e `iva_estimado`; `food_cost_pct` y `resultado_operacion` se calculan sobre `ingresos.neto`; `flujo`, `ingreso_esperado` e `ingresos_comparables` siguen en **bruto**; la serie agrega `ingresos_neto`.
 ```json
 {
   "periodo": { "desde": "2026-09-01", "hasta": "2026-09-30" },
-  "ingresos": { "total": 42000, "por_metodo": [ { "metodo_pago": "EFECTIVO", "total": 25000 } ] },
+  "ingresos": { "total": 42000, "neto": 36206.90, "iva_estimado": 5793.10, "por_metodo": [ { "metodo_pago": "EFECTIVO", "total": 25000 } ] },
   "gastos": { "compras": 18000, "extra": 9000, "total": 27000,
               "por_categoria": [ { "categoria_id": 3, "categoria": "Renta", "total": 12000 } ] },
   "flujo": 15000,
@@ -345,7 +351,7 @@ UNION de ingresos, gastos (no anulados) y **compras** (lectura directa de la tab
   "ingreso_esperado": 41250,
   "ingresos_comparables": 41000,
   "dias_sin_ingreso": ["2026-09-14"],
-  "serie": [ { "periodo": "2026-09-01", "ingresos": 1500, "compras": 600, "gastos_extra": 0, "costo_ventas": 500 } ]
+  "serie": [ { "periodo": "2026-09-01", "ingresos": 1500, "ingresos_neto": 1293.10, "compras": 600, "gastos_extra": 0, "costo_ventas": 500 } ]
 }
 ```
 `costo_ventas` = Σ movimientos `VENTA`×costo − Σ `DEVOLUCION` de reversas (`referencia_tipo='VENTA_DIARIA'`). `resultado_operacion` = ingresos − costo_ventas − gastos.extra (las compras entran como inventario, no aquí). `food_cost_pct` = null si no hay ingresos. `ingreso_esperado` = Σ `venta_diaria_detalle.cantidad × precio_unitario` (snapshot de `recetas.precio_venta` al importar); null si ningún día del rango tiene detalle. `ingresos_comparables` = ingresos no anulados **solo** en las fechas del rango que tienen detalle (para comparar contra `ingreso_esperado`); null cuando `ingreso_esperado` es null. Los días importados antes de la migración 014 no tienen detalle.

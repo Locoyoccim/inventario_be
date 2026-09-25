@@ -10,6 +10,7 @@ export const productoCreateSchema = z.object({
     stock_actual: z.coerce.number().min(0, "stock_actual debe ser >= 0"),
     stock_minimo: z.coerce.number().min(0, "stock_minimo debe ser >= 0"),
     compra_al_producir: z.boolean().optional(),
+    merma_pct: z.coerce.number().min(0, "merma_pct debe ser >= 0").max(89.99, "merma_pct debe ser < 90").optional(),
 });
 
 // Mismos campos para actualizar

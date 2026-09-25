@@ -50,6 +50,6 @@ test("resumen: la serie fusiona las cuatro fuentes por periodo", () => {
         serieCosto: [{ periodo: "2026-09-01", total: "30" }],
     });
     assert.equal(r.serie.length, 2);
-    assert.deepEqual(r.serie[0], { periodo: "2026-09-01", ingresos: 100, compras: 40, gastos_extra: 0, costo_ventas: 30 });
-    assert.deepEqual(r.serie[1], { periodo: "2026-09-02", ingresos: 0, compras: 0, gastos_extra: 10, costo_ventas: 0 });
+    assert.deepEqual(r.serie[0], { periodo: "2026-09-01", ingresos: 100, compras: 40, gastos_extra: 0, costo_ventas: 30, ingresos_neto: 100 });
+    assert.deepEqual(r.serie[1], { periodo: "2026-09-02", ingresos: 0, compras: 0, gastos_extra: 10, costo_ventas: 0, ingresos_neto: 0 });
 });

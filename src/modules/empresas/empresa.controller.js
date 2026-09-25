@@ -31,6 +31,21 @@ export default class EmpresaController {
         res.json({ success: true, data: actualizada });
     });
 
+    getConfiguracion = asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const cfg = await this.empresaService.getConfig(id);
+        if (!cfg) throw ApiError.notFound("Empresa no encontrada");
+        res.json({ success: true, data: cfg });
+    });
+
+    actualizarConfiguracion = asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const aplicar = ["true", "1"].includes(String(req.query.aplicar_a_recetas));
+        const cfg = await this.empresaService.updateConfig(id, req.body, aplicar);
+        if (!cfg) throw ApiError.notFound("Empresa no encontrada");
+        res.json({ success: true, data: cfg });
+    });
+
     eliminarEmpresa = asyncHandler(async (req, res) => {
         const { id } = req.params;
         await this.empresaService.deleteEmpresa(id);

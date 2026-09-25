@@ -1,6 +1,7 @@
 import pool from "../../config/db.js";
 import { normalizar } from "../../utils/normalize.js";
 import ApiError from "../../utils/ApiError.js";
+import { netoABruto } from "../../utils/costeo.js";
 
 const r3 = (n) => Number(Number(n).toFixed(3));
 
@@ -12,7 +13,7 @@ const QUERIES = {
         JOIN recetas r ON r.id = rd.receta_id
         WHERE r.empresa_id = $1
     `,
-    PRODUCTOS_EMPRESA: `SELECT id, producto FROM productos WHERE empresa_id = $1`,
+    PRODUCTOS_EMPRESA: `SELECT id, producto, merma_pct FROM productos WHERE empresa_id = $1`,
     VENTA_EXISTE: `SELECT id FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2`,
     RECETAS_PRECIO: `SELECT id, precio_venta FROM recetas WHERE empresa_id = $1`,
     // Preparaciones de la empresa: producto elaborado, rendimiento y unidad (para auto-producción).
@@ -83,7 +84,7 @@ const QUERIES = {
 // --- Lógica pura (testeable sin BD) --------------------------------------
 // Resuelve las líneas del POS contra el mapeo y explota recetas UN nivel,
 // agregando el consumo total por insumo/elaborado (producto_id).
-export function calcularConsumo(lineas, posMap, recetaDetalle) {
+export function calcularConsumo(lineas, posMap, recetaDetalle, mermaPorId = new Map()) {
     const mapa = new Map(); // nombre_pos normalizado -> fila de pos_map
     for (const m of posMap) mapa.set(normalizar(m.nombre_pos), m);
 
@@ -93,14 +94,14 @@ export function calcularConsumo(lineas, posMap, recetaDetalle) {
         porReceta.get(d.receta_id).push(d);
     }
 
-    const consumo = new Map(); // producto_id -> cantidad total
+    // Se separa el consumo NETO de explosión de recetas (sujeto a merma) del consumo
+    // de mapeos POS tipo INSUMO (se descuenta tal cual, sin merma).
+    const netoReceta = new Map();
+    const netoInsumo = new Map();
     const sin_mapeo = [];
     const ignorados = [];
     const recetas_sin_escandallo = [];
-
-    const sumar = (producto_id, cantidad) => {
-        consumo.set(producto_id, (consumo.get(producto_id) ?? 0) + cantidad);
-    };
+    const acum = (map, pid, cant) => map.set(pid, (map.get(pid) ?? 0) + cant);
 
     for (const linea of lineas) {
         const cant = Number(linea.cantidad);
@@ -115,7 +116,7 @@ export function calcularConsumo(lineas, posMap, recetaDetalle) {
         if (m.tipo === "IGNORAR") {
             ignorados.push({ nombre_pos: linea.nombre_pos, cantidad: cant });
         } else if (m.tipo === "INSUMO") {
-            sumar(Number(m.producto_id), cant * factor);
+            acum(netoInsumo, Number(m.producto_id), cant * factor);
         } else if (m.tipo === "RECETA") {
             const detalles = porReceta.get(Number(m.receta_id)) ?? [];
             if (detalles.length === 0) {
@@ -127,9 +128,18 @@ export function calcularConsumo(lineas, posMap, recetaDetalle) {
                 continue;
             }
             for (const d of detalles) {
-                sumar(Number(d.producto_id), cant * factor * Number(d.cantidad));
+                acum(netoReceta, Number(d.producto_id), cant * factor * Number(d.cantidad));
             }
         }
+    }
+
+    // Descuento final BRUTO: lo explotado de receta pasa por merma; lo mapeado como INSUMO no.
+    const consumo = new Map();
+    const pids = new Set([...netoReceta.keys(), ...netoInsumo.keys()]);
+    for (const pid of pids) {
+        const bruto = netoReceta.has(pid) ? netoABruto(netoReceta.get(pid), mermaPorId.get(pid)) : 0;
+        const directo = netoInsumo.get(pid) ?? 0;
+        consumo.set(pid, Number((bruto + directo).toFixed(3)));
     }
 
     return { consumo, sin_mapeo, ignorados, recetas_sin_escandallo };
@@ -142,7 +152,7 @@ export function calcularConsumo(lineas, posMap, recetaDetalle) {
 //   consumo:       Map(producto_id -> cantidad)   (salida de calcularConsumo)
 //   stockActual:   Map(producto_id -> stock)
 //   preparaciones: Map(producto_elaborado_id -> { receta_id, rendimiento, nombre, unidad, detalle:[{producto_id, cantidad}] })
-export function resolverPreparaciones(consumo, stockActual, preparaciones, maxDepth = 5) {
+export function resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId = new Map(), maxDepth = 5) {
     const consumoFinal = new Map(consumo);
     const producido = new Map();    // elaboradoId -> total auto-producido
     const insumosAcum = new Map();  // elaboradoId -> Map(insumoId -> cantidad)
@@ -164,8 +174,9 @@ export function resolverPreparaciones(consumo, stockActual, preparaciones, maxDe
             if (!insumosAcum.has(elabId)) insumosAcum.set(elabId, new Map());
             const acum = insumosAcum.get(elabId);
             for (const d of prep.detalle) {
-                const add = r3((faltante * Number(d.cantidad)) / rendimiento);
                 const pid = Number(d.producto_id);
+                // El consumo del insumo se descuenta en BRUTO (aplica su merma de limpieza).
+                const add = netoABruto((faltante * Number(d.cantidad)) / rendimiento, mermaPorId.get(pid));
                 consumoFinal.set(pid, r3((consumoFinal.get(pid) ?? 0) + add));
                 acum.set(pid, r3((acum.get(pid) ?? 0) + add));
             }
@@ -240,15 +251,17 @@ export default class VentaRepository {
             throw ApiError.conflict(`Ya existe una importación de ventas para ${fecha}. Revierte ese día antes de reimportar.`);
         }
 
+        const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
         const { consumo, sin_mapeo, ignorados, recetas_sin_escandallo } = calcularConsumo(
             lineas,
             posMapRes.rows,
             detalleRes.rows,
+            mermaPorId,
         );
 
         const preparaciones = armarPreparaciones(prepRes.rows, detalleRes.rows);
         const stockActual = new Map(stockRes.rows.map((s) => [Number(s.producto_id), Number(s.stock_actual)]));
-        const { autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones);
+        const { autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId);
 
         const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
         const errores = [];
@@ -434,14 +447,16 @@ export default class VentaRepository {
             pool.query(QUERIES.RECETAS_PREP, [empresa_id]),
             pool.query(QUERIES.STOCK_EMPRESA, [empresa_id]),
         ]);
+        const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
         const { consumo, sin_mapeo, ignorados, recetas_sin_escandallo } = calcularConsumo(
             lineas,
             posMapRes.rows,
             detalleRes.rows,
+            mermaPorId,
         );
         const preparaciones = armarPreparaciones(prepRes.rows, detalleRes.rows);
         const stockActual = new Map(stockRes.rows.map((s) => [Number(s.producto_id), Number(s.stock_actual)]));
-        const { consumoFinal, autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones);
+        const { consumoFinal, autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId);
 
         const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
         const producidoPorId = new Map(autoProduccion.map((ap) => [Number(ap.producto_elaborado_id), ap.cantidad]));

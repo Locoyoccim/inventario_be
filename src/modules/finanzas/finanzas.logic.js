@@ -5,6 +5,8 @@ const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
 
 export function armarResumen({
     periodo,
+    ivaPct = 0,
+    preciosIncluyenIva = true,
     ingresosPorMetodo = [],
     gastosPorCategoria = [],
     comprasTotal = 0,
@@ -20,14 +22,17 @@ export function armarResumen({
     serieCosto = [],
 }) {
     const ingresosTotal = r2(ingresosPorMetodo.reduce((s, x) => s + Number(x.total), 0));
+    const ivaFactor = 1 + Number(ivaPct) / 100;
+    const ingresosNeto = preciosIncluyenIva && ivaFactor > 0 ? r2(ingresosTotal / ivaFactor) : ingresosTotal;
+    const ivaEstimado = r2(ingresosTotal - ingresosNeto);
     const gastosExtra = r2(gastosPorCategoria.reduce((s, x) => s + Number(x.total), 0));
     const compras = r2(comprasTotal);
     const gastosTotal = r2(compras + gastosExtra);
     const costoVentas = r2(Number(ventaCosto) - Number(devolucionCosto));
     const merma = r2(mermaCosto);
     const flujo = r2(ingresosTotal - gastosTotal);
-    const resultadoOperacion = r2(ingresosTotal - costoVentas - gastosExtra);
-    const foodCostPct = ingresosTotal > 0 ? r2((costoVentas / ingresosTotal) * 100) : null;
+    const resultadoOperacion = r2(ingresosNeto - costoVentas - gastosExtra);
+    const foodCostPct = ingresosNeto > 0 ? r2((costoVentas / ingresosNeto) * 100) : null;
 
     const mapa = new Map();
     const put = (arr, key) => {
@@ -41,12 +46,16 @@ export function armarResumen({
     put(serieCompras, "compras");
     put(serieGastos, "gastos_extra");
     put(serieCosto, "costo_ventas");
-    const serie = [...mapa.values()].sort((a, b) => (a.periodo < b.periodo ? -1 : a.periodo > b.periodo ? 1 : 0));
+    const serie = [...mapa.values()]
+        .map((row) => ({ ...row, ingresos_neto: preciosIncluyenIva && ivaFactor > 0 ? r2(row.ingresos / ivaFactor) : r2(row.ingresos) }))
+        .sort((a, b) => (a.periodo < b.periodo ? -1 : a.periodo > b.periodo ? 1 : 0));
 
     return {
         periodo,
         ingresos: {
             total: ingresosTotal,
+            neto: ingresosNeto,
+            iva_estimado: ivaEstimado,
             por_metodo: ingresosPorMetodo.map((x) => ({ metodo_pago: x.metodo_pago, total: r2(x.total) })),
         },
         gastos: {

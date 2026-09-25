@@ -19,6 +19,8 @@ export const recetaCreateSchema = z
         rendimiento: z.coerce.number().positive("rendimiento debe ser > 0").optional(),
         unidad: z.string().trim().min(1, "unidad es requerida").optional(),
         stock_minimo: z.coerce.number().min(0).optional(),
+        iva_pct: z.coerce.number().min(0).max(100).optional(),
+        precio_incluye_iva: z.boolean().optional(),
     })
     .refine((d) => !d.es_preparacion || (d.rendimiento != null && d.unidad != null), {
         message: "Una preparación requiere 'rendimiento' y 'unidad'",
@@ -39,6 +41,8 @@ export const recetaUpdateSchema = z.object({
     // Opcional: si viene, REEMPLAZA el escandallo completo en la misma transacción
     // que el encabezado (guardado atómico). Si no viene, el escandallo no se toca.
     ingredientes: z.array(ingrediente).min(1, "incluye al menos un ingrediente").optional(),
+    iva_pct: z.coerce.number().min(0).max(100).optional(),
+    precio_incluye_iva: z.boolean().optional(),
 });
 
 export const recetaPreviewSchema = z.object({

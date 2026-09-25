@@ -1,5 +1,5 @@
 import pool from "../../config/db.js";
-import { recalcularCostoTotal } from "../../utils/costeo.js";
+import { recalcularCostoTotal, costoUtil } from "../../utils/costeo.js";
 import ApiError from "../../utils/ApiError.js";
 
 const QUERIES = {
@@ -7,6 +7,7 @@ const QUERIES = {
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
            created_at, empresa_id, costo_produccion, proteccion_pct,
            es_preparacion, rendimiento, producto_elaborado_id,
+           iva_pct, precio_incluye_iva, precio_neto, costo_pct,
            COUNT(*) OVER()::int AS total
     FROM recetas
     WHERE empresa_id = $1
@@ -15,20 +16,22 @@ const QUERIES = {
     SELECT_BY_ID: `
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
            created_at, empresa_id, costo_produccion, proteccion_pct,
-           es_preparacion, rendimiento, producto_elaborado_id
+           es_preparacion, rendimiento, producto_elaborado_id,
+           iva_pct, precio_incluye_iva, precio_neto, costo_pct
     FROM recetas
     WHERE id = $1 AND empresa_id = $2;`,
     EXISTS_RECETA: `SELECT 1 FROM recetas WHERE id = $1;`,
     UPDATE_HEADER: `
     UPDATE recetas
     SET nombre = $1, categoria = $2, precio_venta = $3, activo = $4,
-        costo_produccion = $5, proteccion_pct = $6
+        costo_produccion = $5, proteccion_pct = $6,
+        iva_pct = COALESCE($9, iva_pct), precio_incluye_iva = COALESCE($10, precio_incluye_iva)
     WHERE id = $7 AND empresa_id = $8
     RETURNING id;`,
     DELETE: `DELETE FROM recetas WHERE id = $1 AND empresa_id = $2 RETURNING id;`,
     INSERT: `
-    INSERT INTO recetas (nombre, categoria, precio_venta, costo_total, activo, empresa_id, costo_produccion, proteccion_pct, es_preparacion, rendimiento)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    INSERT INTO recetas (nombre, categoria, precio_venta, costo_total, activo, empresa_id, costo_produccion, proteccion_pct, es_preparacion, rendimiento, iva_pct, precio_incluye_iva)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     RETURNING *;`,
     // Producto elaborado: proveedor_id NULL, costo reutiliza la columna generada.
     INSERT_PRODUCTO_ELAB: `
@@ -55,6 +58,7 @@ export default class RecetaRepository {
             SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
                    created_at, empresa_id, costo_produccion, proteccion_pct,
                    es_preparacion, rendimiento, producto_elaborado_id,
+                   iva_pct, precio_incluye_iva, precio_neto, costo_pct,
                    COUNT(*) OVER()::int AS total
             FROM recetas
             WHERE ${where.join(" AND ")}
@@ -82,10 +86,14 @@ export default class RecetaRepository {
             nombre, categoria, precio_venta,
             costo_total = 0, activo = true,
             costo_produccion = 0, proteccion_pct = 0,
+            iva_pct = null, precio_incluye_iva = null,
         } = data;
+        const cfg = (await pool.query("SELECT iva_pct, precios_incluyen_iva FROM empresas WHERE id = $1", [empresa_id])).rows[0] || {};
+        const iva = iva_pct != null ? iva_pct : (cfg.iva_pct ?? 16);
+        const incluye = precio_incluye_iva != null ? precio_incluye_iva : (cfg.precios_incluyen_iva ?? true);
         const result = await pool.query(QUERIES.INSERT, [
             nombre, categoria, precio_venta, costo_total, activo, empresa_id,
-            costo_produccion, proteccion_pct, false, 1,
+            costo_produccion, proteccion_pct, false, 1, iva, incluye,
         ]);
         return result.rows[0];
     }
@@ -97,6 +105,7 @@ export default class RecetaRepository {
         const {
             nombre, categoria, precio_venta, activo = true,
             costo_produccion = 0, proteccion_pct = 0, ingredientes,
+            iva_pct = null, precio_incluye_iva = null,
         } = data;
         const client = await pool.connect();
         try {
@@ -104,6 +113,7 @@ export default class RecetaRepository {
             const upd = await client.query(QUERIES.UPDATE_HEADER, [
                 nombre, categoria, precio_venta, activo,
                 costo_produccion, proteccion_pct, id, empresa_id,
+                iva_pct, precio_incluye_iva,
             ]);
             if (!upd.rows[0]) {
                 await client.query("ROLLBACK");
@@ -138,7 +148,7 @@ export default class RecetaRepository {
 
         const ids = ingredientes.map((i) => Number(i.producto_id));
         const prodRes = await client.query(
-            "SELECT id, producto, unidad_medida, es_elaborado, costo_unitario FROM productos WHERE empresa_id = $1 AND id = ANY($2)",
+            "SELECT id, producto, unidad_medida, es_elaborado, costo_unitario, merma_pct FROM productos WHERE empresa_id = $1 AND id = ANY($2)",
             [empresa_id, ids]
         );
         const prodMap = new Map(prodRes.rows.map((r) => [Number(r.id), r]));
@@ -160,7 +170,7 @@ export default class RecetaRepository {
                 `INSERT INTO receta_detalle (receta_id, producto_id, cantidad, costo_unitario)
                  VALUES ($1, $2, $3, $4)
                  RETURNING id, receta_id, producto_id, cantidad, costo_unitario, costo_final`,
-                [receta_id, prod.id, ing.cantidad, prod.costo_unitario]
+                [receta_id, prod.id, ing.cantidad, costoUtil(prod.costo_unitario, prod.merma_pct)]
             );
             detalles.push({
                 ...det.rows[0],
@@ -188,6 +198,7 @@ export default class RecetaRepository {
             nombre, categoria, precio_venta, activo = true,
             costo_produccion = 0, proteccion_pct = 0, ingredientes = [],
             es_preparacion = false, rendimiento = 1, unidad = null, stock_minimo = 0,
+            iva_pct = null, precio_incluye_iva = null,
         } = data;
         if (!Array.isArray(ingredientes) || ingredientes.length === 0) {
             throw ApiError.badRequest("Se requiere al menos un ingrediente en 'ingredientes'");
@@ -200,16 +211,19 @@ export default class RecetaRepository {
         try {
             await client.query("BEGIN");
 
+            const cfg = (await client.query("SELECT iva_pct, precios_incluyen_iva FROM empresas WHERE id = $1", [empresa_id])).rows[0] || {};
+            const iva = iva_pct != null ? iva_pct : (cfg.iva_pct ?? 16);
+            const incluye = precio_incluye_iva != null ? precio_incluye_iva : (cfg.precios_incluyen_iva ?? true);
             const recRes = await client.query(QUERIES.INSERT, [
                 nombre, categoria, precio_venta, 0, activo, empresa_id,
-                costo_produccion, proteccion_pct, es_preparacion, es_preparacion ? rendimiento : 1,
+                costo_produccion, proteccion_pct, es_preparacion, es_preparacion ? rendimiento : 1, iva, incluye,
             ]);
             const receta = recRes.rows[0];
 
             // Un solo query para todos los insumos (evita N+1)
             const ids = ingredientes.map((i) => Number(i.producto_id));
             const prodRes = await client.query(
-                "SELECT id, producto, costo_unitario FROM productos WHERE empresa_id = $1 AND id = ANY($2)",
+                "SELECT id, producto, costo_unitario, merma_pct FROM productos WHERE empresa_id = $1 AND id = ANY($2)",
                 [empresa_id, ids]
             );
             const prodMap = new Map(prodRes.rows.map((r) => [Number(r.id), r]));
@@ -228,7 +242,7 @@ export default class RecetaRepository {
                     `INSERT INTO receta_detalle (receta_id, producto_id, cantidad, costo_unitario)
                      VALUES ($1, $2, $3, $4)
                      RETURNING id, receta_id, producto_id, cantidad, costo_unitario, costo_final`,
-                    [receta.id, producto_id, cantidad, prod.costo_unitario]
+                    [receta.id, producto_id, cantidad, costoUtil(prod.costo_unitario, prod.merma_pct)]
                 );
                 detalles.push({ ...det.rows[0], producto: prod.producto });
             }

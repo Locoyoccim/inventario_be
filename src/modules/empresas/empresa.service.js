@@ -22,4 +22,12 @@ export default class EmpresaService {
     async deleteEmpresa(id) {
         return await this.empresaRepository.remove(id);
     }
+
+    async getConfig(id) {
+        return await this.empresaRepository.getConfig(id);
+    }
+
+    async updateConfig(id, data, aplicarARecetas = false) {
+        return await this.empresaRepository.updateConfig(id, data, aplicarARecetas);
+    }
 }
