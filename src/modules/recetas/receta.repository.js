@@ -187,6 +187,48 @@ export default class RecetaRepository {
         return result.rows[0];
     }
 
+    // Mezcla de ventas por receta en un rango (para costo % ponderado e ingeniería de menú).
+    // Fuente: venta_diaria + venta_diaria_detalle (los días revertidos ya no existen, CASCADE).
+    // costo_teorico usa el costo VIGENTE de la receta (r.costo_total actual), no el histórico.
+    async ventasPorReceta(empresa_id, { desde, hasta }) {
+        const rango = [empresa_id, desde, hasta];
+        const [recetasRes, diasRes, sinRecetaRes] = await Promise.all([
+            pool.query(
+                `SELECT r.id AS receta_id, r.nombre, r.categoria, r.es_preparacion, r.activo,
+                        SUM(d.cantidad)::numeric AS unidades,
+                        SUM(d.cantidad * COALESCE(d.precio_unitario, r.precio_venta))::numeric AS ingreso,
+                        SUM(d.cantidad * COALESCE(d.precio_unitario, r.precio_venta)
+                            / (CASE WHEN r.precio_incluye_iva THEN 1 + r.iva_pct / 100 ELSE 1 END))::numeric AS ingreso_neto,
+                        (SUM(d.cantidad) * r.costo_total)::numeric AS costo_teorico
+                 FROM venta_diaria vd
+                 JOIN venta_diaria_detalle d ON d.venta_diaria_id = vd.id
+                 JOIN recetas r ON r.id = d.receta_id
+                 WHERE vd.empresa_id = $1 AND vd.fecha BETWEEN $2 AND $3
+                   AND d.tipo = 'RECETA' AND d.receta_id IS NOT NULL
+                 GROUP BY r.id, r.nombre, r.categoria, r.es_preparacion, r.activo, r.costo_total
+                 ORDER BY unidades DESC, r.nombre ASC`,
+                rango
+            ),
+            pool.query(
+                "SELECT COUNT(*)::int AS dias FROM venta_diaria WHERE empresa_id = $1 AND fecha BETWEEN $2 AND $3",
+                rango
+            ),
+            pool.query(
+                `SELECT COUNT(*)::int AS lineas, COALESCE(SUM(d.cantidad), 0)::numeric AS unidades
+                 FROM venta_diaria vd
+                 JOIN venta_diaria_detalle d ON d.venta_diaria_id = vd.id
+                 WHERE vd.empresa_id = $1 AND vd.fecha BETWEEN $2 AND $3
+                   AND d.tipo IN ('SIN_MAPEO', 'INSUMO')`,
+                rango
+            ),
+        ]);
+        return {
+            recetas: recetasRes.rows,
+            dias_importados: diasRes.rows[0].dias,
+            sin_receta: { lineas: sinRecetaRes.rows[0].lineas, unidades: Number(sinRecetaRes.rows[0].unidades) },
+        };
+    }
+
     // Crea la receta y todo su escandallo en UNA transacción. Usa la fórmula única.
     // Si data.es_preparacion === true, además crea el producto elaborado + su fila de
     // inventario y enlaza recetas.producto_elaborado_id (Opción A: subrecetas).

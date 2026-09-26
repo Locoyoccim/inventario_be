@@ -39,6 +39,17 @@ export default class RecetaController {
         res.status(201).json({ success: true, data: receta });
     });
 
+    ventasPorReceta = asyncHandler(async (req, res) => {
+        const { empresa_id } = req.params;
+        if (!(await this.recetaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const data = await this.recetaService.getVentasPorReceta(empresa_id, {
+            desde: req.query.desde || null,
+            hasta: req.query.hasta || null,
+        });
+        res.json({ success: true, data });
+    });
+
     preview = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         if (!(await this.recetaService.existsEmpresa(empresa_id)))

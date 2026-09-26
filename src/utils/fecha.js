@@ -16,3 +16,10 @@ export function hoyISO(now = new Date(), tz = process.env.TZ_NEGOCIO || "America
 export function noFutura(str, now = new Date()) {
     return str <= hoyISO(now);
 }
+
+// Resta n días a una fecha YYYY-MM-DD (en UTC) y la devuelve en el mismo formato.
+export function restarDias(iso, n) {
+    const d = new Date(Date.parse(iso + "T00:00:00Z"));
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().slice(0, 10);
+}

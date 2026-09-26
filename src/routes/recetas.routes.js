@@ -14,6 +14,8 @@ export default function registerRecetas(router) {
     router.delete("/recetas/:receta_id/detalle/:id", requireAdmin, recetaDetalleController.eliminar);
 
     router.post("/recetas/:empresa_id/preview", validate(recetaPreviewSchema), recetaController.preview);
+    // ANTES de /recetas/:empresa_id/:id para que "ventas" no se capture como :id.
+    router.get("/recetas/:empresa_id/ventas", requireAdmin, recetaController.ventasPorReceta);
     router.get("/recetas/:empresa_id", recetaController.listar);
     router.get("/recetas/:empresa_id/:id", recetaController.listarPorId);
     router.post("/recetas/:empresa_id", requireAdmin, validate(recetaCreateSchema), recetaController.crear);

@@ -1,4 +1,20 @@
 import { z } from "zod";
+import { esFechaReal } from "../../utils/fecha.js";
+import { canonizarUnidad, UNIDADES_CANONICAS } from "../../utils/unidades.js";
+
+const unidadRecetaSchema = z
+    .string()
+    .trim()
+    .min(1, "unidad es requerida")
+    .transform((v, ctx) => {
+        const u = canonizarUnidad(v);
+        if (!u) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `unidad no válida; usa una de: ${UNIDADES_CANONICAS.join(", ")}` });
+            return z.NEVER;
+        }
+        return u;
+    })
+    .optional();
 
 const ingrediente = z.object({
     producto_id: z.coerce.number().int().positive(),
@@ -17,7 +33,7 @@ export const recetaCreateSchema = z
         // Preparación / subreceta: además de receta, se vuelve producto elaborado en inventario
         es_preparacion: z.boolean().optional(),
         rendimiento: z.coerce.number().positive("rendimiento debe ser > 0").optional(),
-        unidad: z.string().trim().min(1, "unidad es requerida").optional(),
+        unidad: unidadRecetaSchema,
         stock_minimo: z.coerce.number().min(0).optional(),
         iva_pct: z.coerce.number().min(0).max(100).optional(),
         precio_incluye_iva: z.boolean().optional(),
@@ -51,3 +67,15 @@ export const recetaPreviewSchema = z.object({
     proteccion_pct: z.coerce.number().min(0).optional(),
     ingredientes: z.array(ingrediente).min(1, "incluye al menos un ingrediente"),
 });
+
+// Query de GET /recetas/:e/ventas — mismas reglas y mensajes que finanzas/resumen.
+export const ventasRecetaQuerySchema = z
+    .object({
+        desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fechas inválidas (YYYY-MM-DD)").refine(esFechaReal, "fechas inválidas (YYYY-MM-DD)"),
+        hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fechas inválidas (YYYY-MM-DD)").refine(esFechaReal, "fechas inválidas (YYYY-MM-DD)"),
+    })
+    .refine((d) => d.desde <= d.hasta, { message: "desde debe ser <= hasta", path: ["desde"] })
+    .refine((d) => (Date.parse(d.hasta) - Date.parse(d.desde)) / 86400000 + 1 <= 366, {
+        message: "El rango máximo es 366 días",
+        path: ["hasta"],
+    });

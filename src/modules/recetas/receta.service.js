@@ -1,4 +1,7 @@
 import { calcularPreview, enriquecerReceta } from "../../utils/costeo.js";
+import { hoyISO, restarDias } from "../../utils/fecha.js";
+import { ventasRecetaQuerySchema } from "./receta.schema.js";
+import ApiError from "../../utils/ApiError.js";
 
 export default class RecetaService {
     constructor(recetaRepository, empresaRepository) {
@@ -47,6 +50,56 @@ export default class RecetaService {
 
     async previewCosteo(empresa_id, data) {
         return await calcularPreview(empresa_id, data);
+    }
+
+    // Mezcla de ventas por receta + costo % ponderado (ingeniería de menú).
+    async getVentasPorReceta(empresa_id, { desde, hasta }) {
+        const ayer = restarDias(hoyISO(), 1);
+        const dDesde = desde || restarDias(ayer, 29); // por defecto, últimos 30 días hasta ayer
+        const dHasta = hasta || ayer;
+        const parsed = ventasRecetaQuerySchema.safeParse({ desde: dDesde, hasta: dHasta });
+        if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message, parsed.error.issues);
+
+        const raw = await this.recetaRepository.ventasPorReceta(empresa_id, { desde: dDesde, hasta: dHasta });
+        const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+        const recetas = raw.recetas.map((x) => {
+            const ingreso = r2(x.ingreso);
+            const ingreso_neto = r2(x.ingreso_neto);
+            const costo_teorico = r2(x.costo_teorico);
+            return {
+                receta_id: x.receta_id,
+                nombre: x.nombre,
+                categoria: x.categoria,
+                es_preparacion: x.es_preparacion,
+                activo: x.activo,
+                unidades: Number(x.unidades),
+                ingreso,
+                ingreso_neto,
+                costo_teorico,
+                costo_pct: ingreso_neto > 0 ? r2((costo_teorico / ingreso_neto) * 100) : null,
+                utilidad: r2(ingreso_neto - costo_teorico),
+            };
+        });
+        const sum = (k) => recetas.reduce((a, x) => a + x[k], 0);
+        const tUnidades = sum("unidades");
+        const tIngreso = r2(sum("ingreso"));
+        const tNeto = r2(sum("ingreso_neto"));
+        const tCosto = r2(sum("costo_teorico"));
+        const totales = {
+            unidades: tUnidades,
+            ingreso: tIngreso,
+            ingreso_neto: tNeto,
+            costo_teorico: tCosto,
+            costo_pct: tNeto > 0 ? r2((tCosto / tNeto) * 100) : null,
+            utilidad: r2(tNeto - tCosto),
+        };
+        return {
+            periodo: { desde: dDesde, hasta: dHasta },
+            dias_importados: raw.dias_importados,
+            recetas,
+            totales,
+            sin_receta: raw.sin_receta,
+        };
     }
 
     async existsEmpresa(empresa_id) {

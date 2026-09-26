@@ -139,7 +139,7 @@ Al crear una **preparación**, se asegura que la categoría `Preparación` (tipo
 
 ## Productos
 
-Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion`. El `costo_unitario` es **calculado** (`costo_presentacion / cantidad_presentacion`) con 4 decimales; `costo_presentacion` admite hasta 4 decimales (migración 011), de modo que insumos con presentación chica (p.ej. `cantidad_presentacion=1`) conservan el costo real (ej. `0.0123`) sin redondear a `0.01`. El stock vive en inventario y **solo** cambia por `/movimientos`, `/compras`, `/produccion` o `/conteos`.
+Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion`. `unidad_medida` se **normaliza** a un catálogo canónico (`g, kg, ml, l, pieza, porcion`, migración 019): POST/PUT aceptan variantes comunes (`gr`, `Gramos`, `kilos`, `Litros`, `pza`, `unidades`, `porción`…) y las guardan en su forma canónica; una unidad no reconocida → `400`. El sistema **no convierte** entre unidades: la `cantidad` de la receta se asume en la misma unidad del producto. El `costo_unitario` es **calculado** (`costo_presentacion / cantidad_presentacion`) con 4 decimales; `costo_presentacion` admite hasta 4 decimales (migración 011), de modo que insumos con presentación chica (p.ej. `cantidad_presentacion=1`) conservan el costo real (ej. `0.0123`) sin redondear a `0.01`. El stock vive en inventario y **solo** cambia por `/movimientos`, `/compras`, `/produccion` o `/conteos`.
 Campo opcional **`compra_al_producir`** (boolean, default `false`, migración 016): marca insumos perecederos que se compran justo al producir; nunca alertan por mínimo (ver *Reportes*) y su necesidad aparece en las sugerencias de producción. Solo aplica a insumos comprados; en productos elaborados se ignora.
 
 ### `GET /api/productos/:empresa_id`
@@ -187,6 +187,16 @@ Campos: `nombre, categoria, precio_venta, costo_produccion?, proteccion_pct?, in
 
 ### `GET /api/recetas/:empresa_id`
 Filtros: `?q=`, `?categoria=`, `?incluir_inactivos=true`.
+
+### `GET /api/recetas/:empresa_id/ventas?desde=&hasta=` *(Admin)*
+Mezcla de ventas por receta y **costo % ponderado** (ingeniería de menú), agregando `venta_diaria` + `venta_diaria_detalle`. Por defecto, los últimos 30 días hasta ayer. Valida `desde <= hasta` y rango ≤ 366 días (mismos mensajes que `finanzas/resumen`; `400` con `details`). Solo cuenta líneas `tipo='RECETA'`; los días revertidos ya no existen (CASCADE). El `costo_teorico` usa el **costo vigente** de la receta (no el histórico). Por receta: `unidades`, `ingreso` (precio capturado, normalmente con IVA), `ingreso_neto` (sin IVA cuando `precio_incluye_iva`), `costo_teorico` = `unidades × costo_total`, `costo_pct` = `costo_teorico / ingreso_neto × 100` (null si neto 0) y `utilidad`. Ordenadas por `unidades` desc (incluye inactivas si se vendieron). `totales.costo_pct` es el ponderado (Σcosto_teorico / Σingreso_neto). `sin_receta: { lineas, unidades }` = líneas `SIN_MAPEO`/`INSUMO` que quedan fuera. Sin días importados → `recetas: []`, totales en 0, `costo_pct: null`, `dias_importados: 0`.
+```json
+{ "periodo": { "desde": "2026-08-27", "hasta": "2026-09-25" }, "dias_importados": 24,
+  "recetas": [ { "receta_id": 12, "nombre": "Latte", "categoria": "Bebidas", "es_preparacion": false, "activo": true,
+    "unidades": 310, "ingreso": 15500.00, "ingreso_neto": 13362.07, "costo_teorico": 1550.00, "costo_pct": 11.60, "utilidad": 11812.07 } ],
+  "totales": { "unidades": 820, "ingreso": 52000.00, "ingreso_neto": 44827.59, "costo_teorico": 12100.00, "costo_pct": 26.99, "utilidad": 32727.59 },
+  "sin_receta": { "lineas": 14, "unidades": 37 } }
+```
 
 ### `POST /api/recetas/:empresa_id/preview`
 Costeo **sin guardar**:
