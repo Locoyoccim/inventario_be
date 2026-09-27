@@ -15,7 +15,7 @@ const authController = new AuthController(authService);
 router.post("/setup", validate(setupSchema), authController.setup);
 router.post("/login", validate(loginSchema), authController.login);
 router.post("/logout", authController.logout);
-router.post("/logout-all", requireAuth, authController.logoutAll);
+router.post("/logout-all", requireAuth, requireActiveUser, authController.logoutAll);
 router.get("/me", requireAuth, requireActiveUser, authController.me);
 
 export default router;

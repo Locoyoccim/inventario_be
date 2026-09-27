@@ -1,4 +1,7 @@
 import { normalizar } from "./normalize.js";
+import ApiError from "./ApiError.js";
+
+const MAX_LINEAS = 2000;
 
 // Convierte el CSV de "Productos vendidos" de Toteat en filas limpias.
 // Formato de entrada (columnas variables por mesero, Total siempre al final):
@@ -33,6 +36,9 @@ export function parseToteatCsv(texto) {
         if (!Number.isFinite(cantidad) || cantidad === 0) continue;
 
         filas.push({ nombre_pos: nombre, cantidad });
+        if (filas.length > MAX_LINEAS) {
+            throw ApiError.badRequest(`Máximo ${MAX_LINEAS} líneas por importación`);
+        }
     }
 
     return filas;

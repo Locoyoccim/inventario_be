@@ -17,16 +17,20 @@ export default class UsuarioService {
     }
 
     async deleteUsuarios(empresa_id, id) {
+        const actual = await this.usuarioRepository.findById(empresa_id, id);
+        if (actual && actual.is_owner) {
+            throw ApiError.badRequest("El dueño de la empresa no se puede eliminar");
+        }
         const eliminado = await this.usuarioRepository.remove(empresa_id, id);
         invalidarUsuarioActivo(id);
         return eliminado;
     }
 
     async createUsuario(empresa_id, data) {
-        let payload = data;
+        let payload = { ...data, is_owner: false };
         if (data.password) {
             const password_hash = await bcrypt.hash(data.password, 10);
-            payload = { ...data, password_hash };
+            payload = { ...payload, password_hash };
         }
         return await this.usuarioRepository.create(empresa_id, payload);
     }
@@ -44,13 +48,21 @@ export default class UsuarioService {
         if (pierdeAcceso && actual.is_owner) {
             throw ApiError.badRequest("El dueño de la empresa no se puede desactivar ni perder el rol Admin");
         }
+        if (
+            actual.is_owner &&
+            !(actor && Number(actor.id) === Number(id)) &&
+            (data.email !== undefined || data.password !== undefined)
+        ) {
+            throw ApiError.badRequest("Solo el dueño puede modificar su propia cuenta");
+        }
         const payload = { ...data };
         delete payload.password;
         delete payload.forzar_cierre_sesion;
         if (data.password) payload.password_hash = await bcrypt.hash(data.password, 10);
         const actualizado = await this.usuarioRepository.update(empresa_id, id, payload);
-        // Admin fuerza el cierre de sesión del usuario objetivo (revoca sus JWT vigentes).
-        if (data.forzar_cierre_sesion) {
+        // Admin fuerza el cierre de sesión del usuario objetivo (revoca sus JWT vigentes),
+        // y un cambio de password también invalida las sesiones previas.
+        if (data.forzar_cierre_sesion || data.password) {
             await this.usuarioRepository.bumpTokenVersion(empresa_id, id);
         }
         invalidarUsuarioActivo(id);

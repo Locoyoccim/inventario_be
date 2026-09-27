@@ -144,7 +144,7 @@ export default class ProveedorRepository {
              FROM movimientosinventario m
              JOIN compra c ON c.id = m.referencia_id AND m.referencia_tipo = 'COMPRA'
              JOIN productos p ON p.id = m.producto_id
-             WHERE c.empresa_id = $1 AND c.proveedor_id = $2 AND c.anulado = false
+             WHERE c.empresa_id = $1 AND c.proveedor_id = $2 AND c.anulado = false AND p.empresa_id = c.empresa_id
              ORDER BY m.producto_id, m.fecha DESC, m.id DESC`, [empresa_id, id])).rows;
         // Mismas referencias que usa DELETE ?definitivo para el 409 (productos + compras + gastos, incluidos inactivos/anulados).
         const referencias = await this.contarReferencias(empresa_id, id);

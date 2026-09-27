@@ -49,7 +49,7 @@ const QUERIES = {
                m.stock_anterior, m.stock_nuevo
         FROM movimientosinventario m
         JOIN productos p ON p.id = m.producto_id
-        WHERE m.referencia_tipo = 'COMPRA' AND m.referencia_id = $1
+        WHERE m.referencia_tipo = 'COMPRA' AND m.referencia_id = $1 AND p.empresa_id = $2
         ORDER BY m.id ASC;`,
 };
 
@@ -71,7 +71,7 @@ export default class CompraRepository {
         if (!cab) throw ApiError.notFound("Compra no encontrada");
         if (cab.anulado) throw ApiError.conflict("La compra ya está anulada");
 
-        const lineas = (await pool.query(QUERIES.LINEAS_BY_COMPRA, [id])).rows;
+        const lineas = (await pool.query(QUERIES.LINEAS_BY_COMPRA, [id, empresa_id])).rows;
         const porProducto = new Map();
         for (const l of lineas) {
             const pid = Number(l.producto_id);
@@ -133,7 +133,7 @@ export default class CompraRepository {
     async findById(empresa_id, id) {
         const cab = await pool.query(QUERIES.HEADER_BY_ID, [id, empresa_id]);
         if (!cab.rows[0]) return null;
-        const lineas = await pool.query(QUERIES.LINEAS_BY_COMPRA, [id]);
+        const lineas = await pool.query(QUERIES.LINEAS_BY_COMPRA, [id, empresa_id]);
         return { ...cab.rows[0], lineas: lineas.rows };
     }
 

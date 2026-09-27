@@ -18,6 +18,7 @@ function servicio(usuarios) {
     const repo = {
         findById: async (_e, id) => usuarios.find((u) => u.id === Number(id)),
         update: async (_e, id, data) => ({ id: Number(id), ...data }),
+        bumpTokenVersion: async () => {},
     };
     return new UsuarioService(repo, {});
 }

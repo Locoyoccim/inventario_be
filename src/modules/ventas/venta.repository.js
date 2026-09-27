@@ -35,13 +35,20 @@ const QUERIES = {
         SELECT id, empresa_id, fecha, total_lineas, total_unidades, procesado_at
         FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2
     `,
+    // Igual que SELECT_VENTA pero bloquea la fila (usar solo dentro de una transacción abierta,
+    // en el client ya obtenido) para serializar reversas concurrentes del mismo día.
+    SELECT_VENTA_FOR_UPDATE: `
+        SELECT id, empresa_id, fecha, total_lineas, total_unidades, procesado_at
+        FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2
+        FOR UPDATE
+    `,
     // Todos los movimientos de una venta (incluye VENTA y PRODUCCION) para reconstruir/revertir.
     MOV_POR_REFERENCIA: `
         SELECT m.producto_id, p.producto, m.tipo_movimiento, m.cantidad, m.costo_unitario,
                m.stock_anterior, m.stock_nuevo
         FROM movimientosinventario m
         JOIN productos p ON p.id = m.producto_id
-        WHERE m.referencia_tipo = 'VENTA_DIARIA' AND m.referencia_id = $1
+        WHERE m.referencia_tipo = 'VENTA_DIARIA' AND m.referencia_id = $1 AND p.empresa_id = $2
         ORDER BY m.id ASC
     `,
     LOCK_INV: `SELECT producto_id FROM inventario WHERE producto_id = ANY($1::int[]) ORDER BY producto_id FOR UPDATE`,
@@ -521,7 +528,7 @@ export default class VentaRepository {
         const ventaRes = await pool.query(QUERIES.SELECT_VENTA, [empresa_id, fecha]);
         const venta = ventaRes.rows[0];
         if (!venta) return null;
-        const movs = (await pool.query(QUERIES.MOV_POR_REFERENCIA, [venta.id])).rows;
+        const movs = (await pool.query(QUERIES.MOV_POR_REFERENCIA, [venta.id, empresa_id])).rows;
 
         // Reconstruye la auto-producción desde los movimientos PRODUCCION de esta venta.
         const entradas = movs.filter((m) => m.tipo_movimiento === "PRODUCCION" && Number(m.stock_nuevo) > Number(m.stock_anterior));
@@ -570,14 +577,21 @@ export default class VentaRepository {
     // vuelva exactamente a como estaba. VENTA -> DEVOLUCION (mismo costo, para que costo_ventas
     // quede en 0). PRODUCCION -> su inverso (no toca costo_ventas ni merma). Borra el encabezado.
     async revertirDia(empresa_id, fecha) {
-        const ventaRes = await pool.query(QUERIES.SELECT_VENTA, [empresa_id, fecha]);
-        const venta = ventaRes.rows[0];
-        if (!venta) return null;
-
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
-            const movs = (await client.query(QUERIES.MOV_POR_REFERENCIA, [venta.id])).rows;
+
+            // FOR UPDATE bloquea la fila hasta que esta transacción termine: una segunda
+            // reversa concurrente para el mismo empresa_id/fecha se queda esperando aquí,
+            // y al despertar (fila ya borrada por la primera) simplemente no encuentra nada.
+            const ventaRes = await client.query(QUERIES.SELECT_VENTA_FOR_UPDATE, [empresa_id, fecha]);
+            const venta = ventaRes.rows[0];
+            if (!venta) {
+                await client.query("ROLLBACK");
+                return null;
+            }
+
+            const movs = (await client.query(QUERIES.MOV_POR_REFERENCIA, [venta.id, empresa_id])).rows;
 
             // Pre-bloqueo en orden ascendente por producto_id (deadlock-safe).
             const ids = [...new Set(movs.map((m) => Number(m.producto_id)))].sort((a, b) => a - b);
@@ -615,7 +629,11 @@ export default class VentaRepository {
                 await this.movimientoRepository.aplicar(client, m.producto_id, empresa_id, data, opts);
                 revertidos++;
             }
-            await client.query(QUERIES.DELETE_VENTA, [venta.id, empresa_id]);
+            const delRes = await client.query(QUERIES.DELETE_VENTA, [venta.id, empresa_id]);
+            if (delRes.rowCount === 0) {
+                await client.query("ROLLBACK");
+                return null;
+            }
             await client.query("COMMIT");
             return { revertidos, fecha };
         } catch (error) {

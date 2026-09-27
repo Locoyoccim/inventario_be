@@ -84,8 +84,8 @@ export default class FinanzasRepository {
     }
 
     // ---------- Gastos ----------
-    async getGastoById(empresa_id, id) {
-        const r = await pool.query(`${GASTO_VIEW} WHERE g.id = $1 AND g.empresa_id = $2`, [id, empresa_id]);
+    async getGastoById(empresa_id, id, client = pool) {
+        const r = await client.query(`${GASTO_VIEW} WHERE g.id = $1 AND g.empresa_id = $2`, [id, empresa_id]);
         return r.rows[0];
     }
 
@@ -118,7 +118,7 @@ export default class FinanzasRepository {
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
                 [empresa_id, fecha, categoria_id, concepto, monto, metodo_pago, proveedor_id, nota, usuario_id]
             );
-            return await this.getGastoById(empresa_id, r.rows[0].id);
+            return await this.getGastoById(empresa_id, r.rows[0].id, client);
         } finally {
             client.release();
         }
@@ -138,7 +138,7 @@ export default class FinanzasRepository {
                  WHERE id=$1 AND empresa_id=$2`,
                 [id, empresa_id, fecha, categoria_id, concepto, monto, metodo_pago, proveedor_id, nota]
             );
-            return await this.getGastoById(empresa_id, id);
+            return await this.getGastoById(empresa_id, id, client);
         } finally {
             client.release();
         }
@@ -156,8 +156,8 @@ export default class FinanzasRepository {
     }
 
     // ---------- Ingresos ----------
-    async getIngresoById(empresa_id, id) {
-        const r = await pool.query(`${INGRESO_VIEW} WHERE i.id = $1 AND i.empresa_id = $2`, [id, empresa_id]);
+    async getIngresoById(empresa_id, id, client = pool) {
+        const r = await client.query(`${INGRESO_VIEW} WHERE i.id = $1 AND i.empresa_id = $2`, [id, empresa_id]);
         return r.rows[0];
     }
 
@@ -204,7 +204,7 @@ export default class FinanzasRepository {
             }
             await client.query("COMMIT");
             const out = [];
-            for (const id of ids) out.push(await this.getIngresoById(empresa_id, id));
+            for (const id of ids) out.push(await this.getIngresoById(empresa_id, id, client));
             return out;
         } catch (e) {
             await client.query("ROLLBACK");

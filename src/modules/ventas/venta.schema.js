@@ -18,7 +18,7 @@ export const ventaImportSchema = z
             .string()
             .regex(/^\d{4}-\d{2}-\d{2}$/, "fecha debe tener formato YYYY-MM-DD")
             .refine(esFechaReal, "fecha inexistente (revisa día/mes)"),
-        lineas: z.array(linea).optional(),
+        lineas: z.array(linea).max(2000, "Máximo 2000 líneas por importación").optional(),
         csv: z.string().optional(),
     })
     .refine(
@@ -29,7 +29,7 @@ export const ventaImportSchema = z
 // Preview: mismas fuentes que import (líneas o CSV) pero sin fecha ni persistencia.
 export const ventaPreviewSchema = z
     .object({
-        lineas: z.array(linea).optional(),
+        lineas: z.array(linea).max(2000, "Máximo 2000 líneas por importación").optional(),
         csv: z.string().optional(),
     })
     .refine(

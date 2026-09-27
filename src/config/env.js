@@ -24,7 +24,11 @@ const schema = z
                 message: "Falta DATABASE_URL o el conjunto DB_USER/DB_HOST/DB_NAME/DB_PASSWORD/DB_PORT",
             });
         }
-        if (env.NODE_ENV === "production") {
+        // Cualquier entorno que no sea explícitamente "development" o "test" se trata como
+        // productivo (staging, demo, o NODE_ENV ausente/mal configurado), para no permitir
+        // silenciosamente un CORS abierto a cualquier origen con credenciales.
+        const esNoProductivo = env.NODE_ENV === "development" || env.NODE_ENV === "test";
+        if (!esNoProductivo) {
             if (!env.CORS_ORIGINS)
                 ctx.addIssue({ code: z.ZodIssueCode.custom, message: "CORS_ORIGINS es obligatorio en producción" });
             if (!env.SETUP_TOKEN)

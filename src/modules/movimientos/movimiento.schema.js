@@ -6,6 +6,4 @@ export const movimientoCreateSchema = z.object({
     motivo: z.string().optional(),
     usuario_id: z.coerce.number().int().positive().optional(),
     costo_unitario: z.coerce.number().min(0).optional(),
-    referencia_tipo: z.string().optional(),
-    referencia_id: z.coerce.number().int().optional(),
 });
