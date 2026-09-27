@@ -18,17 +18,27 @@ const QUERIES = {
         WHERE u.empresa_id = $1 AND u.id = $2
     `,
     SELECT_PROFILE: `
-        SELECT id, nombre, email, is_admin, is_owner, empresa_id, activo
+        SELECT id, nombre, email, is_admin, is_owner, is_platform_admin, must_change_password, empresa_id, activo
         FROM usuarios
         WHERE empresa_id = $1 AND id = $2
     `,
     SELECT_COUNT: `SELECT COUNT(*)::int AS total FROM usuarios`,
     SELECT_BY_EMAIL: `
-        SELECT id, nombre, email, password_hash, is_admin, is_owner, role_id, empresa_id, activo, token_version
-        FROM usuarios
-        WHERE lower(trim(email)) = lower(trim($1))
-        ORDER BY id
+        SELECT u.id, u.nombre, u.email, u.password_hash, u.is_admin, u.is_owner, u.is_platform_admin,
+               u.must_change_password, u.role_id, u.empresa_id, u.activo, u.token_version,
+               e.activo AS empresa_activa
+        FROM usuarios u
+        JOIN empresas e ON e.id = u.empresa_id
+        WHERE lower(trim(u.email)) = lower(trim($1))
+        ORDER BY u.id
         LIMIT 1
+    `,
+    SELECT_PASSWORD_HASH: `SELECT password_hash FROM usuarios WHERE id = $1 AND empresa_id = $2`,
+    UPDATE_OWN_PASSWORD: `
+        UPDATE usuarios
+        SET password_hash = $1, must_change_password = false
+        WHERE id = $2 AND empresa_id = $3
+        RETURNING id
     `,
     INSERT: `
         INSERT INTO usuarios (nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email, password_hash)
@@ -120,6 +130,18 @@ export default class UsuarioRepository {
 
     async findByEmail(email) {
         const result = await pool.query(QUERIES.SELECT_BY_EMAIL, [email]);
+        return result.rows[0];
+    }
+
+    async findPasswordHash(empresa_id, id) {
+        const result = await pool.query(QUERIES.SELECT_PASSWORD_HASH, [id, empresa_id]);
+        return result.rows[0]?.password_hash ?? null;
+    }
+
+    // Cambio de la propia contraseña (self-service): no toca otros campos, limpia
+    // must_change_password. Distinto del PUT de usuarios (que edita otros usuarios).
+    async updateOwnPassword(empresa_id, id, password_hash) {
+        const result = await pool.query(QUERIES.UPDATE_OWN_PASSWORD, [password_hash, id, empresa_id]);
         return result.rows[0];
     }
 

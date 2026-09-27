@@ -30,7 +30,7 @@ const hash = await bcrypt.hash(PASSWORD, 10);
 const sql = `
     INSERT INTO usuarios (nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email, password_hash)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-    ON CONFLICT (empresa_id, email) WHERE email IS NOT NULL
+    ON CONFLICT (email) WHERE email IS NOT NULL
     DO UPDATE SET password_hash = EXCLUDED.password_hash, nombre = EXCLUDED.nombre
     RETURNING id, nombre, email, empresa_id, is_owner, is_admin;
 `;

@@ -5,7 +5,7 @@ import rateLimit from "express-rate-limit";
 import routes from "./routes/index.js";
 import authRoutes from "./routes/auth.routes.js";
 import { requireAuth } from "./middlewares/auth.js";
-import { requireActiveUser } from "./middlewares/activeUser.js";
+import { requireActiveUser, requirePasswordCurrent } from "./middlewares/activeUser.js";
 import { requestLogger } from "./middlewares/requestLogger.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import pool from "./config/db.js";
@@ -63,8 +63,10 @@ if (process.env.NODE_ENV !== "test") {
 // Rutas de autenticación (login abierto)
 app.use("/api/auth", authRoutes);
 
-// Resto de la API: requiere token válido
-app.use("/api", requireAuth, requireActiveUser, routes);
+// Resto de la API: requiere token válido. requirePasswordCurrent bloquea todo salvo
+// /api/auth/* (montado arriba, fuera de esta cadena) mientras haya una contraseña temporal
+// pendiente de cambiar (ver activeUser.js).
+app.use("/api", requireAuth, requireActiveUser, requirePasswordCurrent, routes);
 
 // Middleware central de errores (siempre al final)
 app.use(errorHandler);

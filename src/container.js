@@ -49,6 +49,9 @@ import FinanzasRepository from "./modules/finanzas/finanzas.repository.js";
 import CategoriaController from "./modules/categorias/categoria.controller.js";
 import CategoriaService from "./modules/categorias/categoria.service.js";
 import CategoriaRepository from "./modules/categorias/categoria.repository.js";
+import PlatformController from "./modules/platform/platform.controller.js";
+import PlatformService from "./modules/platform/platform.service.js";
+import PlatformRepository from "./modules/platform/platform.repository.js";
 
 // Repos base compartidos
 const empresaRepo = new EmpresaRepository();
@@ -72,3 +75,4 @@ export const compraController = new CompraController(new CompraService(new Compr
 export const reporteController = new ReporteController(new ReporteService(new ReporteRepository(), empresaRepo));
 export const categoriaController = new CategoriaController(new CategoriaService(new CategoriaRepository(), empresaRepo));
 export const finanzasController = new FinanzasController(new FinanzasService(new FinanzasRepository()));
+export const platformController = new PlatformController(new PlatformService(new PlatformRepository()));

@@ -39,6 +39,7 @@ export default class AuthService {
         return {
             id: u.id, nombre: u.nombre, email: u.email,
             empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
+            is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
         };
     }
 
@@ -50,12 +51,14 @@ export default class AuthService {
         if (!ok) throw ApiError.unauthorized("Credenciales inválidas");
         // Solo tras validar la contrasena, para no revelar que correos existen.
         if (u.activo === false) throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
+        if (u.empresa_activa === false) throw ApiError.forbidden("La empresa fue desactivada. Contacta al administrador.");
 
         const token = signToken({
             id: u.id,
             empresa_id: u.empresa_id,
             is_admin: u.is_admin,
             is_owner: u.is_owner,
+            is_platform_admin: u.is_platform_admin,
             role_id: u.role_id,
             tv: u.token_version ?? 0,
         });
@@ -64,12 +67,30 @@ export default class AuthService {
             user: {
                 id: u.id, nombre: u.nombre, email: u.email,
                 empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
+                is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
             },
         };
     }
 
     // Cierra TODAS las sesiones del usuario: sube token_version (revoca los JWT vigentes).
     async logoutAll(user) {
+        await this.usuarioRepository.bumpTokenVersion(user.empresa_id, user.id);
+        invalidarUsuarioActivo(user.id);
+    }
+
+    // Cambio de la propia contraseña (self-service). Siempre exige la contraseña actual,
+    // incluso durante el cambio obligatorio por contraseña temporal: el usuario ya la conoce
+    // (se la dio el administrador de plataforma), y exigirla evita que un JWT robado (sin la
+    // contraseña) baste para tomar la cuenta. Revoca las demás sesiones, como cualquier
+    // cambio de password.
+    async changePassword(user, passwordActual, passwordNueva) {
+        const hashActual = await this.usuarioRepository.findPasswordHash(user.empresa_id, user.id);
+        if (!hashActual) throw ApiError.unauthorized("No se pudo validar la cuenta");
+        const ok = await bcrypt.compare(passwordActual, hashActual);
+        if (!ok) throw ApiError.badRequest("La contraseña actual no es correcta");
+
+        const password_hash = await bcrypt.hash(passwordNueva, 10);
+        await this.usuarioRepository.updateOwnPassword(user.empresa_id, user.id, password_hash);
         await this.usuarioRepository.bumpTokenVersion(user.empresa_id, user.id);
         invalidarUsuarioActivo(user.id);
     }

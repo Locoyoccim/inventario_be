@@ -59,5 +59,14 @@ export function requirePlatformToken(req, _res, next) {
     next();
 }
 
+// Exige el usuario maestro de plataforma (usuarios.is_platform_admin). A diferencia de
+// requirePlatformToken, se apoya en req.user.is_platform_admin, refrescado desde la BD en
+// cada petición por requireActiveUser (mismo mecanismo que is_admin/is_owner) — nunca confía
+// solo en lo que diga el JWT.
+export function requirePlatformAdmin(req, _res, next) {
+    if (req.user && req.user.is_platform_admin) return next();
+    next(ApiError.forbidden("Requiere ser administrador de la plataforma"));
+}
+
 // Rol Admin = dueño o administrador. El resto de usuarios son "Operativo".
 export const requireAdmin = requireOwnerOrAdmin;

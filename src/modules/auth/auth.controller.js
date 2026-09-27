@@ -47,4 +47,12 @@ export default class AuthController {
         if (!user) throw ApiError.unauthorized("El usuario ya no existe");
         res.json({ success: true, data: user });
     });
+
+    // Cambio de la propia contraseña. Exenta del bloqueo de must_change_password (ver
+    // requirePasswordCurrent) para que el usuario pueda resolverlo. Revoca las demás sesiones.
+    changePassword = asyncHandler(async (req, res) => {
+        const { password_actual, password_nueva } = req.body;
+        await this.authService.changePassword(req.user, password_actual, password_nueva);
+        res.json({ success: true, data: null });
+    });
 }

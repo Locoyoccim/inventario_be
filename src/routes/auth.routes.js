@@ -3,7 +3,7 @@ import UsuarioRepository from "../modules/usuarios/usuario.repository.js";
 import AuthService from "../modules/auth/auth.service.js";
 import AuthController from "../modules/auth/auth.controller.js";
 import { validate } from "../middlewares/validate.js";
-import { loginSchema, setupSchema } from "../modules/auth/auth.schema.js";
+import { loginSchema, setupSchema, changePasswordSchema } from "../modules/auth/auth.schema.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireActiveUser } from "../middlewares/activeUser.js";
 
@@ -17,5 +17,8 @@ router.post("/login", validate(loginSchema), authController.login);
 router.post("/logout", authController.logout);
 router.post("/logout-all", requireAuth, requireActiveUser, authController.logoutAll);
 router.get("/me", requireAuth, requireActiveUser, authController.me);
+// Fuera del bloqueo de must_change_password (no pasa por requirePasswordCurrent): así el
+// usuario con contraseña temporal puede resolverlo.
+router.put("/password", requireAuth, requireActiveUser, validate(changePasswordSchema), authController.changePassword);
 
 export default router;

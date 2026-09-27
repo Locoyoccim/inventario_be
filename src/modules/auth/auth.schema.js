@@ -4,6 +4,11 @@ export const loginSchema = z.object({
     password: z.string().min(1, "password es requerido"),
 });
 
+export const changePasswordSchema = z.object({
+    password_actual: z.string().min(1, "password_actual es requerido"),
+    password_nueva: z.string().min(6, "password_nueva debe tener al menos 6 caracteres"),
+});
+
 export const setupSchema = z.object({
     empresa_id: z.coerce.number().int().positive(),
     nombre: z.string().trim().min(1, "nombre es requerido"),
