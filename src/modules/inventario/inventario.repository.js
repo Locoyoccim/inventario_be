@@ -34,7 +34,7 @@ export default class InventarioRepository {
             const result = await pool.query(QUERIES.SELECT_ALL, [empresa_id]);
             return result.rows;
         } catch (error) {
-            throw new Error(`Error al obtener inventario: ${error.message}`);
+            throw new Error(`Error al obtener inventario: ${error.message}`, { cause: error });
         }
     }
 
@@ -43,7 +43,7 @@ export default class InventarioRepository {
             const result = await pool.query(QUERIES.SELECT_BY_ID, [id, empresa_id]);
             return result.rows[0];
         } catch (error) {
-            throw new Error(`Error al obtener inventario por ID: ${error.message}`);
+            throw new Error(`Error al obtener inventario por ID: ${error.message}`, { cause: error });
         }
     }
 }

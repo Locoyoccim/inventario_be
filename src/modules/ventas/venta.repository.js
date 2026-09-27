@@ -2,91 +2,9 @@ import pool from "../../config/db.js";
 import { normalizar } from "../../utils/normalize.js";
 import ApiError from "../../utils/ApiError.js";
 import { netoABruto } from "../../utils/costeo.js";
+import { QUERIES } from "./venta.queries.js";
 
 const r3 = (n) => Number(Number(n).toFixed(3));
-
-const QUERIES = {
-    POS_MAP: `SELECT nombre_pos, tipo, receta_id, producto_id, factor FROM pos_map WHERE empresa_id = $1`,
-    RECETA_DETALLE: `
-        SELECT rd.receta_id, rd.producto_id, rd.cantidad
-        FROM receta_detalle rd
-        JOIN recetas r ON r.id = rd.receta_id
-        WHERE r.empresa_id = $1
-    `,
-    PRODUCTOS_EMPRESA: `SELECT id, producto, merma_pct FROM productos WHERE empresa_id = $1`,
-    VENTA_EXISTE: `SELECT id FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2`,
-    RECETAS_PRECIO: `SELECT id, precio_venta FROM recetas WHERE empresa_id = $1`,
-    // Preparaciones de la empresa: producto elaborado, rendimiento y unidad (para auto-producción).
-    RECETAS_PREP: `
-        SELECT r.id AS receta_id, r.rendimiento, r.producto_elaborado_id, r.nombre,
-               p.unidad_medida AS unidad
-        FROM recetas r
-        JOIN productos p ON p.id = r.producto_elaborado_id
-        WHERE r.empresa_id = $1 AND r.es_preparacion = true AND r.producto_elaborado_id IS NOT NULL
-    `,
-    STOCK_EMPRESA: `SELECT producto_id, stock_actual FROM inventario WHERE empresa_id = $1`,
-    INSERT_DETALLE: `INSERT INTO venta_diaria_detalle (venta_diaria_id, nombre_pos, cantidad, tipo, receta_id, producto_id, precio_unitario) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    INSERT_VENTA: `
-        INSERT INTO venta_diaria (empresa_id, fecha, total_lineas, total_unidades)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, empresa_id, fecha, total_lineas, total_unidades, procesado_at
-    `,
-    SELECT_VENTA: `
-        SELECT id, empresa_id, fecha, total_lineas, total_unidades, procesado_at
-        FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2
-    `,
-    // Igual que SELECT_VENTA pero bloquea la fila (usar solo dentro de una transacción abierta,
-    // en el client ya obtenido) para serializar reversas concurrentes del mismo día.
-    SELECT_VENTA_FOR_UPDATE: `
-        SELECT id, empresa_id, fecha, total_lineas, total_unidades, procesado_at
-        FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2
-        FOR UPDATE
-    `,
-    // Todos los movimientos de una venta (incluye VENTA y PRODUCCION) para reconstruir/revertir.
-    MOV_POR_REFERENCIA: `
-        SELECT m.producto_id, p.producto, m.tipo_movimiento, m.cantidad, m.costo_unitario,
-               m.stock_anterior, m.stock_nuevo
-        FROM movimientosinventario m
-        JOIN productos p ON p.id = m.producto_id
-        WHERE m.referencia_tipo = 'VENTA_DIARIA' AND m.referencia_id = $1 AND p.empresa_id = $2
-        ORDER BY m.id ASC
-    `,
-    LOCK_INV: `SELECT producto_id FROM inventario WHERE producto_id = ANY($1::int[]) ORDER BY producto_id FOR UPDATE`,
-    DELETE_VENTA: `DELETE FROM venta_diaria WHERE id = $1 AND empresa_id = $2 RETURNING id`,
-    // Días importados con conteo de productos que quedaron en negativo AL MOMENTO del import
-    // (incluye VENTA de insumos/elaborados y PRODUCCION de insumos auto-producidos).
-    LIST_DIAS: `
-        SELECT vd.id, vd.fecha, vd.total_lineas, vd.total_unidades, vd.procesado_at,
-               COALESCE(neg.insumos_negativos, 0) AS insumos_negativos
-        FROM venta_diaria vd
-        LEFT JOIN (
-            SELECT referencia_id, COUNT(DISTINCT producto_id) AS insumos_negativos
-            FROM movimientosinventario
-            WHERE referencia_tipo = 'VENTA_DIARIA'
-              AND tipo_movimiento IN ('VENTA', 'PRODUCCION')
-              AND stock_nuevo < 0
-            GROUP BY referencia_id
-        ) neg ON neg.referencia_id = vd.id
-        WHERE vd.empresa_id = $1
-          AND ($2::date IS NULL OR vd.fecha >= $2::date)
-          AND ($3::date IS NULL OR vd.fecha <= $3::date)
-        ORDER BY vd.fecha DESC
-    `,
-    // Preparaciones (id elaborado -> receta/rendimiento) para reconstruir auto-producción desde movs.
-    PREP_INDEX: `
-        SELECT r.id AS receta_id, r.rendimiento, r.producto_elaborado_id, r.nombre,
-               p.unidad_medida AS unidad
-        FROM recetas r
-        JOIN productos p ON p.id = r.producto_elaborado_id
-        WHERE r.empresa_id = $1 AND r.es_preparacion = true AND r.producto_elaborado_id IS NOT NULL
-    `,
-    PREP_DETALLE: `
-        SELECT rd.receta_id, rd.producto_id
-        FROM receta_detalle rd
-        JOIN recetas r ON r.id = rd.receta_id
-        WHERE r.empresa_id = $1 AND r.es_preparacion = true
-    `,
-};
 
 // --- Lógica pura (testeable sin BD) --------------------------------------
 // Resuelve las líneas del POS contra el mapeo y explota recetas UN nivel,
@@ -241,22 +159,17 @@ export default class VentaRepository {
         this.movimientoRepository = movimientoRepository;
     }
 
-    async importarDia(empresa_id, fecha, lineas, opts = {}) {
-        const { permitirNegativo = true } = opts;
-
-        const [posMapRes, detalleRes, prodRes, existeRes, recetasPrecioRes, prepRes, stockRes] = await Promise.all([
+    // Carga y resuelve el contexto de venta compartido por importarDia y previsualizar:
+    // mapeo POS + escandallo + productos + preparaciones + stock, consumo explotado
+    // (calcularConsumo) y su propagación a insumos vía auto-producción (resolverPreparaciones).
+    async #cargarContextoVenta(empresa_id, lineas) {
+        const [posMapRes, detalleRes, prodRes, prepRes, stockRes] = await Promise.all([
             pool.query(QUERIES.POS_MAP, [empresa_id]),
             pool.query(QUERIES.RECETA_DETALLE, [empresa_id]),
             pool.query(QUERIES.PRODUCTOS_EMPRESA, [empresa_id]),
-            pool.query(QUERIES.VENTA_EXISTE, [empresa_id, fecha]),
-            pool.query(QUERIES.RECETAS_PRECIO, [empresa_id]),
             pool.query(QUERIES.RECETAS_PREP, [empresa_id]),
             pool.query(QUERIES.STOCK_EMPRESA, [empresa_id]),
         ]);
-
-        if (existeRes.rows[0]) {
-            throw ApiError.conflict(`Ya existe una importación de ventas para ${fecha}. Revierte ese día antes de reimportar.`);
-        }
 
         const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
         const { consumo, sin_mapeo, ignorados, recetas_sin_escandallo } = calcularConsumo(
@@ -268,7 +181,185 @@ export default class VentaRepository {
 
         const preparaciones = armarPreparaciones(prepRes.rows, detalleRes.rows);
         const stockActual = new Map(stockRes.rows.map((s) => [Number(s.producto_id), Number(s.stock_actual)]));
-        const { autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId);
+        const { consumoFinal, autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId);
+
+        return {
+            posMapRes,
+            detalleRes,
+            prodRes,
+            prepRes,
+            stockRes,
+            mermaPorId,
+            consumo,
+            sin_mapeo,
+            ignorados,
+            recetas_sin_escandallo,
+            preparaciones,
+            stockActual,
+            consumoFinal,
+            autoProduccion,
+        };
+    }
+
+    // Inserta el encabezado (venta_diaria) y el snapshot de detalle línea por línea
+    // (habilita el "ingreso esperado" en Finanzas). Devuelve la fila de venta insertada.
+    async #insertarEncabezadoYDetalle(client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, total_lineas, total_unidades) {
+        const ventaRes = await client.query(QUERIES.INSERT_VENTA, [
+            empresa_id, fecha, total_lineas, total_unidades,
+        ]);
+        const venta = ventaRes.rows[0];
+
+        // Snapshot del detalle de la venta (habilita el "ingreso esperado" en Finanzas).
+        const posIndex = new Map(posMapRes.rows.map((m) => [normalizar(m.nombre_pos), m]));
+        const precioReceta = new Map(recetasPrecioRes.rows.map((r) => [Number(r.id), r.precio_venta]));
+        for (const l of lineas) {
+            const m = posIndex.get(normalizar(l.nombre_pos));
+            let tipo = "SIN_MAPEO";
+            let dReceta = null;
+            let dProducto = null;
+            let dPrecio = null;
+            if (m) {
+                tipo = m.tipo;
+                if (m.tipo === "RECETA") {
+                    dReceta = Number(m.receta_id);
+                    dPrecio = precioReceta.get(dReceta) ?? null;
+                } else if (m.tipo === "INSUMO") {
+                    dProducto = Number(m.producto_id);
+                }
+            }
+            await client.query(QUERIES.INSERT_DETALLE, [venta.id, l.nombre_pos, Number(l.cantidad), tipo, dReceta, dProducto, dPrecio]);
+        }
+
+        return venta;
+    }
+
+    // Pre-bloqueo de inventario en orden ascendente por producto_id: evita deadlocks
+    // entre importaciones/producciones concurrentes, aunque los movimientos se apliquen
+    // en fases (auto-producción y luego VENTA).
+    async #bloquearInventario(client, aDescontar, autoProduccion) {
+        const idsTocados = new Set();
+        for (const it of aDescontar) idsTocados.add(Number(it.producto_id));
+        for (const ap of autoProduccion) {
+            idsTocados.add(Number(ap.producto_elaborado_id));
+            for (const ins of ap.insumos) idsTocados.add(Number(ins.producto_id));
+        }
+        const idsOrden = [...idsTocados].sort((a, b) => a - b);
+        if (idsOrden.length > 0) await client.query(QUERIES.LOCK_INV, [idsOrden]);
+    }
+
+    // Fase 1: Insumos auto-producidos: PRODUCCION de salida (permite negativo).
+    async #aplicarAutoProduccionInsumos(client, empresa_id, fecha, venta_id, autoProduccion, nombrePorId, errores, negativos) {
+        const notaAuto = `Producción automática por venta del ${fecha}`;
+
+        for (const ap of autoProduccion) {
+            for (const ins of ap.insumos) {
+                if (!nombrePorId.has(Number(ins.producto_id))) {
+                    errores.push({ producto_id: ins.producto_id, motivo: "Insumo de preparación inexistente en la empresa" });
+                    ins.stock_resultante = null;
+                    continue;
+                }
+                const mov = await this.movimientoRepository.aplicar(
+                    client, ins.producto_id, empresa_id,
+                    {
+                        tipo_movimiento: "PRODUCCION",
+                        cantidad: ins.cantidad,
+                        motivo: notaAuto,
+                        referencia_tipo: "VENTA_DIARIA",
+                        referencia_id: venta_id,
+                    },
+                    { permitirNegativo: true },
+                );
+                if (!mov) {
+                    errores.push({ producto_id: ins.producto_id, producto: nombrePorId.get(Number(ins.producto_id)), motivo: "El insumo no tiene fila de inventario" });
+                    ins.stock_resultante = null;
+                    continue;
+                }
+                ins.producto = nombrePorId.get(Number(ins.producto_id));
+                ins.stock_resultante = Number(mov.stock_nuevo);
+                if (Number(mov.stock_nuevo) < 0) {
+                    negativos.push({ producto_id: ins.producto_id, producto: ins.producto, cantidad: ins.cantidad, stock_nuevo: Number(mov.stock_nuevo), origen: "PRODUCCION" });
+                }
+            }
+        }
+    }
+
+    // Fase 2: Elaborados auto-producidos: PRODUCCION de entrada (costo = costo vigente del elaborado).
+    async #aplicarAutoProduccionElaborados(client, empresa_id, fecha, venta_id, autoProduccion, nombrePorId) {
+        const notaAuto = `Producción automática por venta del ${fecha}`;
+
+        for (const ap of autoProduccion) {
+            const mov = await this.movimientoRepository.aplicar(
+                client, ap.producto_elaborado_id, empresa_id,
+                {
+                    tipo_movimiento: "PRODUCCION",
+                    cantidad: ap.cantidad,
+                    motivo: notaAuto,
+                    referencia_tipo: "VENTA_DIARIA",
+                    referencia_id: venta_id,
+                },
+                { direccion: 1, permitirNegativo: true },
+            );
+            ap.producto = nombrePorId.get(Number(ap.producto_elaborado_id)) ?? ap.nombre;
+            ap.producto_id = Number(ap.producto_elaborado_id);
+            ap.stock_elaborado_nuevo = mov ? Number(mov.stock_nuevo) : null;
+        }
+    }
+
+    // Fase 3: VENTA del consumo (como siempre). El elaborado ya fue producido, así queda en 0 y no negativo.
+    async #aplicarVenta(client, empresa_id, fecha, venta_id, aDescontar, nombrePorId, permitirNegativo, errores, negativos) {
+        const descontado = [];
+
+        aDescontar.sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
+        for (const item of aDescontar) {
+            const mov = await this.movimientoRepository.aplicar(
+                client, item.producto_id, empresa_id,
+                {
+                    tipo_movimiento: "VENTA",
+                    cantidad: item.cantidad,
+                    motivo: `Venta diaria ${fecha}`,
+                    referencia_tipo: "VENTA_DIARIA",
+                    referencia_id: venta_id,
+                },
+                { permitirNegativo },
+            );
+            if (!mov) {
+                errores.push({ producto_id: item.producto_id, producto: nombrePorId.get(item.producto_id), motivo: "El insumo no tiene fila de inventario" });
+                continue;
+            }
+            const registro = {
+                producto_id: item.producto_id,
+                producto: nombrePorId.get(item.producto_id),
+                cantidad: item.cantidad,
+                stock_nuevo: Number(mov.stock_nuevo),
+            };
+            descontado.push(registro);
+            if (Number(mov.stock_nuevo) < 0) negativos.push({ ...registro, origen: "VENTA" });
+        }
+
+        return descontado;
+    }
+
+    async importarDia(empresa_id, fecha, lineas, opts = {}) {
+        const { permitirNegativo = true } = opts;
+
+        const [existeRes, recetasPrecioRes] = await Promise.all([
+            pool.query(QUERIES.VENTA_EXISTE, [empresa_id, fecha]),
+            pool.query(QUERIES.RECETAS_PRECIO, [empresa_id]),
+        ]);
+
+        if (existeRes.rows[0]) {
+            throw ApiError.conflict(`Ya existe una importación de ventas para ${fecha}. Revierte ese día antes de reimportar.`);
+        }
+
+        const {
+            posMapRes,
+            prodRes,
+            consumo,
+            sin_mapeo,
+            ignorados,
+            recetas_sin_escandallo,
+            autoProduccion,
+        } = await this.#cargarContextoVenta(empresa_id, lineas);
 
         const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
         const errores = [];
@@ -286,128 +377,21 @@ export default class VentaRepository {
         const total_unidades = lineas.reduce((s, l) => s + Number(l.cantidad), 0);
 
         const client = await pool.connect();
-        const descontado = [];
         const negativos = [];
         try {
             await client.query("BEGIN");
 
-            const ventaRes = await client.query(QUERIES.INSERT_VENTA, [
-                empresa_id, fecha, total_lineas, total_unidades,
-            ]);
-            const venta = ventaRes.rows[0];
+            const venta = await this.#insertarEncabezadoYDetalle(
+                client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, total_lineas, total_unidades,
+            );
 
-            // Snapshot del detalle de la venta (habilita el "ingreso esperado" en Finanzas).
-            const posIndex = new Map(posMapRes.rows.map((m) => [normalizar(m.nombre_pos), m]));
-            const precioReceta = new Map(recetasPrecioRes.rows.map((r) => [Number(r.id), r.precio_venta]));
-            for (const l of lineas) {
-                const m = posIndex.get(normalizar(l.nombre_pos));
-                let tipo = "SIN_MAPEO";
-                let dReceta = null;
-                let dProducto = null;
-                let dPrecio = null;
-                if (m) {
-                    tipo = m.tipo;
-                    if (m.tipo === "RECETA") {
-                        dReceta = Number(m.receta_id);
-                        dPrecio = precioReceta.get(dReceta) ?? null;
-                    } else if (m.tipo === "INSUMO") {
-                        dProducto = Number(m.producto_id);
-                    }
-                }
-                await client.query(QUERIES.INSERT_DETALLE, [venta.id, l.nombre_pos, Number(l.cantidad), tipo, dReceta, dProducto, dPrecio]);
-            }
+            await this.#bloquearInventario(client, aDescontar, autoProduccion);
 
-            // Pre-bloqueo de inventario en orden ascendente por producto_id: evita deadlocks
-            // entre importaciones/producciones concurrentes, aunque los movimientos se apliquen
-            // en fases (auto-producción y luego VENTA).
-            const idsTocados = new Set();
-            for (const it of aDescontar) idsTocados.add(Number(it.producto_id));
-            for (const ap of autoProduccion) {
-                idsTocados.add(Number(ap.producto_elaborado_id));
-                for (const ins of ap.insumos) idsTocados.add(Number(ins.producto_id));
-            }
-            const idsOrden = [...idsTocados].sort((a, b) => a - b);
-            if (idsOrden.length > 0) await client.query(QUERIES.LOCK_INV, [idsOrden]);
+            await this.#aplicarAutoProduccionInsumos(client, empresa_id, fecha, venta.id, autoProduccion, nombrePorId, errores, negativos);
 
-            const notaAuto = `Producción automática por venta del ${fecha}`;
+            await this.#aplicarAutoProduccionElaborados(client, empresa_id, fecha, venta.id, autoProduccion, nombrePorId);
 
-            // 1) Insumos auto-producidos: PRODUCCION de salida (permite negativo).
-            for (const ap of autoProduccion) {
-                for (const ins of ap.insumos) {
-                    if (!nombrePorId.has(Number(ins.producto_id))) {
-                        errores.push({ producto_id: ins.producto_id, motivo: "Insumo de preparación inexistente en la empresa" });
-                        ins.stock_resultante = null;
-                        continue;
-                    }
-                    const mov = await this.movimientoRepository.aplicar(
-                        client, ins.producto_id, empresa_id,
-                        {
-                            tipo_movimiento: "PRODUCCION",
-                            cantidad: ins.cantidad,
-                            motivo: notaAuto,
-                            referencia_tipo: "VENTA_DIARIA",
-                            referencia_id: venta.id,
-                        },
-                        { permitirNegativo: true },
-                    );
-                    if (!mov) {
-                        errores.push({ producto_id: ins.producto_id, producto: nombrePorId.get(Number(ins.producto_id)), motivo: "El insumo no tiene fila de inventario" });
-                        ins.stock_resultante = null;
-                        continue;
-                    }
-                    ins.producto = nombrePorId.get(Number(ins.producto_id));
-                    ins.stock_resultante = Number(mov.stock_nuevo);
-                    if (Number(mov.stock_nuevo) < 0) {
-                        negativos.push({ producto_id: ins.producto_id, producto: ins.producto, cantidad: ins.cantidad, stock_nuevo: Number(mov.stock_nuevo), origen: "PRODUCCION" });
-                    }
-                }
-            }
-
-            // 2) Elaborados auto-producidos: PRODUCCION de entrada (costo = costo vigente del elaborado).
-            for (const ap of autoProduccion) {
-                const mov = await this.movimientoRepository.aplicar(
-                    client, ap.producto_elaborado_id, empresa_id,
-                    {
-                        tipo_movimiento: "PRODUCCION",
-                        cantidad: ap.cantidad,
-                        motivo: notaAuto,
-                        referencia_tipo: "VENTA_DIARIA",
-                        referencia_id: venta.id,
-                    },
-                    { direccion: 1, permitirNegativo: true },
-                );
-                ap.producto = nombrePorId.get(Number(ap.producto_elaborado_id)) ?? ap.nombre;
-                ap.producto_id = Number(ap.producto_elaborado_id);
-                ap.stock_elaborado_nuevo = mov ? Number(mov.stock_nuevo) : null;
-            }
-
-            // 3) VENTA del consumo (como siempre). El elaborado ya fue producido, así queda en 0 y no negativo.
-            aDescontar.sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
-            for (const item of aDescontar) {
-                const mov = await this.movimientoRepository.aplicar(
-                    client, item.producto_id, empresa_id,
-                    {
-                        tipo_movimiento: "VENTA",
-                        cantidad: item.cantidad,
-                        motivo: `Venta diaria ${fecha}`,
-                        referencia_tipo: "VENTA_DIARIA",
-                        referencia_id: venta.id,
-                    },
-                    { permitirNegativo },
-                );
-                if (!mov) {
-                    errores.push({ producto_id: item.producto_id, producto: nombrePorId.get(item.producto_id), motivo: "El insumo no tiene fila de inventario" });
-                    continue;
-                }
-                const registro = {
-                    producto_id: item.producto_id,
-                    producto: nombrePorId.get(item.producto_id),
-                    cantidad: item.cantidad,
-                    stock_nuevo: Number(mov.stock_nuevo),
-                };
-                descontado.push(registro);
-                if (Number(mov.stock_nuevo) < 0) negativos.push({ ...registro, origen: "VENTA" });
-            }
+            const descontado = await this.#aplicarVenta(client, empresa_id, fecha, venta.id, aDescontar, nombrePorId, permitirNegativo, errores, negativos);
 
             await client.query("COMMIT");
 
@@ -447,23 +431,8 @@ export default class VentaRepository {
 
     // Previsualiza el efecto de un mix de ventas SIN escribir nada (mapeo + consumo + auto-producción).
     async previsualizar(empresa_id, lineas) {
-        const [posMapRes, detalleRes, prodRes, prepRes, stockRes] = await Promise.all([
-            pool.query(QUERIES.POS_MAP, [empresa_id]),
-            pool.query(QUERIES.RECETA_DETALLE, [empresa_id]),
-            pool.query(QUERIES.PRODUCTOS_EMPRESA, [empresa_id]),
-            pool.query(QUERIES.RECETAS_PREP, [empresa_id]),
-            pool.query(QUERIES.STOCK_EMPRESA, [empresa_id]),
-        ]);
-        const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
-        const { consumo, sin_mapeo, ignorados, recetas_sin_escandallo } = calcularConsumo(
-            lineas,
-            posMapRes.rows,
-            detalleRes.rows,
-            mermaPorId,
-        );
-        const preparaciones = armarPreparaciones(prepRes.rows, detalleRes.rows);
-        const stockActual = new Map(stockRes.rows.map((s) => [Number(s.producto_id), Number(s.stock_actual)]));
-        const { consumoFinal, autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId);
+        const { prodRes, sin_mapeo, ignorados, recetas_sin_escandallo, stockActual, consumoFinal, autoProduccion } =
+            await this.#cargarContextoVenta(empresa_id, lineas);
 
         const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
         const producidoPorId = new Map(autoProduccion.map((ap) => [Number(ap.producto_elaborado_id), ap.cantidad]));
@@ -524,13 +493,8 @@ export default class VentaRepository {
         };
     }
 
-    async consultarDia(empresa_id, fecha) {
-        const ventaRes = await pool.query(QUERIES.SELECT_VENTA, [empresa_id, fecha]);
-        const venta = ventaRes.rows[0];
-        if (!venta) return null;
-        const movs = (await pool.query(QUERIES.MOV_POR_REFERENCIA, [venta.id, empresa_id])).rows;
-
-        // Reconstruye la auto-producción desde los movimientos PRODUCCION de esta venta.
+    // Reconstruye la auto-producción desde los movimientos PRODUCCION de esta venta.
+    async #reconstruirAutoProduccion(empresa_id, movs) {
         const entradas = movs.filter((m) => m.tipo_movimiento === "PRODUCCION" && Number(m.stock_nuevo) > Number(m.stock_anterior));
         const salidas = movs.filter((m) => m.tipo_movimiento === "PRODUCCION" && Number(m.stock_nuevo) < Number(m.stock_anterior));
         let auto_produccion = [];
@@ -569,6 +533,16 @@ export default class VentaRepository {
                 };
             });
         }
+        return auto_produccion;
+    }
+
+    async consultarDia(empresa_id, fecha) {
+        const ventaRes = await pool.query(QUERIES.SELECT_VENTA, [empresa_id, fecha]);
+        const venta = ventaRes.rows[0];
+        if (!venta) return null;
+        const movs = (await pool.query(QUERIES.MOV_POR_REFERENCIA, [venta.id, empresa_id])).rows;
+
+        const auto_produccion = await this.#reconstruirAutoProduccion(empresa_id, movs);
 
         return { ...venta, movimientos: movs, auto_produccion };
     }
