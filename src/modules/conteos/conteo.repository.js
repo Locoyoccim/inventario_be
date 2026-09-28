@@ -25,13 +25,15 @@ const QUERIES = {
         RETURNING id, empresa_id, fecha, usuario_id, motivo, estado, total_lineas, valor_variacion_total, created_at;`,
     LIST: `
         SELECT id, empresa_id, fecha, usuario_id, motivo, estado, total_lineas, valor_variacion_total, created_at,
+               anulado, anulado_at, anulado_por, motivo_anulacion,
                COUNT(*) OVER()::int AS total
         FROM conteo_fisico
         WHERE empresa_id = $1
         ORDER BY fecha DESC, id DESC
         LIMIT $2 OFFSET $3;`,
     HEADER_BY_ID: `
-        SELECT id, empresa_id, fecha, usuario_id, motivo, estado, total_lineas, valor_variacion_total, created_at
+        SELECT id, empresa_id, fecha, usuario_id, motivo, estado, total_lineas, valor_variacion_total, created_at,
+               anulado, anulado_at, anulado_por, motivo_anulacion
         FROM conteo_fisico WHERE id = $1 AND empresa_id = $2;`,
     DETALLE_BY_CONTEO: `
         SELECT d.id, d.producto_id, p.producto, p.unidad_medida,
@@ -41,12 +43,19 @@ const QUERIES = {
         WHERE d.conteo_id = $1
         ORDER BY d.id ASC;`,
     PLANTILLA: `
-        SELECT p.id AS producto_id, p.producto, p.unidad_medida, p.es_elaborado,
+        SELECT p.id AS producto_id, p.producto, p.unidad_medida, p.es_elaborado, p.categoria, p.activo,
                i.stock_actual AS stock_teorico
         FROM productos p
         JOIN inventario i ON i.producto_id = p.id
-        WHERE p.empresa_id = $1
+        WHERE p.empresa_id = $1 AND (p.activo = true OR i.stock_actual <> 0)
         ORDER BY p.producto ASC;`,
+    FETCH_ANULAR: `SELECT id, motivo, anulado FROM conteo_fisico WHERE id = $1 AND empresa_id = $2;`,
+    LINEAS_FOR_ANULAR: `SELECT producto_id, variacion FROM conteo_detalle WHERE conteo_id = $1 AND variacion <> 0 ORDER BY producto_id ASC;`,
+    MARK_ANULADA: `
+        UPDATE conteo_fisico SET anulado = true, anulado_at = now(), anulado_por = $3, motivo_anulacion = $4
+        WHERE id = $1 AND empresa_id = $2
+        RETURNING id, empresa_id, fecha, usuario_id, motivo, estado, total_lineas, valor_variacion_total, created_at,
+                  anulado, anulado_at, anulado_por, motivo_anulacion;`,
 };
 
 export default class ConteoRepository {
@@ -139,6 +148,41 @@ export default class ConteoRepository {
 
             await client.query("COMMIT");
             return { conteo: cabFinal, detalle, resumen };
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    // Anula un conteo: revierte el AJUSTE de cada línea con variación (signo contrario al que
+    // se aplicó al crearlo) y lo marca anulado con motivo. No se borra (mismo patrón que
+    // compra.repository.js). Si revertir dejaría stock negativo, aplicar() lo bloquea (400) y
+    // la transacción se revierte completa: no queda nada a medias.
+    async anular(empresa_id, id, usuario_id, motivo) {
+        const cab = (await pool.query(QUERIES.FETCH_ANULAR, [id, empresa_id])).rows[0];
+        if (!cab) throw ApiError.notFound("Conteo no encontrado");
+        if (cab.anulado) throw ApiError.conflict("El conteo ya está anulado");
+
+        const lineas = (await pool.query(QUERIES.LINEAS_FOR_ANULAR, [id])).rows;
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            for (const l of lineas) {
+                await this.movimientoRepository.aplicar(client, Number(l.producto_id), empresa_id, {
+                    tipo_movimiento: "AJUSTE",
+                    cantidad: -Number(l.variacion),
+                    usuario_id,
+                    motivo: `Anulación de conteo físico #${id}`,
+                    referencia_tipo: "CONTEO_ANULADO",
+                    referencia_id: Number(id),
+                });
+            }
+            const upd = (await client.query(QUERIES.MARK_ANULADA, [id, empresa_id, usuario_id, motivo])).rows[0];
+            await client.query("COMMIT");
+            return { ...upd, productos_reajustados: lineas.length };
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;

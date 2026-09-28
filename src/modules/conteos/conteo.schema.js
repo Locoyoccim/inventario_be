@@ -10,3 +10,7 @@ export const conteoCreateSchema = z.object({
     motivo: z.string().trim().optional(),
     lineas: z.array(lineaConteo).min(1, "incluye al menos una línea de conteo"),
 });
+
+export const conteoAnularSchema = z.object({
+    motivo: z.string().trim().min(1, "motivo es requerido"),
+});

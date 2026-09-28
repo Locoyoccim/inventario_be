@@ -40,4 +40,12 @@ export default class ConteoController {
         const data = await this.conteoService.crear(empresa_id, { ...req.body, usuario_id });
         res.status(201).json({ success: true, data });
     });
+
+    anular = asyncHandler(async (req, res) => {
+        const { empresa_id, id } = req.params;
+        if (!(await this.conteoService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const data = await this.conteoService.anular(empresa_id, id, req.user?.id ?? null, req.body.motivo);
+        res.json({ success: true, data });
+    });
 }

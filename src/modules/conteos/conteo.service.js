@@ -18,4 +18,7 @@ export default class ConteoService {
     async crear(empresa_id, data) {
         return await this.conteoRepository.crear(empresa_id, data);
     }
+    async anular(empresa_id, id, usuario_id, motivo) {
+        return await this.conteoRepository.anular(empresa_id, id, usuario_id, motivo);
+    }
 }
