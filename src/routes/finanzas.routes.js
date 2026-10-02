@@ -1,5 +1,5 @@
 import { validate } from "../middlewares/validate.js";
-import { requireAdmin } from "../middlewares/auth.js";
+import { requireAdmin, requirePermiso } from "../middlewares/auth.js";
 import { finanzasController } from "../container.js";
 import {
     categoriaGastoCreateSchema, categoriaGastoUpdateSchema,
@@ -18,15 +18,15 @@ export default function registerFinanzas(router) {
 
     // Gastos (crear: Admin y Operativo; editar/anular: Admin)
     router.get(`${b}/gastos`, finanzasController.listarGastos);
-    router.post(`${b}/gastos`, validate(gastoCreateSchema), finanzasController.crearGasto);
+    router.post(`${b}/gastos`, requirePermiso("gastos.crear"), validate(gastoCreateSchema), finanzasController.crearGasto);
     router.post(`${b}/gastos/:id/anular`, requireAdmin, validate(anularSchema), finanzasController.anularGasto);
     router.put(`${b}/gastos/:id`, requireAdmin, validate(gastoUpdateSchema), finanzasController.actualizarGasto);
 
     // Ingresos (crear/lote: Admin y Operativo; editar/anular: Admin)
     router.get(`${b}/ingresos`, finanzasController.listarIngresos);
-    router.post(`${b}/ingresos/lote`, validate(ingresoLoteSchema), finanzasController.crearIngresosLote);
+    router.post(`${b}/ingresos/lote`, requirePermiso("ingresos.crear"), validate(ingresoLoteSchema), finanzasController.crearIngresosLote);
     router.post(`${b}/ingresos/:id/anular`, requireAdmin, validate(anularSchema), finanzasController.anularIngreso);
-    router.post(`${b}/ingresos`, validate(ingresoCreateSchema), finanzasController.crearIngreso);
+    router.post(`${b}/ingresos`, requirePermiso("ingresos.crear"), validate(ingresoCreateSchema), finanzasController.crearIngreso);
     router.put(`${b}/ingresos/:id`, requireAdmin, validate(ingresoUpdateSchema), finanzasController.actualizarIngreso);
 
     // Libro y resumen (solo Admin)

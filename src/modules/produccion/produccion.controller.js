@@ -15,6 +15,15 @@ export default class ProduccionController {
         res.json({ success: true, data });
     });
 
+    planificar = asyncHandler(async (req, res) => {
+        const { empresa_id, receta_id } = req.params;
+        if (!(await this.produccionService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const lotes = Number(req.query.lotes ?? 1);
+        const data = await this.produccionService.planificar(empresa_id, receta_id, lotes);
+        res.json({ success: true, data });
+    });
+
     confirmar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         if (!(await this.produccionService.existsEmpresa(empresa_id)))

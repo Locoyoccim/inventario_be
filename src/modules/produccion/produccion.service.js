@@ -12,6 +12,10 @@ export default class ProduccionService {
         return await this.produccionRepository.sugerencias(empresa_id);
     }
 
+    async planificar(empresa_id, receta_id, lotes) {
+        return await this.produccionRepository.planificar(empresa_id, receta_id, lotes);
+    }
+
     async confirmar(empresa_id, producciones, usuario_id) {
         return await this.produccionRepository.confirmar(empresa_id, producciones, usuario_id);
     }

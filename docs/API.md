@@ -85,13 +85,28 @@ Requiere sesión. Sube la `token_version` del usuario → **revoca todas** sus s
 ### `GET /api/auth/me`
 Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email, empresa_id, is_admin, is_owner }` (mismo formato que `user` en login). Pasa por `requireActiveUser`: `401` si el usuario ya no existe, está desactivado o su sesión fue revocada (`logout-all`).
 
-### Roles: Admin vs Operativo
+### Roles: Admin vs Operativo (+ permisos granulares)
 Cada usuario es **Admin** (`is_owner` o `is_admin` = true) u **Operativo** (lo demás).
 - **Admin**: acceso total.
-- **Operativo**: puede registrar **ventas**, **conteos** y **compras**, y **leer** todo (productos, inventario, recetas, reportes, categorías). También **confirma producción**. NO puede crear/editar productos, recetas, costos, proveedores, usuarios, pos-map ni categorías, ni revertir ventas → responde `403`.
+- **Operativo**: siempre puede **leer** todo (productos, inventario, recetas, reportes, categorías). Para **crear** (compras, conteos, producción, gastos, ingresos) depende de su **rol** (`usuarios.role_id` → catálogo en `GET /api/roles/:empresa_id`): cada rol trae una lista de `permisos` (claves `compras.crear`, `conteos.crear`, `produccion.crear`, `gastos.crear`, `ingresos.crear`). Sin `role_id` asignado, un Operativo se trata como el rol "Operativo completo" (todas esas claves) — compatibilidad con usuarios creados antes de que existiera este sistema. Falta de permiso para la acción → `403 "Tu rol no tiene permiso para esta acción"`.
+- Un Operativo NO puede crear/editar productos, recetas, costos, proveedores, usuarios, pos-map ni categorías, ni revertir ventas, sin importar su rol → `403`.
 - Un usuario **desactivado** (`activo: false`) no puede iniciar sesión (`403`) y sus tokens vigentes dejan de servir (`401`, a más tardar en 1 minuto).
 
-Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo `email` + `password` y `is_admin`/`is_owner` en `false`.
+Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo `email` + `password`, `is_admin`/`is_owner` en `false` y, opcionalmente, `role_id`.
+
+### `GET /api/roles/:empresa_id`
+Catálogo global de roles (no cuelga realmente de la empresa; el `:empresa_id` es solo para reusar el guard de sesión). Cualquier usuario autenticado puede leerlo — lo usa el formulario de Usuarios para el selector de rol.
+```json
+{ "success": true, "data": [
+  { "id": 4, "nombre": "Operativo completo", "descripcion": "...", "clave": "completo",
+    "permisos": ["compras.crear", "conteos.crear", "produccion.crear", "gastos.crear", "ingresos.crear"] },
+  { "id": 5, "nombre": "Compras y almacén", "clave": "compras", "permisos": ["compras.crear", "conteos.crear"] },
+  { "id": 6, "nombre": "Producción", "clave": "produccion", "permisos": ["produccion.crear", "conteos.crear"] },
+  { "id": 7, "nombre": "Finanzas", "clave": "finanzas", "permisos": ["gastos.crear", "ingresos.crear"] },
+  { "id": 8, "nombre": "Mesero (próximamente)", "clave": "mesero", "permisos": [] }
+] }
+```
+El rol **Mesero** no tiene ningún permiso hoy: es un lugar reservado para cuando exista un POS propio con operación de piso (mesero abre/cierra mesas y toma órdenes); por ahora un usuario con ese rol solo puede leer.
 
 ---
 
@@ -103,6 +118,19 @@ Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo
 - `DELETE /api/empresas/:id` *(solo dueño)* — borra la empresa (en cascada); requiere `is_owner`.
 - `GET /api/empresas/:id/configuracion` — `{ iva_pct, precios_incluyen_iva, food_cost_objetivo }` (cualquier usuario de la empresa).
 - `PUT /api/empresas/:id/configuracion` *(owner/admin)* — campos opcionales (`iva_pct`, `precios_incluyen_iva`, `food_cost_objetivo`). Cambiar el IVA de la empresa **no** modifica recetas existentes; solo aplica a las nuevas. Con `?aplicar_a_recetas=true` propaga el IVA a **todas** las recetas y responde `recetas_actualizadas`. (migración 018)
+
+## Plataforma (administración de tenants)
+
+Nivel aparte de Admin/Operativo: exige `usuarios.is_platform_admin = true` (`requirePlatformAdmin`), independiente de a qué empresa pertenezca ese usuario maestro. No cuelga de `:empresa_id` (vive en `/api/platform/empresas`, no en `/api/empresas/:empresa_id`), porque el guard de empresa compararía contra la empresa del propio maestro, no la que se administra.
+
+- `GET /api/platform/empresas` — lista todas las empresas (todos los tenants).
+- `POST /api/platform/empresas` — crea una empresa nueva **y** su usuario dueño (Owner) en una transacción, en sustitución de `/auth/setup` (que solo sirve una vez, para el primer usuario de toda la base):
+```json
+{ "empresa": { "nombre": "Café Aroma", "titular?": "...", "telefono?": "...", "email?": "...", "domicilio?": "..." },
+  "owner": { "nombre": "Carlos", "email": "carlos@aroma.mx", "password": "min6chars", "codigo_ingreso": "0001", "puesto?": "Dueño" } }
+```
+- `PATCH /api/platform/empresas/:id/estado` — `{ "activo": true|false }`. Una empresa desactivada bloquea el login de todos sus usuarios (`401 "La empresa fue desactivada..."`, vía `requireActiveUser`).
+- `POST /api/platform/empresas/:id/resetear-password` — `{ "password": "min6chars" }`. Fija directamente la contraseña del dueño de esa empresa, para soporte cuando pierde acceso.
 
 ## Usuarios
 - `GET /api/usuarios/:empresa_id` · `GET /api/usuarios/:empresa_id/:id`
@@ -135,12 +163,18 @@ Una sola lista por empresa para productos y recetas; el front la usa para el sel
 
 Al crear una **preparación**, se asegura que la categoría `Preparación` (tipo `PRODUCTO`) exista en la lista, que es la que recibe el producto elaborado. La migración 017 además da de alta los nombres que ya usaban productos/recetas y no estaban en la lista (con su `tipo` según el uso), y fusiona variantes que solo difieren en mayúsculas.
 
+**Integridad referencial (migración 028):** un trigger de BD en `productos` y `recetas` exige, en cada `INSERT`/`UPDATE` de la columna `categoria`, que el valor ya exista en `categorias` para esa empresa (vacío/`NULL` se permite). No es una FK (se mantuvo texto para no romper los consumidores existentes), pero cierra el hueco que antes permitía guardar una categoría huérfana vía datos legacy o cualquier endpoint que escribiera `productos`/`recetas` sin pasar por `/categorias`: el trigger lanza `foreign_key_violation`, que `errorHandler` mapea a `400 "Referencia inválida: el recurso relacionado no existe"`.
+
 ---
 
 ## Productos
 
 Campos: `producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion`. `unidad_medida` se **normaliza** a un catálogo canónico (`g, kg, ml, l, pieza, porcion`, migración 019): POST/PUT aceptan variantes comunes (`gr`, `Gramos`, `kilos`, `Litros`, `pza`, `unidades`, `porción`…) y las guardan en su forma canónica; una unidad no reconocida → `400`. El sistema **no convierte** entre unidades: la `cantidad` de la receta se asume en la misma unidad del producto. El `costo_unitario` es **calculado** (`costo_presentacion / cantidad_presentacion`) con 4 decimales; `costo_presentacion` admite hasta 4 decimales (migración 011), de modo que insumos con presentación chica (p.ej. `cantidad_presentacion=1`) conservan el costo real (ej. `0.0123`) sin redondear a `0.01`. El stock vive en inventario y **solo** cambia por `/movimientos`, `/compras`, `/produccion` o `/conteos`.
 Campo opcional **`compra_al_producir`** (boolean, default `false`, migración 016): marca insumos perecederos que se compran justo al producir; nunca alertan por mínimo (ver *Reportes*) y su necesidad aparece en las sugerencias de producción. Solo aplica a insumos comprados; en productos elaborados se ignora.
+
+Campo opcional **`stock_maximo`** (migración 023): sin dato, "por reponer" sigue sugiriendo solo hasta el mínimo; con dato, sugiere completar hasta el máximo. Si se envía, debe ser mayor que `stock_minimo` → `400`. Se edita también junto con `stock_minimo` vía `PATCH /api/productos/:empresa_id/:id/limites` (la única forma de tocar límites en un producto elaborado, cuyo resto de campos vienen de su receta).
+
+Campo opcional **`precio_venta`** (migración 025): solo para productos que se venden **tal cual**, sin receta (mapeados `INSUMO` en el POS) — habilita que esas ventas cuenten en el "ingreso esperado" de Finanzas (antes solo usaba `recetas.precio_venta`, así que esas líneas aportaban $0 al esperado aunque sí vendieran).
 
 ### `GET /api/productos/:empresa_id`
 Filtros: `?q=<nombre>` (búsqueda parcial), `?categoria=<exacta>`, `?bajo_minimo=true` (stock < mínimo), `?incluir_inactivos=true` (incluye desactivados). Cada fila trae `proveedor_id`, `proveedor` (nombre), `stock_actual`, `stock_minimo`, `es_elaborado`, `compra_al_producir`, `merma_pct` y `costo_util` (= `costo_unitario / (1 − merma_pct/100)`, 4 decimales; `costo_unitario` sigue siendo el costo **bruto** de compra) y `activo`. El detalle (`GET /:id`) incluye los mismos campos.
@@ -219,10 +253,11 @@ Preparación / subreceta (además se crea un **producto elaborado** en inventari
 ```
 
 ### `PUT /api/recetas/:empresa_id/:id` · `DELETE /api/recetas/:empresa_id/:id`
-Body: `nombre`, `categoria`, `precio_venta`, opcionales `activo`, `costo_produccion`, `proteccion_pct` y **`ingredientes`**.
+Body: `nombre`, `categoria`, `precio_venta`, opcionales `activo`, `costo_produccion`, `proteccion_pct`, **`rendimiento`** y **`ingredientes`**.
 - Sin `ingredientes`: solo se actualiza el encabezado (el escandallo no se toca).
 - Con `ingredientes: [{ producto_id, cantidad }]` (mínimo 1): **guardado atómico** — encabezado + escandallo completo se reemplazan en UNA transacción con los costos vigentes; si algo falla (p. ej. un producto inexistente) no cambia nada → `400`. La respuesta incluye `ingredientes` con los renglones nuevos (los `id` de renglón cambian).
-- Una preparación no puede llevarse a sí misma como ingrediente → `400`. `es_preparacion`, `rendimiento` y `unidad` no se editan aquí.
+- Una preparación no puede llevarse a sí misma como ingrediente → `400`. `es_preparacion` y `unidad` no se editan aquí.
+- **`rendimiento`** (solo en preparaciones, `es_preparacion = true`): editable. Al cambiarlo, el backend recalcula `costo_total` de esa receta (el costo por unidad del elaborado cambia porque se reparte entre más o menos unidades) y dispara la misma **cascada de costos** hacia cualquier receta que use ese elaborado como ingrediente. La respuesta agrega `recetas_actualizadas` (cuántas recetas recibieron el recosteo).
 
 ### Cascada de costos
 Cuando cambia el costo o la **merma** de un insumo (compra, `PUT` de producto) o el costo de una preparación (su receta cambió), se refresca `receta_detalle.costo_unitario` (= **costo útil**) de las recetas que lo usan y se recalcula su `costo_total`; si esas recetas son preparaciones, la cascada continúa (con protección contra ciclos).
@@ -237,28 +272,64 @@ Cuando cambia el costo o la **merma** de un insumo (compra, `PUT` de producto) o
 
 ## Producción (preparaciones)
 
-### `GET /api/produccion/:empresa_id/sugerencias`
-Preparaciones bajo mínimo con lotes sugeridos. Cada sugerencia trae `insumos_requeridos` (compat) y **`insumos`**: `[{ producto_id, producto, unidad, requerido, disponible, faltante, compra_al_producir }]` para los lotes sugeridos, con `requerido`/`disponible`/`faltante` en **bruto** (lo que hay que comprar; `requerido = neto / (1 − merma/100)`). `confirmar` sigue estricto: consume en **bruto** y no permite insumos en negativo.
+Cada confirmación crea una fila en `produccion` (cabecera de un **lote**: fecha, usuario, estado de anulación) y todos sus movimientos (insumos consumidos + elaborado recibido, de todas las recetas de esa corrida) quedan referenciados a ese id — igual que compra/conteo, permite anular esa corrida puntual sin tocar otras producciones de las mismas recetas.
 
-### `POST /api/produccion/:empresa_id/confirmar` *(Operativo o Admin)*
-Consume insumos y suma stock de la preparación (movimientos `PRODUCCION`, transacción atómica):
+### `GET /api/produccion/:empresa_id/sugerencias`
+Preparaciones bajo mínimo con lotes sugeridos. Cada sugerencia trae `insumos_requeridos` (compat) y **`insumos`**: `[{ producto_id, producto, unidad, requerido, disponible, faltante, compra_al_producir }]` para los lotes sugeridos, con `requerido`/`disponible`/`faltante` en **bruto** (lo que hay que comprar; `requerido = neto / (1 − merma/100)`). Esta vista es de **un solo nivel**: si un insumo es a su vez una subreceta, no explora más abajo (para eso está `plan`).
+
+### `GET /api/produccion/:empresa_id/plan/:receta_id?lotes=N`
+**Planificación con subrecetas anidadas.** Si alguno de los insumos de la receta objetivo es a su vez una preparación (subreceta) y no hay stock suficiente, resuelve la cascada completa (anidamiento arbitrario, con detección de ciclos — `400` si hay uno) y dice cuántos lotes de **cada** subreceta producir **antes**, en orden de dependencia, más lo que falta comprar al final. Solo lectura: no mueve inventario ni crea registros.
 ```json
-{ "producciones": [ { "receta_id": 1, "lotes": 1 } ] }
+{ "receta_id": 23, "nombre": "Pastel de Salsa Verde", "lotes": 2, "cantidad_a_producir": 4,
+  "pasos_previos": [
+    { "receta_id": 23, "producto_elaborado_id": 55, "nombre": "Salsa Verde", "unidad": "ml", "cantidad_a_producir": 1200, "lotes": 2 }
+  ],
+  "insumos": [ { "producto_id": 173, "producto": "Tomate Verde", "unidad": "g", "requerido": 1400, "disponible": 0, "faltante": 1400, "compra_al_producir": false } ]
+}
 ```
+`pasos_previos` ya viene ordenado: una subreceta que es insumo de otra sale primero. `insumos` son los insumos **crudos** finales (no elaborados), una vez cubierta toda la cascada.
+
+### `POST /api/produccion/:empresa_id/confirmar` *(Operativo con permiso `produccion.crear`, o Admin)*
+Consume insumos y suma stock de la preparación (movimientos `PRODUCCION`, transacción atómica, todas las líneas bajo UNA cabecera):
+```json
+{ "producciones": [ { "receta_id": 1, "lotes": 1, "cantidad_real?": 980 } ] }
+```
+**Rendimiento real vs. teórico:** si se pesó/contó el lote terminado y `cantidad_real` difiere de lo que la receta predice (`rendimiento × lotes`), se ajusta la existencia del elaborado a lo real con un movimiento `AJUSTE` bajo la misma cabecera — así anular revierte exactamente lo que de verdad se movió. Respuesta por receta: `cantidad_producida` (= `cantidad_real` si se envió, si no el teórico), `cantidad_teorica` y `stock_elaborado_nuevo`.
+
+### `GET /api/produccion/:empresa_id` (historial, paginado) · `GET /api/produccion/:empresa_id/:id` (cabecera + líneas)
+
+### `POST /api/produccion/:empresa_id/:id/anular` *(Admin)*
+`{ "motivo": "..." }`. Revierte el lote completo: por cada producto, revierte el **neto** acumulado de sus movimientos (insumos consumidos vuelven, elaborado recibido se descuenta) con un `AJUSTE` de signo contrario. `409` si alguna reversa dejaría stock negativo (p. ej. ya se vendió parte de lo producido) y no se anula nada. Idempotente: reintentar sobre un lote ya anulado → `409`.
 
 ## Compras (entrada de mercancía + costo)
 
-Suma stock (`COMPRA`) y actualiza el costo del producto al **precio de la última compra** (último costo). Un producto elaborado no se compra → `400`.
+Suma stock (`COMPRA`) y actualiza el costo del producto al **precio de la última compra** (último costo — no promedio: una compra nueva se vuelve el costo de **todo** el stock existente de ese insumo, y cascada a las recetas que lo usan). Un producto elaborado no se compra → `400`.
 
-### `POST /api/compras/:empresa_id`
+Toda compra tiene un `estado`: `RECIBIDA` (default, compra directa — el flujo de siempre) o `PEDIDO` (dos fases: pedir, luego confirmar recepción).
+
+### `POST /api/compras/:empresa_id` (compra directa, `estado=RECIBIDA`)
 ```json
 { "fecha?": "2026-09-21", "proveedor_id?": 1, "referencia?": "F-001",
   "lineas": [ { "producto_id": 1, "cantidad": 2000, "costo_total": 60 } ] }
 ```
-Cada línea acepta `costo_total` (lo pagado) **o** `costo_unitario`.
+Cada línea acepta `costo_total` (lo pagado) **o** `costo_unitario`. Aplica el movimiento de stock y la cascada de costos de inmediato.
 Respuesta: `{ compra, lineas, recetas_actualizadas }` — las recetas que usan esos insumos se recalculan en la misma transacción (*Cascada de costos*).
-- `GET /api/compras/:empresa_id` (historial) · `GET /api/compras/:empresa_id/:id` (encabezado + líneas)
-- `POST /api/compras/:empresa_id/:id/anular` *(Admin)* — `{ "motivo?": "..." }`. Revierte la compra: descuenta con un movimiento `AJUSTE` negativo (`referencia_tipo=COMPRA_ANULADA`) el stock que había sumado y marca `anulado=true` (`anulado_at`, `anulado_por`, `motivo_anulacion`). Reglas: si al revertir alguna línea el stock quedaría **negativo** → `409` y **no** se anula nada. El costo del producto se **restaura** solo si esta compra fue la **última** que fijó su costo (si hubo compras posteriores, el costo vigente no se toca). Las compras anuladas se excluyen del libro de finanzas. Idempotente: reintentar sobre una compra ya anulada → `409`.
+
+Si alguna línea implica un cambio de costo de **40% o más** respecto al costo vigente del producto (p. ej. error de captura en cantidad o precio), responde `409` con el detalle en vez de aplicar la compra; reenviar la misma petición con `{ "confirmarCostoAtipico": true }` la fuerza.
+
+### `POST /api/compras/:empresa_id/pedido` (crea un **pedido**, `estado=PEDIDO`)
+Mismo body que la compra directa. **No** toca inventario ni costo — solo registra el encabezado y las líneas (`compra_detalle`) como intención de compra, para llevar registro de qué se pidió mientras no llega.
+
+### `POST /api/compras/:empresa_id/:id/recibir` *(Operativo con permiso `compras.crear`, o Admin)*
+Confirma la recepción de un pedido: aplica el mismo movimiento de stock, actualización de costo y cascada de recetas que una compra directa, usando las líneas ya registradas al crear el pedido. `{ "confirmarCostoAtipico?": true }` (mismo mecanismo que arriba). `409` si el pedido no existe en estado `PEDIDO` (ya recibido o anulado) — no se puede recibir dos veces.
+
+### `GET /api/compras/:empresa_id` (historial, incluye `estado`) · `GET /api/compras/:empresa_id/:id` (encabezado + líneas)
+En un pedido aún no recibido, las líneas vienen de `compra_detalle` (no hay movimientos todavía); una vez recibida, de `movimientosinventario` como siempre.
+
+### `POST /api/compras/:empresa_id/:id/anular` *(Admin)* — `{ "motivo?": "..." }`
+- Sobre una compra `RECIBIDA`: revierte con un movimiento `AJUSTE` negativo (`referencia_tipo=COMPRA_ANULADA`) el stock que había sumado y marca `anulado=true` (`anulado_at`, `anulado_por`, `motivo_anulacion`). `409` si al revertir alguna línea el stock quedaría **negativo** (no se anula nada). El costo del producto se **restaura** solo si esta compra fue la **última** que fijó su costo (si hubo compras posteriores, el costo vigente no se toca).
+- Sobre un **pedido** (`estado=PEDIDO`) sin recibir: solo marca `anulado=true` (no hay movimientos que revertir — equivale a "cancelar pedido").
+- Las compras anuladas se excluyen del libro de finanzas. Idempotente: reintentar sobre una compra ya anulada → `409`.
 
 ## Conteo físico (varianza y reconciliación)
 
@@ -273,6 +344,7 @@ Calcula varianza vs. teórico y reconcilia el inventario con `AJUSTE` (transacci
 ```
 Respuesta: `data.detalle` (varianza y valor por producto) + `data.resumen` (`valor_merma`, `valor_sobrante`, `valor_neto`).
 - `GET /api/conteos/:empresa_id` · `GET /api/conteos/:empresa_id/:id`
+- `POST /api/conteos/:empresa_id/:id/anular` *(Admin)* — `{ "motivo": "..." }`. Revierte cada línea con un `AJUSTE` de signo contrario a la varianza aplicada (`referencia_tipo=CONTEO_ANULADO`) y marca `anulado=true`. Mismo patrón de bloqueo de fila e idempotencia que compras/producción: reintentar sobre un conteo ya anulado → `409`.
 
 ## Ventas (importación diaria del POS)
 
@@ -302,6 +374,7 @@ La respuesta de `importar` (y de `preview`) agrega `auto_produccion: [{ producto
 - `GET /api/reportes/:empresa_id/inventario` — valorización por producto + totales. Los productos con `compra_al_producir = true` nunca salen como `bajo_minimo`.
 - `GET /api/reportes/:empresa_id/alertas` — bajo mínimo con acción (`comprar`/`producir`). Excluye los productos con `compra_al_producir = true`.
 - `GET /api/reportes/:empresa_id/actividad?desde=&hasta=` — movimientos por tipo + merma (default últimos 30 días).
+- `GET /api/reportes/:empresa_id/historial?desde=&hasta=&limit=&offset=` — feed paginado (`limit` default 50, máx 100) de eventos: registro y anulación de compras, conteos y producción, más reciente primero (default últimos 30 días). Cada fila: `{ tipo: "COMPRA"|"CONTEO"|"PRODUCCION", id, accion: "registrado"|"anulado", en, usuario_id, usuario, motivo, detalle, monto }` (UNION de las tres tablas; `monto` es `null` en producción). Pensado para la pantalla de Administración → Historial de actividad.
 - `GET /api/reportes/:empresa_id/consumo?desde=&hasta=&limit=` — top productos consumidos por ventas.
 
 ---
@@ -370,7 +443,7 @@ UNION de ingresos, gastos (no anulados) y **compras** (lectura directa de la tab
 
 ## Flujo end-to-end recomendado
 
-1. `POST /api/auth/login` → token (o `/setup` la primera vez; roles y empresa se siembran por SQL).
+1. `POST /api/auth/login` → token (o `/setup` la primera vez para el primer usuario de toda la base; luego, nuevas empresas se crean con `POST /api/platform/empresas`, que exige `is_platform_admin`).
 2. `POST /api/proveedores/:e` y `POST /api/productos/:e` (insumos).
 3. `POST /api/recetas/:e` con `es_preparacion` (salsa) → `POST /api/produccion/:e/confirmar` (producirla).
 4. `POST /api/recetas/:e` del platillo usando la preparación como ingrediente.

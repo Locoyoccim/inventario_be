@@ -11,21 +11,22 @@ Sistema de control de inventario, recetas y costos **multiempresa** para negocio
 | Módulo / Capacidad | Estado | Nota |
 | --- | --- | --- |
 | Autenticación (JWT + cookie httpOnly) | ✅ | `login`/`setup`/`logout`/`me`; token 7 días; anti-CSRF con cookie |
-| Roles (Admin / Operativo) | ✅ | Admin = `is_admin` o `is_owner`; Operativo = ventas, conteos, compras, producción + lecturas |
+| Roles y permisos | ✅ | Admin (`is_admin`/`is_owner`) = acceso total. Operativo acota por **rol** (`roles.permisos`, catálogo fijo): Operativo completo, Compras y almacén, Producción, Finanzas, y Mesero (reservado, sin permisos — para un futuro POS propio) |
 | Revocación de sesión | ✅ | `token_version` en el JWT: `logout-all` y cierre forzado por admin |
+| Plataforma (multiempresa) | ✅ | `is_platform_admin`: crea empresas, activa/desactiva tenants, resetea la contraseña del dueño — fuera del scope de `:empresa_id` |
 | Empresas (CRUD) | ✅ | `POST` protegido con `PLATFORM_TOKEN`; `DELETE` solo dueño |
-| Usuarios (CRUD) | ✅ | Soft-delete (`activo`); `codigo_ingreso` único **por empresa** |
+| Usuarios (CRUD) | ✅ | Soft-delete (`activo`); `codigo_ingreso` único **por empresa**; `role_id` opcional (Operativo) |
 | Proveedores (CRUD) | ✅ | Soft-delete (`activo`); no se puede referenciar uno inactivo |
-| Categorías (CRUD) | ✅ | Lista compartida por empresa (productos + recetas) |
-| Productos (CRUD) | ✅ | Crea/edita con su fila de `inventario`; soft-delete; filtros y paginación |
+| Categorías (CRUD) | ✅ | Lista compartida por empresa (productos + recetas); **integridad referencial** a nivel BD (trigger): no se puede guardar una categoría que no exista en el catálogo |
+| Productos (CRUD) | ✅ | Crea/edita con su fila de `inventario`; soft-delete; filtros y paginación; `stock_maximo` y `precio_venta` opcionales |
 | Inventario | ✅ (lectura) | El stock solo cambia por movimientos/compras/producción/conteos |
 | Movimientos (kardex) | ✅ | Compra, venta, merma, ajuste, devolución, producción; costo a 4 decimales |
-| Recetas y preparaciones | ✅ | `costo_total` recalculado; sub-recetas (elaborados) y **cascada de costos** |
-| Producción | ✅ | Consume insumos y produce elaborados en una transacción |
-| Compras | ✅ | Último costo; actualiza costo y dispara la cascada de recetas |
-| Conteo físico | ✅ | Varianza teórico vs. real y reconciliación con ajustes |
+| Recetas y preparaciones | ✅ | `costo_total` recalculado; sub-recetas (elaborados) y **cascada de costos**; `rendimiento` editable con recosteo en cascada |
+| Producción | ✅ | Consume insumos y produce elaborados en una transacción; rendimiento real vs. teórico; **planificación con subrecetas** (cascada de lotes previos a producir); anulación |
+| Compras | ✅ | Último costo; actualiza costo y dispara la cascada de recetas; flujo en dos fases **pedido → recepción** (`estado`), anulación |
+| Conteo físico | ✅ | Varianza teórico vs. real, reconciliación con ajustes, anulación |
 | PosMap + Ventas (importación diaria) | ✅ | Mapea el POS a recetas/insumos; importa/rev­ierte; listado y preview |
-| Reportes | ✅ | Estado del día, valorización, alertas, actividad, consumo |
+| Reportes | ✅ | Estado del día, valorización, alertas, actividad, **historial** (feed de compras/conteos/producción), consumo |
 
 Aislamiento multiempresa: cada recurso lleva `:empresa_id` en la URL y se valida contra el token; los repositories filtran por empresa (directo o vía `JOIN`). Un `id` de otra empresa responde `403`/`404`, nunca datos ajenos.
 
@@ -108,9 +109,9 @@ Con la BD migrada, crea el dueño con `POST /api/auth/setup` (solo funciona si n
 inventario_BE/
 ├── src/
 │   ├── config/       # db.js (pool + timeouts), env.js (validación de entorno)
-│   ├── modules/      # dominio: auth, empresas, usuarios, proveedores, categorias,
+│   ├── modules/      # dominio: auth, empresas, usuarios, roles, proveedores, categorias,
 │   │                 #   productos, inventario, movimientos, recetas, recetaDetalle,
-│   │                 #   produccion, compras, conteos, posMap, ventas, reportes
+│   │                 #   produccion, compras, conteos, posMap, ventas, reportes, platform
 │   ├── routes/       # una ruta por recurso + index.js (agregador con guards)
 │   ├── middlewares/  # auth, activeUser, validate, errorHandler, ...
 │   ├── utils/        # jwt, costeo, parseToteat, ...
@@ -127,9 +128,11 @@ inventario_BE/
 ## 5. Autenticación y roles
 
 - El token va en cookie httpOnly `gh_session` (front web) o en `Authorization: Bearer <token>` (Postman/integraciones). Con cookie, toda escritura exige además el header `X-Requested-With` (anti-CSRF).
-- **Admin** (`is_admin` o `is_owner`): todo. **Operativo**: registra ventas, conteos, compras y confirma producción, además de leer; no crea/edita catálogos (productos, recetas, proveedores, usuarios, pos-map, categorías) → `403`.
-- El rol se **revalida desde la BD** en cada request (caché 60s): un usuario degradado o desactivado pierde permisos sin esperar a que expire el token.
+- **Admin** (`is_admin` o `is_owner`): todo. **Operativo**: siempre puede leer; para **crear** (compras, conteos, producción, gastos, ingresos) depende de su **rol** (`usuarios.role_id` → `roles.permisos`, catálogo fijo sembrado por `027_roles_permisos.sql`): Operativo completo (todo lo anterior), Compras y almacén, Producción, Finanzas, o Mesero (sin permisos hoy — reservado para un futuro POS con operación de piso). Un Operativo sin `role_id` asignado se trata como "Operativo completo" (compatibilidad con usuarios creados antes de este sistema). Nunca crea/edita catálogos (productos, recetas, proveedores, usuarios, pos-map, categorías) → `403`.
+- El middleware `requirePermiso(clave)` (`src/middlewares/auth.js`) exige la clave de permiso correspondiente (`compras.crear`, `conteos.crear`, `produccion.crear`, `gastos.crear`, `ingresos.crear`); Admin/dueño siempre pasan.
+- El rol y los permisos se **revalidan desde la BD** en cada request (caché 60s): un usuario degradado, desactivado o con el rol cambiado pierde/gana permisos sin esperar a que expire el token.
 - **Revocación:** `token_version` viaja en el JWT. `POST /auth/logout-all` cierra todas las sesiones del usuario; el `PUT` de usuarios con `forzar_cierre_sesion: true` fuerza el cierre de otro usuario. El `logout` normal solo cierra el dispositivo actual.
+- **Plataforma:** `usuarios.is_platform_admin` es un nivel aparte, fuera del scope de cualquier empresa — administra el catálogo de tenants (`/platform/empresas`), no participa en el rol Admin/Operativo de una empresa.
 
 ---
 
@@ -153,6 +156,8 @@ inventario_BE/
 | `conteo_detalle` | `variacion`, `valor_variacion` | derivadas del conteo |
 
 `costo_presentacion` es `numeric(12,4)` (insumos de presentación chica conservan el costo real, ej. `0.0123`). `recetas.costo_total` la recalcula el backend a partir de sus `receta_detalle`, y con **cascada**: al cambiar el costo de un insumo (compra o edición) o de una preparación, se refrescan todas las recetas que lo usan.
+
+**Integridad referencial de categorías** (`028_categorias_integridad.sql`): `productos.categoria` y `recetas.categoria` son columnas de texto (no una FK a `categorias.id`, decisión original para no romper datos existentes), pero un trigger `BEFORE INSERT OR UPDATE` en ambas tablas exige que el valor exista en `categorias` para esa empresa — rechaza con `foreign_key_violation` si no. El backfill de la misma migración dio de alta cualquier categoría que ya estuviera en uso y no existiera en el catálogo.
 
 ---
 

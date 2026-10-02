@@ -18,6 +18,7 @@ import registerCategorias from "./categorias.routes.js";
 import registerMovimientos from "./movimientos.routes.js";
 import registerFinanzas from "./finanzas.routes.js";
 import registerPlatform from "./platform.routes.js";
+import registerRoles from "./roles.routes.js";
 
 const router = Router();
 
@@ -43,6 +44,7 @@ router.param("receta_id", recetaEmpresaGuard);
     registerMovimientos,
     registerFinanzas,
     registerPlatform,
+    registerRoles,
 ].forEach((register) => register(router));
 
 export default router;

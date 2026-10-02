@@ -13,15 +13,20 @@ export function invalidarUsuarioActivo(id) {
     cache.delete(Number(id));
 }
 
+// Operativo sin role_id asignado (usuarios creados antes de este sistema de permisos, o
+// simplemente sin rol elegido): conserva el acceso que siempre tuvo, igual al rol "completo".
+const PERMISOS_SIN_ROL = ["compras.crear", "conteos.crear", "produccion.crear", "gastos.crear", "ingresos.crear"];
+
 async function cargar(id, query) {
     const key = Number(id);
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < TTL_MS) return hit;
     const res = await query(
         `SELECT u.activo, u.is_admin, u.is_owner, u.is_platform_admin, u.must_change_password,
-                u.token_version, e.activo AS empresa_activa
+                u.token_version, u.role_id, r.permisos, e.activo AS empresa_activa
          FROM usuarios u
          JOIN empresas e ON e.id = u.empresa_id
+         LEFT JOIN roles r ON r.id = u.role_id
          WHERE u.id = $1`,
         [key]
     );
@@ -34,12 +39,13 @@ async function cargar(id, query) {
               is_owner: !!row.is_owner,
               is_platform_admin: !!row.is_platform_admin,
               must_change_password: !!row.must_change_password,
+              permisos: row.role_id == null ? PERMISOS_SIN_ROL : (row.permisos ?? []),
               tv: Number(row.token_version ?? 0),
               at: Date.now(),
           }
         : {
               activo: false, empresa_activa: false, is_admin: false, is_owner: false,
-              is_platform_admin: false, must_change_password: false, tv: 0, at: Date.now(),
+              is_platform_admin: false, must_change_password: false, permisos: [], tv: 0, at: Date.now(),
           };
     cache.set(key, estado);
     return estado;
@@ -70,6 +76,7 @@ export async function requireActiveUser(req, _res, next) {
         req.user.is_owner = estado.is_owner;
         req.user.is_platform_admin = estado.is_platform_admin;
         req.user.must_change_password = estado.must_change_password;
+        req.user.permisos = estado.permisos;
         next();
     } catch (error) {
         next(error);

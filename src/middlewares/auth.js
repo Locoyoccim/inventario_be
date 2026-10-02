@@ -80,3 +80,13 @@ export function requirePlatformAdmin(req, _res, next) {
 
 // Rol Admin = dueño o administrador. El resto de usuarios son "Operativo".
 export const requireAdmin = requireOwnerOrAdmin;
+
+// Exige un permiso granular (req.user.permisos, refrescado desde roles.permisos por
+// requireActiveUser). Admin/dueño siempre pasan: los permisos solo acotan a "Operativo".
+export function requirePermiso(clave) {
+    return (req, _res, next) => {
+        if (req.user?.is_owner || req.user?.is_admin) return next();
+        if (req.user?.permisos?.includes(clave)) return next();
+        next(ApiError.forbidden("Tu rol no tiene permiso para esta acción"));
+    };
+}

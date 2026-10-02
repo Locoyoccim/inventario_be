@@ -2,6 +2,7 @@ import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
 import { normalizarLotes, validarPreparacion, cantidadProducida, cantidadInsumo, calcularSugerencia } from "./produccion.logic.js";
 import { netoABruto } from "../../utils/costeo.js";
+import { resolverPreparaciones, armarPreparaciones, ordenarPorDependencia } from "../../utils/preparaciones.js";
 
 const QUERIES = {
     // Preparaciones (productos elaborados) con su receta e inventario
@@ -32,6 +33,21 @@ const QUERIES = {
         WHERE rd.receta_id = $1;`,
     SELECT_PRODUCTO_ELAB: `
         SELECT producto, unidad_medida FROM productos WHERE id = $1;`,
+    // Universo completo de la empresa, para resolver la cascada de subrecetas al planificar.
+    RECETAS_PREP_EMPRESA: `
+        SELECT r.id AS receta_id, r.rendimiento, r.producto_elaborado_id, r.nombre, p.unidad_medida AS unidad
+        FROM recetas r
+        JOIN productos p ON p.id = r.producto_elaborado_id
+        WHERE r.empresa_id = $1 AND r.es_preparacion = true AND r.producto_elaborado_id IS NOT NULL;`,
+    RECETA_DETALLE_EMPRESA: `
+        SELECT rd.receta_id, rd.producto_id, rd.cantidad
+        FROM receta_detalle rd
+        JOIN recetas r ON r.id = rd.receta_id
+        WHERE r.empresa_id = $1;`,
+    PRODUCTOS_INFO_EMPRESA: `
+        SELECT id, producto, unidad_medida, COALESCE(merma_pct, 0) AS merma_pct, compra_al_producir
+        FROM productos WHERE empresa_id = $1;`,
+    STOCK_EMPRESA: `SELECT producto_id, stock_actual FROM inventario WHERE empresa_id = $1;`,
     INSERT_PRODUCCION: `
         INSERT INTO produccion (empresa_id, usuario_id) VALUES ($1, $2) RETURNING id, fecha;`,
     LIST: `
@@ -143,6 +159,77 @@ export default class ProduccionRepository {
                 insumos,
             };
         });
+    }
+
+    // Planifica producir una receta en N lotes: si alguno de sus insumos es a su vez una
+    // subreceta (preparación) sin stock suficiente, calcula en cascada (anidamiento arbitrario,
+    // con detección de ciclos) cuántos lotes de cada subreceta hay que producir ANTES, y cuánto
+    // insumo crudo final falta comprar. Solo lectura: no mueve inventario ni crea registros.
+    async planificar(empresa_id, receta_id, lotes) {
+        const recRes = await pool.query(QUERIES.SELECT_RECETA_PREP, [receta_id, empresa_id]);
+        const receta = recRes.rows[0];
+        if (!receta) throw ApiError.notFound(`Receta ${receta_id} no encontrada`);
+        validarPreparacion(receta, receta_id);
+        const nLotes = normalizarLotes(lotes, receta_id);
+
+        const [detRes, prepRes, detalleEmpresaRes, prodRes, stockRes] = await Promise.all([
+            pool.query(QUERIES.SELECT_DETALLE_RECETA, [receta_id]),
+            pool.query(QUERIES.RECETAS_PREP_EMPRESA, [empresa_id]),
+            pool.query(QUERIES.RECETA_DETALLE_EMPRESA, [empresa_id]),
+            pool.query(QUERIES.PRODUCTOS_INFO_EMPRESA, [empresa_id]),
+            pool.query(QUERIES.STOCK_EMPRESA, [empresa_id]),
+        ]);
+
+        // Demanda directa de la receta objetivo (sus propios insumos, en bruto).
+        const consumo = new Map();
+        for (const d of detRes.rows) {
+            const pid = Number(d.producto_id);
+            const bruto = netoABruto(cantidadInsumo(d.cantidad, nLotes), d.merma_pct);
+            consumo.set(pid, Number(((consumo.get(pid) ?? 0) + bruto).toFixed(3)));
+        }
+
+        const preparaciones = armarPreparaciones(prepRes.rows, detalleEmpresaRes.rows);
+        const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
+        const stockActual = new Map(stockRes.rows.map((s) => [Number(s.producto_id), Number(s.stock_actual)]));
+        const prodInfoById = new Map(prodRes.rows.map((p) => [Number(p.id), p]));
+
+        const { consumoFinal, autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId);
+
+        const pasos_previos = ordenarPorDependencia(autoProduccion).map((a) => ({
+            receta_id: a.receta_id,
+            producto_elaborado_id: a.producto_elaborado_id,
+            nombre: a.nombre,
+            unidad: a.unidad,
+            cantidad_a_producir: a.cantidad,
+            lotes: Math.max(1, Math.ceil(a.lotes_equivalentes)),
+        }));
+
+        // Insumos crudos (no elaborados): lo que falta comprar una vez cubierta la cascada.
+        const insumos = [];
+        for (const [pid, cantidadTotal] of consumoFinal.entries()) {
+            if (preparaciones.has(pid)) continue;
+            const info = prodInfoById.get(pid);
+            const disponible = Number(stockActual.get(pid) ?? 0);
+            const faltante = Number(Math.max(cantidadTotal - disponible, 0).toFixed(3));
+            insumos.push({
+                producto_id: pid,
+                producto: info?.producto ?? null,
+                unidad: info?.unidad_medida ?? null,
+                requerido: cantidadTotal,
+                disponible,
+                faltante,
+                compra_al_producir: info?.compra_al_producir === true,
+            });
+        }
+
+        return {
+            receta_id: Number(receta_id),
+            nombre: receta.nombre,
+            lotes: nLotes,
+            cantidad_a_producir: cantidadProducida(receta.rendimiento, nLotes),
+            pasos_previos,
+            insumos,
+        };
     }
 
     // Confirma una o varias producciones en UNA transacción.
