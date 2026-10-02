@@ -9,7 +9,7 @@ const unidadRecetaSchema = z
     .transform((v, ctx) => {
         const u = canonizarUnidad(v);
         if (!u) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `unidad no válida; usa una de: ${UNIDADES_CANONICAS.join(", ")}` });
+            ctx.addIssue({ code: "custom", message: `unidad no válida; usa una de: ${UNIDADES_CANONICAS.join(", ")}` });
             return z.NEVER;
         }
         return u;
@@ -59,6 +59,10 @@ export const recetaUpdateSchema = z.object({
     ingredientes: z.array(ingrediente).min(1, "incluye al menos un ingrediente").optional(),
     iva_pct: z.coerce.number().min(0).max(100).optional(),
     precio_incluye_iva: z.boolean().optional(),
+    // Solo para preparaciones: cambia cuanto rinde el lote y recalcula en cascada el costo por
+    // unidad (y el de cualquier otra receta que la use como insumo). El repositorio rechaza
+    // esto si la receta no es preparación.
+    rendimiento: z.coerce.number().positive("rendimiento debe ser > 0").optional(),
 });
 
 export const recetaPreviewSchema = z.object({

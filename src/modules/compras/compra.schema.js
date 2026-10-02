@@ -17,8 +17,20 @@ export const compraCreateSchema = z.object({
     proveedor_id: z.coerce.number().int().positive().optional(),
     referencia: z.string().trim().optional(),
     lineas: z.array(lineaCompra).min(1, "incluye al menos una línea de compra"),
+    // El front ya confirma con el usuario cuando algún costo cambia >=40% vs el actual (ver
+    // UMBRAL_VARIACION_COSTO en CompraNuevaPage.tsx); esta bandera reproduce esa confirmación
+    // del lado del servidor para que no sea evitable llamando a la API directo.
+    confirmarCostoAtipico: z.boolean().optional(),
 });
 
 export const compraAnularSchema = z.object({
     motivo: z.string().trim().min(1, "motivo es requerido"),
+});
+
+// Mismo cuerpo que compraCreateSchema (fecha/proveedor/lineas); confirmarCostoAtipico no aplica
+// aquí (el pedido no toca costo todavía), se valida al confirmar la recepción.
+export const compraPedidoCreateSchema = compraCreateSchema;
+
+export const compraRecibirSchema = z.object({
+    confirmarCostoAtipico: z.boolean().optional(),
 });

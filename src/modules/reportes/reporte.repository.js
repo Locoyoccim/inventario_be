@@ -6,7 +6,7 @@ const QUERIES = {
     // marca como "Descontinuado" con el campo activo.
     INVENTARIO: `
         SELECT p.id AS producto_id, p.producto, p.unidad_medida, p.es_elaborado, p.categoria, p.activo,
-               i.stock_actual, i.stock_minimo, p.costo_unitario,
+               i.stock_actual, i.stock_minimo, i.stock_maximo, p.costo_unitario,
                (i.stock_actual * p.costo_unitario)::numeric(14,2) AS valor,
                (i.stock_actual < i.stock_minimo AND p.compra_al_producir = false) AS bajo_minimo
         FROM productos p
@@ -41,6 +41,45 @@ const QUERIES = {
         WHERE p.empresa_id = $1 AND m.fecha::date BETWEEN $2 AND $3
           AND m.stock_nuevo < m.stock_anterior
           AND m.tipo_movimiento IN ('MERMA', 'AJUSTE');`,
+    // Historial de actividad: registro + anulacion de compras, conteos y producciones, en un
+    // solo feed cronologico. Reutiliza columnas que cada tabla ya guarda (usuario_id/created_at
+    // al crear, anulado_por/anulado_at/motivo_anulacion al anular); no requiere tabla nueva.
+    HISTORIAL: `
+        WITH eventos AS (
+            SELECT 'COMPRA'::text AS tipo, c.id, 'registrado'::text AS accion, c.created_at AS en,
+                   c.usuario_id, NULL::text AS motivo,
+                   COALESCE(prov.nombre, c.referencia, '') AS detalle, c.total::numeric AS monto
+            FROM compra c LEFT JOIN proveedores prov ON prov.id = c.proveedor_id
+            WHERE c.empresa_id = $1
+            UNION ALL
+            SELECT 'COMPRA', c.id, 'anulado', c.anulado_at, c.anulado_por, c.motivo_anulacion,
+                   COALESCE(prov.nombre, c.referencia, ''), c.total::numeric
+            FROM compra c LEFT JOIN proveedores prov ON prov.id = c.proveedor_id
+            WHERE c.empresa_id = $1 AND c.anulado = true
+            UNION ALL
+            SELECT 'CONTEO', co.id, 'registrado', co.created_at, co.usuario_id, NULL::text,
+                   COALESCE(co.motivo, ''), co.valor_variacion_total::numeric
+            FROM conteo_fisico co WHERE co.empresa_id = $1
+            UNION ALL
+            SELECT 'CONTEO', co.id, 'anulado', co.anulado_at, co.anulado_por, co.motivo_anulacion,
+                   COALESCE(co.motivo, ''), co.valor_variacion_total::numeric
+            FROM conteo_fisico co WHERE co.empresa_id = $1 AND co.anulado = true
+            UNION ALL
+            SELECT 'PRODUCCION', pr.id, 'registrado', pr.created_at, pr.usuario_id, NULL::text,
+                   ''::text, NULL::numeric
+            FROM produccion pr WHERE pr.empresa_id = $1
+            UNION ALL
+            SELECT 'PRODUCCION', pr.id, 'anulado', pr.anulado_at, pr.anulado_por, pr.motivo_anulacion,
+                   ''::text, NULL::numeric
+            FROM produccion pr WHERE pr.empresa_id = $1 AND pr.anulado = true
+        )
+        SELECT e.tipo, e.id, e.accion, e.en, e.usuario_id, u.nombre AS usuario, e.motivo, e.detalle, e.monto,
+               COUNT(*) OVER()::int AS total_rows
+        FROM eventos e
+        LEFT JOIN usuarios u ON u.id = e.usuario_id
+        WHERE e.en IS NOT NULL AND e.en::date BETWEEN $2 AND $3
+        ORDER BY e.en DESC
+        LIMIT $4 OFFSET $5;`,
     // Top productos consumidos por VENTA en un rango.
     TOP_CONSUMO: `
         SELECT m.producto_id, p.producto, p.unidad_medida,
@@ -56,6 +95,8 @@ const QUERIES = {
 };
 
 const num = (v) => Number(v ?? 0);
+// stock_maximo es opcional: null significa "sin capturar", no 0.
+const numOrNull = (v) => (v === null || v === undefined ? null : Number(v));
 const accion = (esElaborado) => (esElaborado ? "producir" : "comprar");
 
 export default class ReporteRepository {
@@ -65,6 +106,7 @@ export default class ReporteRepository {
             ...r,
             stock_actual: num(r.stock_actual),
             stock_minimo: num(r.stock_minimo),
+            stock_maximo: numOrNull(r.stock_maximo),
             costo_unitario: num(r.costo_unitario),
             valor: num(r.valor),
         }));
@@ -108,6 +150,23 @@ export default class ReporteRepository {
             por_tipo,
             merma: { num: num(merma.rows[0]?.num), valor: num(merma.rows[0]?.valor) },
         };
+    }
+
+    async historial(empresa_id, { desde, hasta, limit = 50, offset = 0 }) {
+        const res = await pool.query(QUERIES.HISTORIAL, [empresa_id, desde, hasta, limit, offset]);
+        const total = res.rows[0]?.total_rows ?? 0;
+        const rows = res.rows.map((r) => ({
+            tipo: r.tipo,
+            id: r.id,
+            accion: r.accion,
+            en: r.en,
+            usuario_id: r.usuario_id,
+            usuario: r.usuario,
+            motivo: r.motivo,
+            detalle: r.detalle,
+            monto: r.monto === null ? null : num(r.monto),
+        }));
+        return { rows, total };
     }
 
     async topConsumo(empresa_id, desde, hasta, limit = 10) {

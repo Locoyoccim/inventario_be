@@ -9,6 +9,8 @@ export const QUERIES = {
     PRODUCTOS_EMPRESA: `SELECT id, producto, merma_pct FROM productos WHERE empresa_id = $1`,
     VENTA_EXISTE: `SELECT id FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2`,
     RECETAS_PRECIO: `SELECT id, precio_venta FROM recetas WHERE empresa_id = $1`,
+    // Productos mapeados como INSUMO (se venden tal cual, sin receta): su precio de venta.
+    PRODUCTOS_PRECIO: `SELECT id, precio_venta FROM productos WHERE empresa_id = $1 AND precio_venta IS NOT NULL`,
     // Preparaciones de la empresa: producto elaborado, rendimiento y unidad (para auto-producción).
     RECETAS_PREP: `
         SELECT r.id AS receta_id, r.rendimiento, r.producto_elaborado_id, r.nombre,

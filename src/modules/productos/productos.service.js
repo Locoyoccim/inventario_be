@@ -23,6 +23,10 @@ export default class ProductoService {
         return await this.productoRepository.updateProducto(id, data, empresa_id);
     }
 
+    async actualizarLimites(id, empresa_id, data) {
+        return await this.productoRepository.actualizarLimites(id, empresa_id, data);
+    }
+
     async deleteProducto(id, empresa_id) {
         return await this.productoRepository.deleteProducto(id, empresa_id);
     }

@@ -32,6 +32,49 @@ const QUERIES = {
         WHERE rd.receta_id = $1;`,
     SELECT_PRODUCTO_ELAB: `
         SELECT producto, unidad_medida FROM productos WHERE id = $1;`,
+    INSERT_PRODUCCION: `
+        INSERT INTO produccion (empresa_id, usuario_id) VALUES ($1, $2) RETURNING id, fecha;`,
+    LIST: `
+        SELECT pr.id, pr.empresa_id, pr.fecha, pr.usuario_id, u.nombre AS usuario,
+               pr.anulado, pr.anulado_at, pr.motivo_anulacion, pr.created_at,
+               COALESCE((
+                   SELECT STRING_AGG(DISTINCT p.producto, ', ' ORDER BY p.producto)
+                   FROM movimientosinventario m JOIN productos p ON p.id = m.producto_id
+                   WHERE m.referencia_tipo = 'PRODUCCION' AND m.referencia_id = pr.id AND m.stock_nuevo > m.stock_anterior
+               ), '') AS recetas,
+               COALESCE((
+                   SELECT SUM(m.cantidad * m.costo_unitario)
+                   FROM movimientosinventario m
+                   WHERE m.referencia_tipo = 'PRODUCCION' AND m.referencia_id = pr.id AND m.stock_nuevo > m.stock_anterior
+               ), 0)::numeric(14,2) AS valor,
+               COUNT(*) OVER()::int AS total_rows
+        FROM produccion pr
+        LEFT JOIN usuarios u ON u.id = pr.usuario_id
+        WHERE pr.empresa_id = $1
+        ORDER BY pr.fecha DESC, pr.id DESC
+        LIMIT $2 OFFSET $3;`,
+    HEADER_BY_ID: `
+        SELECT pr.id, pr.empresa_id, pr.fecha, pr.usuario_id, u.nombre AS usuario,
+               pr.anulado, pr.anulado_at, pr.motivo_anulacion, pr.created_at
+        FROM produccion pr
+        LEFT JOIN usuarios u ON u.id = pr.usuario_id
+        WHERE pr.id = $1 AND pr.empresa_id = $2;`,
+    FETCH_ANULAR: `SELECT id, anulado FROM produccion WHERE id = $1 AND empresa_id = $2`,
+    // Bloquea la cabecera dentro de la transacción: evita doble anulación por dos peticiones casi simultáneas.
+    FETCH_ANULAR_LOCK: `SELECT id, anulado FROM produccion WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
+    MARK_ANULADA: `
+        UPDATE produccion SET anulado = true, anulado_at = now(), anulado_por = $3, motivo_anulacion = $4
+        WHERE id = $1 AND empresa_id = $2
+        RETURNING id, empresa_id, fecha, usuario_id, anulado, anulado_at, anulado_por, motivo_anulacion, created_at;`,
+    LINEAS_BY_PRODUCCION: `
+        SELECT m.id AS movimiento_id, m.producto_id, p.producto, p.unidad_medida, m.cantidad, m.costo_unitario,
+               m.stock_anterior, m.stock_nuevo, m.motivo,
+               (m.stock_nuevo > m.stock_anterior) AS producido
+        FROM movimientosinventario m
+        JOIN productos p ON p.id = m.producto_id
+        WHERE m.referencia_tipo = 'PRODUCCION' AND m.referencia_id = $1 AND p.empresa_id = $2
+        ORDER BY producido DESC, m.id ASC;`,
+    LOCK_INV: `SELECT stock_actual FROM inventario WHERE producto_id = $1 FOR UPDATE`,
 };
 
 export default class ProduccionRepository {
@@ -105,13 +148,17 @@ export default class ProduccionRepository {
     // Confirma una o varias producciones en UNA transacción.
     // producciones: [{ receta_id, lotes }]. Consume insumos (PRODUCCION -) y recibe el
     // producto elaborado (PRODUCCION +). Falla completo si algún insumo no alcanza.
+    // Todo el lote queda bajo UN registro de cabecera (produccion.id): todos sus movimientos
+    // comparten ese referencia_id, así se puede anular la corrida completa sin tocar otras
+    // producciones de las mismas recetas.
     async confirmar(empresa_id, producciones, usuario_id = null) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
+            const cab = (await client.query(QUERIES.INSERT_PRODUCCION, [empresa_id, usuario_id])).rows[0];
             const resultados = [];
 
-            for (const { receta_id, lotes } of producciones) {
+            for (const { receta_id, lotes, cantidad_real } of producciones) {
                 const nLotes = normalizarLotes(lotes, receta_id);
 
                 const recRes = await client.query(QUERIES.SELECT_RECETA_PREP, [receta_id, empresa_id]);
@@ -139,7 +186,7 @@ export default class ProduccionRepository {
                             usuario_id,
                             motivo: `Producción de ${receta.nombre} (${nLotes} lote/s)`,
                             referencia_tipo: "PRODUCCION",
-                            referencia_id: receta_id,
+                            referencia_id: cab.id,
                         }
                     );
                     if (!mov) throw ApiError.notFound(`Insumo ${d.producto_id} sin inventario`);
@@ -161,27 +208,130 @@ export default class ProduccionRepository {
                         usuario_id,
                         motivo: `Producción de ${receta.nombre} (${nLotes} lote/s)`,
                         referencia_tipo: "PRODUCCION",
-                        referencia_id: receta_id,
+                        referencia_id: cab.id,
                     },
                     { direccion: 1 }
                 );
                 if (!recepcion) throw ApiError.notFound(`Producto elaborado ${receta.producto_elaborado_id} sin inventario`);
 
+                // 3) Rendimiento real vs. teorico: si se peso/conto el lote terminado y difiere de
+                // lo que la receta predice, se ajusta la existencia a lo real en el mismo lote (mismo
+                // referencia_id), para que anular revierta exactamente lo que de verdad se movio.
+                let stockFinal = Number(recepcion.stock_nuevo);
+                if (cantidad_real != null && Math.abs(cantidad_real - cantProducida) > 0.0001) {
+                    const diferencia = cantidad_real - cantProducida;
+                    const ajuste = await this.movimientoRepository.aplicar(
+                        client,
+                        receta.producto_elaborado_id,
+                        empresa_id,
+                        {
+                            tipo_movimiento: "AJUSTE",
+                            cantidad: Math.abs(diferencia),
+                            usuario_id,
+                            motivo: `Rendimiento real de ${receta.nombre}: ${cantidad_real} vs. ${cantProducida} teorico`,
+                            referencia_tipo: "PRODUCCION",
+                            referencia_id: cab.id,
+                        },
+                        { direccion: diferencia > 0 ? 1 : -1 }
+                    );
+                    if (!ajuste) throw ApiError.notFound(`Producto elaborado ${receta.producto_elaborado_id} sin inventario`);
+                    stockFinal = Number(ajuste.stock_nuevo);
+                }
+
                 const infoProd = await client.query(QUERIES.SELECT_PRODUCTO_ELAB, [receta.producto_elaborado_id]);
                 resultados.push({
+                    produccion_id: cab.id,
                     receta_id,
                     nombre: receta.nombre,
                     producto_elaborado_id: receta.producto_elaborado_id,
                     unidad: infoProd.rows[0]?.unidad_medida ?? null,
                     lotes: nLotes,
-                    cantidad_producida: cantProducida,
-                    stock_elaborado_nuevo: Number(recepcion.stock_nuevo),
+                    cantidad_producida: cantidad_real ?? cantProducida,
+                    cantidad_teorica: cantProducida,
+                    stock_elaborado_nuevo: stockFinal,
                     insumos_consumidos: insumosConsumidos,
                 });
             }
 
             await client.query("COMMIT");
             return resultados;
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async findAll(empresa_id, { limit = 50, offset = 0 } = {}) {
+        const res = await pool.query(QUERIES.LIST, [empresa_id, limit, offset]);
+        const total = res.rows[0]?.total_rows ?? 0;
+        return { rows: res.rows.map(({ total_rows, ...r }) => r), total };
+    }
+
+    async findById(empresa_id, id) {
+        const cab = await pool.query(QUERIES.HEADER_BY_ID, [id, empresa_id]);
+        if (!cab.rows[0]) return null;
+        const lineas = await pool.query(QUERIES.LINEAS_BY_PRODUCCION, [id, empresa_id]);
+        return { ...cab.rows[0], lineas: lineas.rows };
+    }
+
+    // Anula el lote completo: revierte cada movimiento (insumos consumidos vuelven, elaborado
+    // recibido se descuenta) con un AJUSTE de signo contrario, agregado por producto_id (si el
+    // mismo producto aparece varias veces en el lote). 409 si dejaría stock negativo (ej. ya se
+    // vendió parte de lo producido).
+    async anular(empresa_id, id, usuario_id, motivo) {
+        const existe = (await pool.query(QUERIES.FETCH_ANULAR, [id, empresa_id])).rows[0];
+        if (!existe) throw ApiError.notFound("Producción no encontrada");
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            // Bloquea la cabecera ANTES de decidir si ya está anulada: cierra la ventana en la
+            // que dos anulaciones casi simultáneas verían ambas anulado=false.
+            const cab = (await client.query(QUERIES.FETCH_ANULAR_LOCK, [id, empresa_id])).rows[0];
+            if (!cab) throw ApiError.notFound("Producción no encontrada");
+            if (cab.anulado) throw ApiError.conflict("La producción ya está anulada");
+
+            const movs = (await client.query(QUERIES.LINEAS_BY_PRODUCCION, [id, empresa_id])).rows;
+            const netoPorProducto = new Map();
+            for (const m of movs) {
+                const pid = Number(m.producto_id);
+                const delta = Number(m.stock_nuevo) - Number(m.stock_anterior);
+                netoPorProducto.set(pid, (netoPorProducto.get(pid) ?? 0) + delta);
+            }
+            const ids = [...netoPorProducto.keys()].sort((a, b) => a - b);
+
+            // 1) Chequeo de stock negativo (bloqueando la fila) — 409 si no alcanza.
+            for (const pid of ids) {
+                const neto = netoPorProducto.get(pid);
+                if (neto === 0) continue;
+                const inv = (await client.query(QUERIES.LOCK_INV, [pid])).rows[0];
+                const actual = Number(inv?.stock_actual ?? 0);
+                if (actual - neto < 0) {
+                    throw ApiError.conflict(`Anular dejaría stock negativo en el producto ${pid} (actual ${actual}, a revertir ${neto})`);
+                }
+            }
+
+            // 2) Reversa: AJUSTE de signo contrario al neto acumulado, por producto.
+            for (const pid of ids) {
+                const neto = netoPorProducto.get(pid);
+                if (neto === 0) continue;
+                await this.movimientoRepository.aplicar(client, pid, empresa_id, {
+                    tipo_movimiento: "AJUSTE",
+                    cantidad: -neto,
+                    usuario_id,
+                    motivo: "Anulación de producción",
+                    referencia_tipo: "PRODUCCION_ANULADA",
+                    referencia_id: Number(id),
+                });
+            }
+
+            // 3) Marcar la producción como anulada.
+            const upd = (await client.query(QUERIES.MARK_ANULADA, [id, empresa_id, usuario_id, motivo])).rows[0];
+            await client.query("COMMIT");
+            return { ...upd, productos_reajustados: ids.length };
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;

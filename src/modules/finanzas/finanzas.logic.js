@@ -14,6 +14,7 @@ export function armarResumen({
     devolucionCosto = 0,
     mermaCosto = 0,
     ingresoEsperado = null,
+    esperadoFilasSinPrecio = 0,
     ingresosComparables = 0,
     diasSinIngreso = [],
     serieIngresos = [],
@@ -70,6 +71,9 @@ export function armarResumen({
         resultado_operacion: resultadoOperacion,
         food_cost_pct: foodCostPct,
         ingreso_esperado: ingresoEsperado == null ? null : r2(ingresoEsperado),
+        // Renglones vendidos (RECETA/INSUMO) sin precio capturado: el esperado de arriba no los
+        // incluye. 0 = el esperado está completo para este periodo.
+        esperado_filas_sin_precio: esperadoFilasSinPrecio,
         ingresos_comparables: ingresoEsperado == null ? null : r2(ingresosComparables),
         dias_sin_ingreso: diasSinIngreso,
         serie,

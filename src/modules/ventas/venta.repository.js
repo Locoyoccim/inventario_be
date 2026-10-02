@@ -203,7 +203,7 @@ export default class VentaRepository {
 
     // Inserta el encabezado (venta_diaria) y el snapshot de detalle línea por línea
     // (habilita el "ingreso esperado" en Finanzas). Devuelve la fila de venta insertada.
-    async #insertarEncabezadoYDetalle(client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, total_lineas, total_unidades) {
+    async #insertarEncabezadoYDetalle(client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, productosPrecioRes, total_lineas, total_unidades) {
         const ventaRes = await client.query(QUERIES.INSERT_VENTA, [
             empresa_id, fecha, total_lineas, total_unidades,
         ]);
@@ -212,6 +212,7 @@ export default class VentaRepository {
         // Snapshot del detalle de la venta (habilita el "ingreso esperado" en Finanzas).
         const posIndex = new Map(posMapRes.rows.map((m) => [normalizar(m.nombre_pos), m]));
         const precioReceta = new Map(recetasPrecioRes.rows.map((r) => [Number(r.id), r.precio_venta]));
+        const precioProducto = new Map(productosPrecioRes.rows.map((p) => [Number(p.id), p.precio_venta]));
         for (const l of lineas) {
             const m = posIndex.get(normalizar(l.nombre_pos));
             let tipo = "SIN_MAPEO";
@@ -225,6 +226,10 @@ export default class VentaRepository {
                     dPrecio = precioReceta.get(dReceta) ?? null;
                 } else if (m.tipo === "INSUMO") {
                     dProducto = Number(m.producto_id);
+                    // null si el producto no tiene precio_venta capturado: el esperado de ese
+                    // renglón queda sin contar (igual que antes), pero ahora SÍ hay forma de
+                    // cerrar el hueco capturando el precio en el producto.
+                    dPrecio = precioProducto.get(dProducto) ?? null;
                 }
             }
             await client.query(QUERIES.INSERT_DETALLE, [venta.id, l.nombre_pos, Number(l.cantidad), tipo, dReceta, dProducto, dPrecio]);
@@ -306,7 +311,10 @@ export default class VentaRepository {
     }
 
     // Fase 3: VENTA del consumo (como siempre). El elaborado ya fue producido, así queda en 0 y no negativo.
-    async #aplicarVenta(client, empresa_id, fecha, venta_id, aDescontar, nombrePorId, permitirNegativo, errores, negativos) {
+    // permitirNegativo siempre true: la venta ya ocurrió según el POS, no se puede "rechazar"
+    // retroactivamente por falta de inventario — un stock negativo aquí es una señal real de
+    // que el inventario está desfasado (compra faltante, conteo pendiente), no un error a bloquear.
+    async #aplicarVenta(client, empresa_id, fecha, venta_id, aDescontar, nombrePorId, errores, negativos) {
         const descontado = [];
 
         aDescontar.sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
@@ -320,7 +328,7 @@ export default class VentaRepository {
                     referencia_tipo: "VENTA_DIARIA",
                     referencia_id: venta_id,
                 },
-                { permitirNegativo },
+                { permitirNegativo: true },
             );
             if (!mov) {
                 errores.push({ producto_id: item.producto_id, producto: nombrePorId.get(item.producto_id), motivo: "El insumo no tiene fila de inventario" });
@@ -339,12 +347,11 @@ export default class VentaRepository {
         return descontado;
     }
 
-    async importarDia(empresa_id, fecha, lineas, opts = {}) {
-        const { permitirNegativo = true } = opts;
-
-        const [existeRes, recetasPrecioRes] = await Promise.all([
+    async importarDia(empresa_id, fecha, lineas) {
+        const [existeRes, recetasPrecioRes, productosPrecioRes] = await Promise.all([
             pool.query(QUERIES.VENTA_EXISTE, [empresa_id, fecha]),
             pool.query(QUERIES.RECETAS_PRECIO, [empresa_id]),
+            pool.query(QUERIES.PRODUCTOS_PRECIO, [empresa_id]),
         ]);
 
         if (existeRes.rows[0]) {
@@ -382,7 +389,7 @@ export default class VentaRepository {
             await client.query("BEGIN");
 
             const venta = await this.#insertarEncabezadoYDetalle(
-                client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, total_lineas, total_unidades,
+                client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, productosPrecioRes, total_lineas, total_unidades,
             );
 
             await this.#bloquearInventario(client, aDescontar, autoProduccion);
@@ -391,7 +398,7 @@ export default class VentaRepository {
 
             await this.#aplicarAutoProduccionElaborados(client, empresa_id, fecha, venta.id, autoProduccion, nombrePorId);
 
-            const descontado = await this.#aplicarVenta(client, empresa_id, fecha, venta.id, aDescontar, nombrePorId, permitirNegativo, errores, negativos);
+            const descontado = await this.#aplicarVenta(client, empresa_id, fecha, venta.id, aDescontar, nombrePorId, errores, negativos);
 
             await client.query("COMMIT");
 

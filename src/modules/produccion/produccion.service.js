@@ -15,4 +15,16 @@ export default class ProduccionService {
     async confirmar(empresa_id, producciones, usuario_id) {
         return await this.produccionRepository.confirmar(empresa_id, producciones, usuario_id);
     }
+
+    async getAll(empresa_id, opts) {
+        return await this.produccionRepository.findAll(empresa_id, opts);
+    }
+
+    async getById(empresa_id, id) {
+        return await this.produccionRepository.findById(empresa_id, id);
+    }
+
+    async anular(empresa_id, id, usuario_id, motivo) {
+        return await this.produccionRepository.anular(empresa_id, id, usuario_id, motivo);
+    }
 }

@@ -50,6 +50,8 @@ const QUERIES = {
         WHERE p.empresa_id = $1 AND (p.activo = true OR i.stock_actual <> 0)
         ORDER BY p.producto ASC;`,
     FETCH_ANULAR: `SELECT id, motivo, anulado FROM conteo_fisico WHERE id = $1 AND empresa_id = $2;`,
+    // Bloquea la cabecera dentro de la transacción: evita doble anulación por dos peticiones casi simultáneas.
+    FETCH_ANULAR_LOCK: `SELECT id, motivo, anulado FROM conteo_fisico WHERE id = $1 AND empresa_id = $2 FOR UPDATE;`,
     LINEAS_FOR_ANULAR: `SELECT producto_id, variacion FROM conteo_detalle WHERE conteo_id = $1 AND variacion <> 0 ORDER BY producto_id ASC;`,
     MARK_ANULADA: `
         UPDATE conteo_fisico SET anulado = true, anulado_at = now(), anulado_por = $3, motivo_anulacion = $4
@@ -161,15 +163,20 @@ export default class ConteoRepository {
     // compra.repository.js). Si revertir dejaría stock negativo, aplicar() lo bloquea (400) y
     // la transacción se revierte completa: no queda nada a medias.
     async anular(empresa_id, id, usuario_id, motivo) {
-        const cab = (await pool.query(QUERIES.FETCH_ANULAR, [id, empresa_id])).rows[0];
-        if (!cab) throw ApiError.notFound("Conteo no encontrado");
-        if (cab.anulado) throw ApiError.conflict("El conteo ya está anulado");
-
-        const lineas = (await pool.query(QUERIES.LINEAS_FOR_ANULAR, [id])).rows;
+        const existe = (await pool.query(QUERIES.FETCH_ANULAR, [id, empresa_id])).rows[0];
+        if (!existe) throw ApiError.notFound("Conteo no encontrado");
 
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
+
+            // Bloquea la cabecera ANTES de decidir si ya está anulado: cierra la ventana en la
+            // que dos anulaciones casi simultáneas verían ambas anulado=false.
+            const cab = (await client.query(QUERIES.FETCH_ANULAR_LOCK, [id, empresa_id])).rows[0];
+            if (!cab) throw ApiError.notFound("Conteo no encontrado");
+            if (cab.anulado) throw ApiError.conflict("El conteo ya está anulado");
+
+            const lineas = (await client.query(QUERIES.LINEAS_FOR_ANULAR, [id])).rows;
             for (const l of lineas) {
                 await this.movimientoRepository.aplicar(client, Number(l.producto_id), empresa_id, {
                     tipo_movimiento: "AJUSTE",

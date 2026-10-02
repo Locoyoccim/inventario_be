@@ -51,6 +51,16 @@ export default class ReporteController {
         res.json({ success: true, data: await this.reporteService.actividad(empresa_id, desde, hasta) });
     });
 
+    historial = asyncHandler(async (req, res) => {
+        const { empresa_id } = req.params;
+        await this.#assertEmpresa(empresa_id);
+        const { desde, hasta } = parseRango(req.query);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        const { rows, total } = await this.reporteService.historial(empresa_id, { desde, hasta, limit, offset });
+        res.json({ success: true, data: rows, pagination: { total, limit, offset } });
+    });
+
     consumo = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         await this.#assertEmpresa(empresa_id);

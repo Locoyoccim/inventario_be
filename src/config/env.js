@@ -20,7 +20,7 @@ const schema = z
         const tieneVars = env.DB_USER && env.DB_HOST && env.DB_NAME && env.DB_PASSWORD && env.DB_PORT;
         if (!tieneUrl && !tieneVars) {
             ctx.addIssue({
-                code: z.ZodIssueCode.custom,
+                code: "custom",
                 message: "Falta DATABASE_URL o el conjunto DB_USER/DB_HOST/DB_NAME/DB_PASSWORD/DB_PORT",
             });
         }
@@ -30,9 +30,9 @@ const schema = z
         const esNoProductivo = env.NODE_ENV === "development" || env.NODE_ENV === "test";
         if (!esNoProductivo) {
             if (!env.CORS_ORIGINS)
-                ctx.addIssue({ code: z.ZodIssueCode.custom, message: "CORS_ORIGINS es obligatorio en producción" });
+                ctx.addIssue({ code: "custom", message: "CORS_ORIGINS es obligatorio en producción" });
             if (!env.SETUP_TOKEN)
-                ctx.addIssue({ code: z.ZodIssueCode.custom, message: "SETUP_TOKEN es obligatorio en producción" });
+                ctx.addIssue({ code: "custom", message: "SETUP_TOKEN es obligatorio en producción" });
         }
     });
 

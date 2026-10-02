@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import ApiError from "../utils/ApiError.js";
 import { verifyToken } from "../utils/jwt.js";
 import { AUTH_COOKIE, CSRF_HEADER, readCookie } from "../utils/authCookie.js";
@@ -53,10 +54,19 @@ export function requireOwner(req, _res, next) {
 // Sin PLATFORM_TOKEN configurado en el entorno, el endpoint queda cerrado.
 export function requirePlatformToken(req, _res, next) {
     const expected = process.env.PLATFORM_TOKEN;
-    if (!expected || req.headers["x-platform-token"] !== expected) {
+    if (!expected || !tokenCoincide(req.headers["x-platform-token"], expected)) {
         return next(ApiError.forbidden("Operación no permitida"));
     }
     next();
+}
+
+// Comparación a tiempo constante: evita que la duración de la comparación revele, byte a
+// byte, el valor esperado (timing attack sobre el token de plataforma).
+function tokenCoincide(recibido, esperado) {
+    if (typeof recibido !== "string") return false;
+    const a = Buffer.from(recibido);
+    const b = Buffer.from(esperado);
+    return a.length === b.length && timingSafeEqual(a, b);
 }
 
 // Exige el usuario maestro de plataforma (usuarios.is_platform_admin). A diferencia de

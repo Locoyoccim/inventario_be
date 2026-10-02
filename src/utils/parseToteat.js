@@ -33,7 +33,9 @@ export function parseToteatCsv(texto) {
         // Total = última columna. Limpia símbolos ($, espacios) y separadores de miles.
         const totalRaw = partes[partes.length - 1].replace(/[^0-9.-]/g, "");
         const cantidad = Number.parseFloat(totalRaw);
-        if (!Number.isFinite(cantidad) || cantidad === 0) continue;
+        // <= 0 se descarta (igual que el parser del front, toteat.ts): una fila negativa del
+        // POS (ej. devolución) no debe colarse como consumo de inventario negativo.
+        if (!Number.isFinite(cantidad) || cantidad <= 0) continue;
 
         filas.push({ nombre_pos: nombre, cantidad });
         if (filas.length > MAX_LINEAS) {

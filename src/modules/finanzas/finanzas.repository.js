@@ -264,10 +264,13 @@ export default class FinanzasRepository {
             pool.query(`SELECT
                     COALESCE(SUM(CASE WHEN m.tipo_movimiento='VENTA' THEN m.cantidad*m.costo_unitario END),0) AS venta_costo,
                     COALESCE(SUM(CASE WHEN m.tipo_movimiento='DEVOLUCION' AND m.referencia_tipo='VENTA_DIARIA' THEN m.cantidad*m.costo_unitario END),0) AS devol_costo,
-                    COALESCE(SUM(CASE WHEN m.tipo_movimiento='MERMA' THEN m.cantidad*m.costo_unitario END),0) AS merma_costo
+                    COALESCE(SUM(CASE WHEN m.tipo_movimiento='MERMA'
+                                      OR (m.tipo_movimiento='AJUSTE' AND m.stock_nuevo < m.stock_anterior)
+                                 THEN m.cantidad*m.costo_unitario END),0) AS merma_costo
                 FROM movimientosinventario m JOIN productos p ON p.id=m.producto_id
                 WHERE p.empresa_id=$1 AND m.fecha::date BETWEEN $2 AND $3`, rango),
             pool.query(`SELECT COUNT(d.id) AS filas,
+                    COUNT(d.id) FILTER (WHERE d.precio_unitario IS NULL AND d.tipo IN ('RECETA','INSUMO')) AS filas_sin_precio,
                     COALESCE(SUM(d.cantidad*d.precio_unitario) FILTER (WHERE d.precio_unitario IS NOT NULL),0) AS esperado
                 FROM venta_diaria vd JOIN venta_diaria_detalle d ON d.venta_diaria_id=vd.id
                 WHERE vd.empresa_id=$1 AND vd.fecha BETWEEN $2 AND $3`, rango),
@@ -302,6 +305,8 @@ export default class FinanzasRepository {
             devolucionCosto: c.devol_costo,
             mermaCosto: c.merma_costo,
             ingresoEsperado: Number(esp.filas) === 0 ? null : esp.esperado,
+            // Renglones RECETA/INSUMO vendidos sin precio capturado: el esperado no los cuenta.
+            esperadoFilasSinPrecio: Number(esp.filas_sin_precio) || 0,
             ingresosComparables: comparables.rows[0].total,
             diasSinIngreso: sinIngreso.rows.map((r) => String(r.fecha).slice(0, 10)),
             serieIngresos: sIng.rows,

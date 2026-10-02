@@ -3,6 +3,14 @@ import { signToken } from "../../utils/jwt.js";
 import ApiError from "../../utils/ApiError.js";
 import { invalidarUsuarioActivo } from "../../middlewares/activeUser.js";
 
+// Hash dummy (sin usuario real detrás) para que login() tarde lo mismo cuando el email no
+// existe que cuando existe pero la contraseña es incorrecta — sin esto, la ausencia del
+// bcrypt.compare en el camino "no existe" es medible y revela qué correos están registrados.
+// Costo 10 a propósito: debe igualar el costo de los hashes YA almacenados (creados con
+// bcrypt.hash(..., 10) antes de subir a 12 abajo); un dummy en costo 12 tardaría más que
+// comparar contra un usuario real y reintroduciría el mismo timing leak al revés.
+const HASH_DUMMY = "$2b$10$c/FzyZ996ndTpNk0UdNRnelYmxARV.QBfT.9gCgJs/1gjT1Vj6ZW2";
+
 export default class AuthService {
     constructor(usuarioRepository) {
         this.usuarioRepository = usuarioRepository;
@@ -14,7 +22,7 @@ export default class AuthService {
         if (total > 0) {
             throw ApiError.forbidden("El setup ya fue realizado. Usa /api/auth/login.");
         }
-        const password_hash = await bcrypt.hash(data.password, 10);
+        const password_hash = await bcrypt.hash(data.password, 12);
         const creado = await this.usuarioRepository.create(data.empresa_id, {
             nombre: data.nombre,
             codigo_ingreso: data.codigo_ingreso,
@@ -45,10 +53,11 @@ export default class AuthService {
 
     async login(email, password) {
         const u = await this.usuarioRepository.findByEmail(email);
-        // Mensaje genérico a propósito (no revelar si el correo existe)
-        if (!u || !u.password_hash) throw ApiError.unauthorized("Credenciales inválidas");
-        const ok = await bcrypt.compare(password, u.password_hash);
-        if (!ok) throw ApiError.unauthorized("Credenciales inválidas");
+        // Siempre se ejecuta un bcrypt.compare, exista o no el usuario: si el camino "no
+        // existe" retornara antes de comparar, el tiempo de respuesta delataría qué correos
+        // están registrados (mensaje de error genérico a propósito, por la misma razón).
+        const ok = await bcrypt.compare(password, u?.password_hash ?? HASH_DUMMY);
+        if (!u || !u.password_hash || !ok) throw ApiError.unauthorized("Credenciales inválidas");
         // Solo tras validar la contrasena, para no revelar que correos existen.
         if (u.activo === false) throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
         if (u.empresa_activa === false) throw ApiError.forbidden("La empresa fue desactivada. Contacta al administrador.");
@@ -89,7 +98,7 @@ export default class AuthService {
         const ok = await bcrypt.compare(passwordActual, hashActual);
         if (!ok) throw ApiError.badRequest("La contraseña actual no es correcta");
 
-        const password_hash = await bcrypt.hash(passwordNueva, 10);
+        const password_hash = await bcrypt.hash(passwordNueva, 12);
         await this.usuarioRepository.updateOwnPassword(user.empresa_id, user.id, password_hash);
         await this.usuarioRepository.bumpTokenVersion(user.empresa_id, user.id);
         invalidarUsuarioActivo(user.id);

@@ -15,6 +15,9 @@ export default class ReporteService {
     async actividad(empresa_id, desde, hasta) {
         return await this.reporteRepository.actividad(empresa_id, desde, hasta);
     }
+    async historial(empresa_id, params) {
+        return await this.reporteRepository.historial(empresa_id, params);
+    }
     async topConsumo(empresa_id, desde, hasta, limit) {
         return await this.reporteRepository.topConsumo(empresa_id, desde, hasta, limit);
     }

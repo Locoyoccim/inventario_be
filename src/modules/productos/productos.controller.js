@@ -36,6 +36,13 @@ export default class ProductosController {
         res.json({ success: true, data: actualizado });
     });
 
+    actualizarLimites = asyncHandler(async (req, res) => {
+        const { id, empresa_id } = req.params;
+        const actualizado = await this.productosService.actualizarLimites(id, empresa_id, req.body);
+        if (!actualizado) throw ApiError.notFound("Producto no encontrado");
+        res.json({ success: true, data: actualizado });
+    });
+
     uso = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
         const producto = await this.productosService.getProductoById(id, empresa_id);

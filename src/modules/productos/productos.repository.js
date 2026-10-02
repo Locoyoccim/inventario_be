@@ -6,8 +6,8 @@ const QUERIES = {
     SELECT_BY_ID: `
         SELECT p.id, p.producto, p.unidad_medida, p.proveedor_id, prov.nombre AS proveedor, p.categoria, p.empresa_id,
                p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo, p.compra_al_producir,
-               p.merma_pct, ROUND(p.costo_unitario / (1 - COALESCE(p.merma_pct, 0) / 100), 4) AS costo_util,
-               i.stock_actual, i.stock_minimo
+               p.merma_pct, ROUND(p.costo_unitario / (1 - COALESCE(p.merma_pct, 0) / 100), 4) AS costo_util, p.precio_venta,
+               i.stock_actual, i.stock_minimo, i.stock_maximo
         FROM productos p
         LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
         LEFT JOIN inventario i ON i.producto_id = p.id
@@ -17,31 +17,33 @@ const QUERIES = {
     ES_ELABORADO: `SELECT es_elaborado FROM productos WHERE id = $1 AND empresa_id = $2`,
     INSERT_PRODUCTO: `
         INSERT INTO productos
-        (producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, compra_al_producir, merma_pct)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), COALESCE($9, 0))
-        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo, compra_al_producir, merma_pct
+        (producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, compra_al_producir, merma_pct, precio_venta)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), COALESCE($9, 0), $10)
+        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo, compra_al_producir, merma_pct, precio_venta
     `,
     INSERT_INVENTARIO: `
-        INSERT INTO inventario (producto_id, stock_actual, stock_minimo, empresa_id, updated_at)
-        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-        RETURNING stock_actual, stock_minimo, updated_at
+        INSERT INTO inventario (producto_id, stock_actual, stock_minimo, stock_maximo, empresa_id, updated_at)
+        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+        RETURNING stock_actual, stock_minimo, stock_maximo, updated_at
     `,
     UPDATE_PRODUCTO: `
         UPDATE productos
         SET producto = $1, unidad_medida = $2, proveedor_id = $3, categoria = $4,
             cantidad_presentacion = $5, costo_presentacion = $6, activo = COALESCE($9, activo),
-            compra_al_producir = COALESCE($10, compra_al_producir), merma_pct = COALESCE($11, merma_pct)
+            compra_al_producir = COALESCE($10, compra_al_producir), merma_pct = COALESCE($11, merma_pct),
+            precio_venta = $12
         WHERE id = $7 AND empresa_id = $8
-        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo, compra_al_producir, merma_pct
+        RETURNING id, producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion, costo_unitario, activo, compra_al_producir, merma_pct, precio_venta
     `,
-    UPDATE_INVENTARIO_MINIMO: `
+    UPDATE_INVENTARIO_LIMITES: `
         UPDATE inventario
-        SET stock_minimo = $1, updated_at = CURRENT_TIMESTAMP
+        SET stock_minimo = $1, stock_maximo = $3, updated_at = CURRENT_TIMESTAMP
         WHERE producto_id = $2
-        RETURNING stock_actual, stock_minimo, updated_at
+        RETURNING stock_actual, stock_minimo, stock_maximo, updated_at
     `,
     // Soft-delete: nunca se borra físicamente (rompería FKs de historial).
     SOFT_DELETE: `UPDATE productos SET activo = false WHERE id = $1 AND empresa_id = $2 RETURNING id`,
+    EXISTS_EN_EMPRESA: `SELECT 1 FROM productos WHERE id = $1 AND empresa_id = $2`,
 };
 
 export default class ProductoRepository {
@@ -58,8 +60,8 @@ export default class ProductoRepository {
         const sql = `
             SELECT p.id, p.producto, p.unidad_medida, p.proveedor_id, prov.nombre AS proveedor, p.categoria, p.empresa_id,
                    p.cantidad_presentacion, p.costo_presentacion, p.costo_unitario, p.es_elaborado, p.activo, p.compra_al_producir,
-                   p.merma_pct, ROUND(p.costo_unitario / (1 - COALESCE(p.merma_pct, 0) / 100), 4) AS costo_util,
-                   i.stock_actual, i.stock_minimo,
+                   p.merma_pct, ROUND(p.costo_unitario / (1 - COALESCE(p.merma_pct, 0) / 100), 4) AS costo_util, p.precio_venta,
+                   i.stock_actual, i.stock_minimo, i.stock_maximo,
                    COUNT(*) OVER()::int AS total
             FROM productos p
             LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
@@ -101,8 +103,8 @@ export default class ProductoRepository {
 
     async createProducto(data, empresa_id) {
         const {
-            producto, stock_actual, stock_minimo, unidad_medida,
-            proveedor_id, categoria, cantidad_presentacion, costo_presentacion, compra_al_producir, merma_pct,
+            producto, stock_actual, stock_minimo, stock_maximo, unidad_medida,
+            proveedor_id, categoria, cantidad_presentacion, costo_presentacion, compra_al_producir, merma_pct, precio_venta,
         } = data;
         const camposRequeridos = {
             producto, stock_actual, stock_minimo, unidad_medida,
@@ -127,11 +129,11 @@ export default class ProductoRepository {
             await client.query("BEGIN");
             const productoResult = await client.query(QUERIES.INSERT_PRODUCTO, [
                 producto, unidad_medida, proveedor_id, categoria, empresa_id, cantidad_presentacion, costo_presentacion,
-                compra_al_producir ?? null, merma_pct ?? null,
+                compra_al_producir ?? null, merma_pct ?? null, precio_venta ?? null,
             ]);
             const nuevoProducto = productoResult.rows[0];
             const inventarioResult = await client.query(QUERIES.INSERT_INVENTARIO, [
-                nuevoProducto.id, stock_actual, stock_minimo, empresa_id,
+                nuevoProducto.id, stock_actual, stock_minimo, stock_maximo ?? null, empresa_id,
             ]);
             await client.query("COMMIT");
             return { ...nuevoProducto, ...inventarioResult.rows[0] };
@@ -145,7 +147,7 @@ export default class ProductoRepository {
 
     async updateProducto(
         id,
-        { producto, stock_minimo, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion, activo, compra_al_producir, merma_pct },
+        { producto, stock_minimo, stock_maximo, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion, activo, compra_al_producir, merma_pct, precio_venta },
         empresa_id
     ) {
         if (!id) throw ApiError.badRequest("ID es requerido");
@@ -185,7 +187,7 @@ export default class ProductoRepository {
             await client.query("BEGIN");
             const productoResult = await client.query(QUERIES.UPDATE_PRODUCTO, [
                 producto, unidad_medida, proveedor_id, categoria, cantidad_presentacion, costo_presentacion,
-                id, empresa_id, activo ?? null, compra_al_producir ?? null, merma_pct ?? null,
+                id, empresa_id, activo ?? null, compra_al_producir ?? null, merma_pct ?? null, precio_venta ?? null,
             ]);
             const productoActualizado = productoResult.rows[0];
             if (!productoActualizado) {
@@ -193,7 +195,7 @@ export default class ProductoRepository {
                 return null;
             }
             // stock_actual NO se toca aquí: solo por /movimientos (GAP-06)
-            const inventarioResult = await client.query(QUERIES.UPDATE_INVENTARIO_MINIMO, [stock_minimo, id]);
+            const inventarioResult = await client.query(QUERIES.UPDATE_INVENTARIO_LIMITES, [stock_minimo, id, stock_maximo ?? null]);
             // Si cambió el costo (presentación o cantidad), refresca las recetas que lo usan
             const recetasActualizadas = await propagarCostoInsumos(client, [id]);
             await client.query("COMMIT");
@@ -208,6 +210,15 @@ export default class ProductoRepository {
         } finally {
             client.release();
         }
+    }
+
+    // Solo mínimo/máximo: a diferencia de updateProducto, SÍ aplica a elaborados (preparaciones).
+    // El resto de sus campos (costo, presentación) se recalculan desde la receta y no se tocan aquí.
+    async actualizarLimites(id, empresa_id, { stock_minimo, stock_maximo }) {
+        const existe = await pool.query(QUERIES.EXISTS_EN_EMPRESA, [id, empresa_id]);
+        if (existe.rowCount === 0) return null;
+        const result = await pool.query(QUERIES.UPDATE_INVENTARIO_LIMITES, [stock_minimo, id, stock_maximo ?? null]);
+        return result.rows[0];
     }
 
     // Desactiva (soft-delete). No borra físicamente para conservar el historial.

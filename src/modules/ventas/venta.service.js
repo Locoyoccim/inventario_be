@@ -8,7 +8,7 @@ export default class VentaService {
     }
 
     // Acepta líneas ya estructuradas [{nombre_pos, cantidad}] o un CSV crudo de Toteat.
-    async importar(empresa_id, { fecha, lineas, csv }, opts) {
+    async importar(empresa_id, { fecha, lineas, csv }) {
         if (!fecha) throw ApiError.badRequest("fecha es requerida (formato YYYY-MM-DD)");
 
         let filas = lineas;
@@ -18,7 +18,7 @@ export default class VentaService {
         if (!Array.isArray(filas) || filas.length === 0) {
             throw ApiError.badRequest("No hay líneas de venta: envía 'lineas' [{nombre_pos, cantidad}] o 'csv'");
         }
-        return await this.ventaRepository.importarDia(empresa_id, fecha, filas, opts);
+        return await this.ventaRepository.importarDia(empresa_id, fecha, filas);
     }
 
     async listarDias(empresa_id, filtros) {

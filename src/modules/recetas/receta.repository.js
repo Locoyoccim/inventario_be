@@ -105,11 +105,27 @@ export default class RecetaRepository {
         const {
             nombre, categoria, precio_venta, activo = true,
             costo_produccion = 0, proteccion_pct = 0, ingredientes,
-            iva_pct = null, precio_incluye_iva = null,
+            iva_pct = null, precio_incluye_iva = null, rendimiento = null,
         } = data;
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
+            // Rendimiento solo tiene sentido (y solo dispara recosteo) en una preparación: se
+            // valida y aplica antes del resto, así recalcularCostoTotal ya lo lee actualizado.
+            if (rendimiento != null) {
+                const actual = await client.query(
+                    "SELECT es_preparacion FROM recetas WHERE id = $1 AND empresa_id = $2",
+                    [id, empresa_id]
+                );
+                if (!actual.rows[0]) {
+                    await client.query("ROLLBACK");
+                    return null;
+                }
+                if (!actual.rows[0].es_preparacion) {
+                    throw ApiError.badRequest("Solo una preparación tiene rendimiento editable");
+                }
+                await client.query("UPDATE recetas SET rendimiento = $1 WHERE id = $2", [rendimiento, id]);
+            }
             const upd = await client.query(QUERIES.UPDATE_HEADER, [
                 nombre, categoria, precio_venta, activo,
                 costo_produccion, proteccion_pct, id, empresa_id,
@@ -123,9 +139,13 @@ export default class RecetaRepository {
             if (Array.isArray(ingredientes)) {
                 detalles = await this.#reemplazarEscandallo(client, empresa_id, id, ingredientes);
             }
-            const receta = await recalcularCostoTotal(client, id);
+            // ctx propio para contar cuantas OTRAS recetas se recostearon en cascada (ej. al
+            // cambiar el rendimiento de una preparación que otras usan como insumo).
+            const ctx = { productos: new Set(), recetas: new Set() };
+            const receta = await recalcularCostoTotal(client, id, ctx);
             await client.query("COMMIT");
-            return detalles ? { ...receta, ingredientes: detalles } : receta;
+            const extra = { recetas_actualizadas: ctx.recetas.size };
+            return detalles ? { ...receta, ...extra, ingredientes: detalles } : { ...receta, ...extra };
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;
