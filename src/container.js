@@ -55,6 +55,9 @@ import PlatformRepository from "./modules/platform/platform.repository.js";
 import RolController from "./modules/roles/rol.controller.js";
 import RolService from "./modules/roles/rol.service.js";
 import RolRepository from "./modules/roles/rol.repository.js";
+import ReservacionController from "./modules/reservaciones/reservaciones.controller.js";
+import ReservacionService from "./modules/reservaciones/reservaciones.service.js";
+import ReservacionRepository from "./modules/reservaciones/reservaciones.repository.js";
 
 // Repos base compartidos
 const empresaRepo = new EmpresaRepository();
@@ -80,3 +83,4 @@ export const categoriaController = new CategoriaController(new CategoriaService(
 export const finanzasController = new FinanzasController(new FinanzasService(new FinanzasRepository()));
 export const platformController = new PlatformController(new PlatformService(new PlatformRepository()));
 export const rolController = new RolController(new RolService(new RolRepository()));
+export const reservacionController = new ReservacionController(new ReservacionService(new ReservacionRepository()));
