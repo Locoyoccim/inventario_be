@@ -82,7 +82,7 @@ export default class EmpresaRepository {
     // Configuración fiscal/comercial de la empresa.
     async getConfig(id) {
         const r = await pool.query(
-            "SELECT iva_pct, precios_incluyen_iva, food_cost_objetivo FROM empresas WHERE id = $1",
+            "SELECT iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria FROM empresas WHERE id = $1",
             [id]
         );
         return r.rows[0];
@@ -90,7 +90,7 @@ export default class EmpresaRepository {
 
     // Actualiza la configuración (campos opcionales). Con aplicarARecetas=true, propaga el
     // IVA de la empresa a TODAS sus recetas (por defecto solo aplica a las nuevas).
-    async updateConfig(id, { iva_pct, precios_incluyen_iva, food_cost_objetivo }, aplicarARecetas = false) {
+    async updateConfig(id, { iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria }, aplicarARecetas = false) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -98,10 +98,11 @@ export default class EmpresaRepository {
                 `UPDATE empresas
                  SET iva_pct = COALESCE($2, iva_pct),
                      precios_incluyen_iva = COALESCE($3, precios_incluyen_iva),
-                     food_cost_objetivo = COALESCE($4, food_cost_objetivo)
+                     food_cost_objetivo = COALESCE($4, food_cost_objetivo),
+                     zona_horaria = COALESCE($5, zona_horaria)
                  WHERE id = $1
-                 RETURNING iva_pct, precios_incluyen_iva, food_cost_objetivo`,
-                [id, iva_pct ?? null, precios_incluyen_iva ?? null, food_cost_objetivo ?? null]
+                 RETURNING iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria`,
+                [id, iva_pct ?? null, precios_incluyen_iva ?? null, food_cost_objetivo ?? null, zona_horaria ?? null]
             );
             const cfg = upd.rows[0];
             let recetas_actualizadas = 0;

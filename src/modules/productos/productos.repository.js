@@ -13,7 +13,6 @@ const QUERIES = {
         LEFT JOIN inventario i ON i.producto_id = p.id
         WHERE p.empresa_id = $2 AND p.id = $1
     `,
-    EXISTS_PRODUCTO: `SELECT 1 FROM productos WHERE id = $1`,
     ES_ELABORADO: `SELECT es_elaborado FROM productos WHERE id = $1 AND empresa_id = $2`,
     INSERT_PRODUCTO: `
         INSERT INTO productos
@@ -80,11 +79,6 @@ export default class ProductoRepository {
     async findById(id, empresa_id) {
         const result = await pool.query(QUERIES.SELECT_BY_ID, [id, empresa_id]);
         return result.rows[0];
-    }
-
-    async exitsProducto(id) {
-        const result = await pool.query(QUERIES.EXISTS_PRODUCTO, [id]);
-        return result.rowCount > 0;
     }
 
     // Dónde se usa un producto: recetas que lo llevan y mapeos POS que lo referencian.

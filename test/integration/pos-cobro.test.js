@@ -149,6 +149,8 @@ describe("Integración HTTP — POS: cobro, pagos, inventario y cierre de mesa",
 
     it("cobro mixto con propina y cambio: cierra la cuenta, descuenta el inventario y encola el ticket", async () => {
         const id = est.pendiente;
+        // El nombre de la cuenta viaja al ticket.
+        assert.equal((await req("PATCH", api(`/cuentas/${id}`), { token: tokMesero, body: { nombre_cliente: "Fam. Hernández" } })).status, 200);
         const r = await cobrar(id, [
             { metodo: "TARJETA", monto: 100, propina: 10, referencia: "AUT-123" },
             { metodo: "EFECTIVO", monto: 75, recibido: 100 },
@@ -178,13 +180,14 @@ describe("Integración HTTP — POS: cobro, pagos, inventario y cierre de mesa",
         assert.equal(cuenta.fecha_negocio, turno.fecha_negocio);
         assert.ok(cuenta.cerrada_at);
 
-        // Ticket: sin impresora configurada queda en ERROR (no bloquea el cobro) y abre el cajón por el efectivo.
-        assert.equal(ticket.impresion_estado, "ERROR");
+        // Ticket: sin impresora configurada queda en SIN_IMPRESORA (no bloquea el cobro) y abre el cajón por el efectivo.
+        assert.equal(ticket.impresion_estado, "SIN_IMPRESORA");
         const payload = (await pool.query("SELECT payload FROM pos_impresiones WHERE id = $1", [ticket.impresion_id])).rows[0].payload;
         assert.equal(payload.tipo, "TICKET");
         assert.equal(payload.abrir_cajon, true);
         assert.equal(payload.cambio, 25);
         assert.equal(payload.cajero, "CB-caj");
+        assert.equal(payload.cliente, "Fam. Hernández");
         assert.deepEqual(payload.items.map((i) => [i.cantidad, i.nombre, i.importe]), [[1, "Latte", 55], [1, "Baguette", 120]]);
         est.pagada = id;
     });

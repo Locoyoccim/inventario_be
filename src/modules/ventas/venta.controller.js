@@ -24,6 +24,14 @@ export default class VentaController {
         res.json({ success: true, data: dias });
     });
 
+    listarDiasPos = asyncHandler(async (req, res) => {
+        const { empresa_id } = req.params;
+        if (!(await this.ventaService.existsEmpresa(empresa_id)))
+            throw ApiError.notFound("Empresa no encontrada");
+        const dias = await this.ventaService.listarDiasPos(empresa_id, { desde: req.query.desde || null, hasta: req.query.hasta || null });
+        res.json({ success: true, data: dias });
+    });
+
     previsualizar = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         if (!(await this.ventaService.existsEmpresa(empresa_id)))

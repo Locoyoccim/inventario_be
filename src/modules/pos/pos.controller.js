@@ -43,7 +43,11 @@ export default class PosController {
         ok(res, await this.ajustes.descuentoCuenta(req.params.empresa_id, req.params.id, req.body, exigir(await this.#autorizacion(req)))));
     anular = asyncHandler(async (req, res) =>
         ok(res, await this.ajustes.anular(req.params.empresa_id, req.params.id, req.body, exigir(await this.#autorizacion(req)))));
+    corregirPago = asyncHandler(async (req, res) =>
+        ok(res, await this.ajustes.corregirPago(req.params.empresa_id, req.params.id, req.body, exigir(await this.#autorizacion(req)))));
     enviar = asyncHandler(async (req, res) => ok(res, await this.cuentas.enviar(req.params.empresa_id, req.params.id, req.user.id)));
+    descartarCuenta = asyncHandler(async (req, res) => ok(res, await this.cuentas.descartar(req.params.empresa_id, req.params.id)));
+    actualizarCuenta = asyncHandler(async (req, res) => ok(res, await this.cuentas.actualizar(req.params.empresa_id, req.params.id, req.body)));
     cambiarMesa = asyncHandler(async (req, res) => ok(res, await this.cuentas.cambiarMesa(req.params.empresa_id, req.params.id, req.body.mesa_id)));
     juntar = asyncHandler(async (req, res) => ok(res, await this.cuentas.juntar(req.params.empresa_id, Number(req.params.id), req.body.destino_id)));
     dividir = asyncHandler(async (req, res) => ok(res, await this.cuentas.dividir(req.params.empresa_id, req.params.id, req.body.partes, req.user.id)));
@@ -77,10 +81,23 @@ export default class PosController {
     rotarToken = asyncHandler(async (req, res) => ok(res, await this.impresion.rotarToken(req.params.empresa_id, req.params.id)));
     estadoImpresion = asyncHandler(async (req, res) => ok(res, await this.impresion.estado(req.params.empresa_id)));
     cola = asyncHandler(async (req, res) => {
-        const estado = ["PENDIENTE", "IMPRIMIENDO", "IMPRESO", "ERROR"].includes(req.query.estado) ? req.query.estado : null;
+        const estado = ["PENDIENTE", "IMPRIMIENDO", "IMPRESO", "ERROR", "SIN_IMPRESORA"].includes(req.query.estado) ? req.query.estado : null;
         ok(res, await this.impresion.cola(req.params.empresa_id, { estado }));
     });
     reimprimir = asyncHandler(async (req, res) => ok(res, await this.impresion.reimprimir(req.params.empresa_id, req.params.id)));
+    // El corte lleva cifras de caja: solo quien puede cobrar lo ve o lo imprime desde el navegador.
+    async #jobPermitido(req) {
+        const job = await this.impresion.obtener(req.params.empresa_id, req.params.id);
+        const u = req.user;
+        if (job.tipo === "CORTE" && !(u?.is_owner || u?.is_admin || u?.permisos?.includes("pos.cobrar")))
+            throw ApiError.forbidden("Tu rol no tiene permiso para esta acción");
+        return job;
+    }
+    impresion_ = asyncHandler(async (req, res) => ok(res, await this.#jobPermitido(req)));
+    impresoNavegador = asyncHandler(async (req, res) => {
+        await this.#jobPermitido(req);
+        ok(res, await this.impresion.marcarImpresoNavegador(req.params.empresa_id, req.params.id));
+    });
 
     // ---- Lado del agente (autenticado por token del agente, no por cookie de usuario) ----
     agentePendientes = asyncHandler(async (req, res) => {

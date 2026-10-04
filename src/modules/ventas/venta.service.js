@@ -25,6 +25,10 @@ export default class VentaService {
         return await this.ventaRepository.listarDias(empresa_id, filtros);
     }
 
+    async listarDiasPos(empresa_id, filtros) {
+        return await this.ventaRepository.listarDiasPos(empresa_id, filtros);
+    }
+
     // Previsualiza sin guardar. Acepta líneas estructuradas o CSV crudo de Toteat.
     async previsualizar(empresa_id, { lineas, csv }) {
         let filas = lineas;

@@ -17,6 +17,8 @@ export function armarResumen({
     esperadoFilasSinPrecio = 0,
     ingresosComparables = 0,
     diasSinIngreso = [],
+    diasTurnoAbierto = [],
+    posSinCorte = { cuentas: 0, total: 0 },
     serieIngresos = [],
     serieCompras = [],
     serieGastos = [],
@@ -31,9 +33,15 @@ export function armarResumen({
     const gastosTotal = r2(compras + gastosExtra);
     const costoVentas = r2(Number(ventaCosto) - Number(devolucionCosto));
     const merma = r2(mermaCosto);
+    // Ventas del POS ya cobradas en una caja abierta: su costo de inventario ya entró (al cobrar) pero el
+    // ingreso solo se registra al cerrar la caja. Se suman a las ventas para que el costo de alimentos y el
+    // resultado comparen lo mismo con lo mismo; el flujo de efectivo NO las cuenta hasta el corte.
+    const sinCorteTotal = r2(posSinCorte?.total);
+    const sinCorteNeto = preciosIncluyenIva && ivaFactor > 0 ? r2(sinCorteTotal / ivaFactor) : sinCorteTotal;
+    const ventasNeto = r2(ingresosNeto + sinCorteNeto);
     const flujo = r2(ingresosTotal - gastosTotal);
-    const resultadoOperacion = r2(ingresosNeto - costoVentas - gastosExtra);
-    const foodCostPct = ingresosNeto > 0 ? r2((costoVentas / ingresosNeto) * 100) : null;
+    const resultadoOperacion = r2(ventasNeto - costoVentas - gastosExtra);
+    const foodCostPct = ventasNeto > 0 ? r2((costoVentas / ventasNeto) * 100) : null;
 
     const mapa = new Map();
     const put = (arr, key) => {
@@ -76,6 +84,10 @@ export function armarResumen({
         esperado_filas_sin_precio: esperadoFilasSinPrecio,
         ingresos_comparables: ingresoEsperado == null ? null : r2(ingresosComparables),
         dias_sin_ingreso: diasSinIngreso,
+        // Ventas cobradas en el POS cuyo turno sigue abierto: aún no pasan a ingresos.
+        dias_turno_abierto: diasTurnoAbierto,
+        // Cobrado en el POS y aún sin cortar: incluido en food_cost_pct y resultado_operacion, no en ingresos/flujo.
+        ventas_pos_sin_corte: { cuentas: Number(posSinCorte?.cuentas) || 0, total: sinCorteTotal, neto: sinCorteNeto },
         serie,
     };
 }

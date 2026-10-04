@@ -58,6 +58,7 @@ const apiLimiter = limiter(300, "Demasiadas solicitudes. Intenta de nuevo en un 
 if (process.env.NODE_ENV !== "test") {
     app.use("/api/auth/login", authLimiter);
     app.use("/api/auth/setup", authLimiter);
+    app.use("/api/auth/invitacion", authLimiter);
     app.use("/api", apiLimiter);
 }
 

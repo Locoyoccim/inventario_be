@@ -1,6 +1,6 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
-import { calcularCorte, diferenciaEfectivo, payloadCorte } from "./pos.logic.js";
+import { aplicarCorrecciones, calcularCorte, diferenciaEfectivo, payloadCorte } from "./pos.logic.js";
 
 const Q = {
     TURNO: `SELECT t.id, t.empresa_id, t.usuario_id, u.nombre AS cajero, t.fecha_negocio, t.fondo_inicial, t.abierto_at, t.cerrado_at, t.estado,
@@ -28,10 +28,16 @@ const Q = {
                WHERE c.empresa_id = $1 AND c.estado = 'ABIERTA'
                  AND EXISTS (SELECT 1 FROM pos_cuenta_items i WHERE i.cuenta_id = c.id AND i.estado <> 'CANCELADO')`,
     OTROS_TURNOS: `SELECT COUNT(*)::int AS n FROM pos_turnos WHERE empresa_id = $1 AND estado = 'ABIERTO' AND id <> $2`,
+    CORRECCIONES: `SELECT k.id, k.cuenta_id, c.folio, k.motivo, k.turno_cerrado, k.antes, k.despues, k.delta_efectivo, k.created_at,
+                          ua.nombre AS autorizado_por, us.nombre AS solicitado_por
+                   FROM pos_correcciones_pago k JOIN pos_cuentas c ON c.id = k.cuenta_id
+                   JOIN usuarios ua ON ua.id = k.autorizado_por LEFT JOIN usuarios us ON us.id = k.solicitado_por
+                   WHERE k.turno_id = $1 ORDER BY k.id`,
     NEGOCIO: `SELECT nombre FROM empresas WHERE id = $1`,
     IMPRESORA_TICKETS: `SELECT id FROM impresoras WHERE empresa_id = $1 AND es_ticket AND activo ORDER BY id LIMIT 1`,
 };
 
+const aCentavos = (n) => Math.round(Number(n) * 100);
 const numerico = (t) => ({ ...t, fondo_inicial: Number(t.fondo_inicial) });
 
 export default class PosTurnosRepository {
@@ -74,13 +80,21 @@ export default class PosTurnosRepository {
         const r = await pool.query(
             `SELECT t.id, t.usuario_id, u.nombre AS cajero, t.fecha_negocio, t.fondo_inicial, t.abierto_at, t.cerrado_at, t.estado,
                     t.efectivo_esperado, t.efectivo_contado, t.diferencia,
-                    COALESCE((SELECT SUM(p.monto) FROM pos_pagos p WHERE p.turno_id = t.id AND NOT p.anulado), 0) AS ventas
+                    COALESCE((SELECT SUM(p.monto) FROM pos_pagos p WHERE p.turno_id = t.id AND NOT p.anulado), 0) AS ventas,
+                    (SELECT COUNT(*)::int FROM pos_correcciones_pago k WHERE k.turno_id = t.id AND k.turno_cerrado) AS correcciones_posteriores,
+                    COALESCE((SELECT SUM(k.delta_efectivo) FROM pos_correcciones_pago k WHERE k.turno_id = t.id AND k.turno_cerrado), 0) AS ajuste_efectivo
              FROM pos_turnos t JOIN usuarios u ON u.id = t.usuario_id
              WHERE t.empresa_id = $1 AND ($2::boolean OR t.usuario_id = $3)
              ORDER BY t.id DESC LIMIT $4`,
             [empresa_id, Boolean(usuario.puedeAutorizar), usuario.id, limit],
         );
-        return r.rows;
+        // Con correcciones de pago hechas después del cierre, la diferencia vigente es contado − esperado ajustado
+        // (la columna `diferencia` sigue siendo la del cierre original).
+        return r.rows.map(({ ajuste_efectivo, ...t }) => {
+            if (t.estado !== "CERRADO" || t.correcciones_posteriores === 0) return { ...t, diferencia_ajustada: null };
+            const esperado = aCentavos(t.efectivo_esperado) + aCentavos(ajuste_efectivo);
+            return { ...t, diferencia_ajustada: (aCentavos(t.efectivo_contado) - esperado) / 100 };
+        });
     }
 
     // Corte del turno: abierto es un corte parcial ("corte X"); cerrado, el definitivo.
@@ -90,17 +104,23 @@ export default class PosTurnosRepository {
         this.#verificarAcceso(turno, usuario);
         const t = numerico(turno);
         const hasta = turno.cerrado_at ?? new Date();
-        const [corte, ventas, anuladas, autorizaciones, abiertas, otros] = await Promise.all([
+        const [corte, ventas, anuladas, autorizaciones, abiertas, otros, correccionesRes] = await Promise.all([
             this.#resumen(pool, empresa_id, t, t.propinas_entregadas),
             pool.query(Q.VENTAS, [turno_id]),
             pool.query(Q.ANULADAS, [turno_id]),
             pool.query(Q.AUTORIZACIONES, [empresa_id, turno.abierto_at, hasta]),
             pool.query(Q.ABIERTAS, [empresa_id]),
             pool.query(Q.OTROS_TURNOS, [empresa_id, turno_id]),
+            pool.query(Q.CORRECCIONES, [turno_id]),
         ]);
+        const correcciones = correccionesRes.rows.map((c) => ({ ...c, delta_efectivo: Number(c.delta_efectivo) }));
+        // Un corte cerrado no cambia; lo corregido después del cierre se ve aparte, ya sumado.
+        const ajustado = t.estado === "CERRADO" ? aplicarCorrecciones(corte, t.efectivo_contado === null ? null : Number(t.efectivo_contado), correcciones) : null;
         return {
             turno: { ...t, resumen: undefined, propinas_entregadas: Number(t.propinas_entregadas) },
             corte,
+            correcciones,
+            ajustado,
             ventas: ventas.rows,
             anuladas: anuladas.rows,
             autorizaciones: autorizaciones.rows,
@@ -158,23 +178,39 @@ export default class PosTurnosRepository {
         if (!turno) throw ApiError.notFound("Turno no encontrado");
         this.#verificarAcceso(turno, usuario);
         const corte = await this.#resumen(pool, empresa_id, numerico(turno), turno.propinas_entregadas);
-        return this.#encolarCorte(pool, empresa_id, turno, corte);
+        // Cerrado con correcciones de pago posteriores: se imprime ya ajustado y se aclara cómo se había cerrado.
+        let ajuste = null;
+        if (turno.estado === "CERRADO") {
+            const correcciones = (await pool.query(Q.CORRECCIONES, [turno_id])).rows;
+            const ajustado = aplicarCorrecciones(corte, Number(turno.efectivo_contado), correcciones);
+            if (ajustado) {
+                ajuste = {
+                    correcciones: correcciones.filter((c) => c.turno_cerrado).length,
+                    esperado_original: Number(turno.efectivo_esperado),
+                    diferencia_original: Number(turno.diferencia),
+                    corte: ajustado.corte,
+                    diferencia: ajustado.diferencia,
+                };
+            }
+        }
+        return this.#encolarCorte(pool, empresa_id, turno, ajuste ? ajuste.corte : corte, ajuste);
     }
 
-    async #encolarCorte(db, empresa_id, turno, corte) {
+    async #encolarCorte(db, empresa_id, turno, corte, ajuste = null) {
         const negocio = (await db.query(Q.NEGOCIO, [empresa_id])).rows[0]?.nombre ?? "";
         const cerrado = turno.estado === "CERRADO";
         const payload = payloadCorte({
             negocio, turno, cajero: turno.cajero, corte,
             contado: cerrado ? Number(turno.efectivo_contado) : null,
-            diferencia: cerrado ? Number(turno.diferencia) : null,
+            diferencia: cerrado ? (ajuste ? ajuste.diferencia : Number(turno.diferencia)) : null,
             nota: turno.nota_cierre,
+            ajuste: ajuste ? { correcciones: ajuste.correcciones, esperado_original: ajuste.esperado_original, diferencia_original: ajuste.diferencia_original } : null,
         });
         const impresora = (await db.query(Q.IMPRESORA_TICKETS, [empresa_id])).rows[0];
         const r = await db.query(
             `INSERT INTO pos_impresiones (empresa_id, tipo, referencia_id, impresora_id, estado, error, payload)
              VALUES ($1,'CORTE',$2,$3,$4,$5,$6) RETURNING id, estado`,
-            [empresa_id, turno.id, impresora?.id ?? null, impresora ? "PENDIENTE" : "ERROR", impresora ? null : "Sin impresora configurada para tickets", JSON.stringify(payload)],
+            [empresa_id, turno.id, impresora?.id ?? null, impresora ? "PENDIENTE" : "SIN_IMPRESORA", impresora ? null : "Sin impresora configurada para tickets", JSON.stringify(payload)],
         );
         return { impresion_id: r.rows[0].id, impresion_estado: r.rows[0].estado };
     }

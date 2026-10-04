@@ -200,6 +200,11 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
         assert.equal(c.corte.efectivo_esperado, 690);
         const re = await req("POST", api(`/turnos/${est.turno}/corte/imprimir`), { token: tokCajero });
         assert.equal(re.status, 201);
+        // El corte lleva cifras de caja: un mesero no puede verlo ni imprimirlo desde el navegador; el cajero sí.
+        const jid = re.json.data.impresion_id;
+        assert.equal((await req("GET", api(`/impresiones/${jid}`), { token: tokMesero })).status, 403);
+        assert.equal((await req("POST", api(`/impresiones/${jid}/impreso-navegador`), { token: tokMesero })).status, 403);
+        assert.equal((await req("GET", api(`/impresiones/${jid}`), { token: tokCajero })).json.data.payload.tipo, "CORTE");
     });
 
     it("la lista de turnos: el cajero ve los suyos y el supervisor todos", async () => {

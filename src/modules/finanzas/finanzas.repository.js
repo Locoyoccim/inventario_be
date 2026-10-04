@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
+import { usoPosDia } from "../pos/pos.dias.js";
 
 // UNION del libro (ingresos + gastos no anulados + compras). $1 = empresa_id.
 const LIBRO_UNION = `(
@@ -193,6 +194,13 @@ export default class FinanzasRepository {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
+            // El corte de caja del POS ya genera los ingresos de ese día: el cierre manual los duplicaría.
+            const uso = await usoPosDia(client, empresa_id, fecha);
+            if (uso.bloquea_cierre_manual) {
+                throw ApiError.conflict(
+                    `El POS tiene caja registrada el ${fecha}: sus ingresos salen del corte de caja. Para sumar algo que no pasó por el POS captura un ingreso individual.`,
+                );
+            }
             const ids = [];
             for (const l of lineas) {
                 const r = await client.query(
@@ -256,7 +264,7 @@ export default class FinanzasRepository {
     async resumenRaw(empresa_id, { desde, hasta, unit }) {
         const rango = [empresa_id, desde, hasta];
         const rangoUnit = [empresa_id, desde, hasta, unit];
-        const [cfgRes, ingMetodo, gastCat, comprasT, costos, esperado, sinIngreso, comparables, sIng, sCom, sGas, sCosto] = await Promise.all([
+        const [cfgRes, ingMetodo, gastCat, comprasT, costos, esperado, sinIngreso, comparables, sIng, sCom, sGas, sCosto, posEsperado, turnoAbierto, posSinCorte] = await Promise.all([
             pool.query("SELECT iva_pct, precios_incluyen_iva FROM empresas WHERE id=$1", [empresa_id]),
             pool.query("SELECT metodo_pago, SUM(monto)::numeric AS total FROM ingresos WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY metodo_pago ORDER BY metodo_pago", rango),
             pool.query("SELECT g.categoria_id, cg.nombre AS categoria, SUM(g.monto)::numeric AS total FROM gastos g JOIN categorias_gasto cg ON cg.id=g.categoria_id WHERE g.empresa_id=$1 AND g.fecha BETWEEN $2 AND $3 AND g.anulado=false GROUP BY g.categoria_id, cg.nombre ORDER BY cg.nombre", rango),
@@ -268,7 +276,7 @@ export default class FinanzasRepository {
                                       OR (m.tipo_movimiento='AJUSTE' AND m.stock_nuevo < m.stock_anterior)
                                  THEN m.cantidad*m.costo_unitario END),0) AS merma_costo
                 FROM movimientosinventario m JOIN productos p ON p.id=m.producto_id
-                WHERE p.empresa_id=$1 AND m.fecha::date BETWEEN $2 AND $3`, rango),
+                WHERE p.empresa_id=$1 AND fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1)) BETWEEN $2 AND $3`, rango),
             pool.query(`SELECT COUNT(d.id) AS filas,
                     COUNT(d.id) FILTER (WHERE d.precio_unitario IS NULL AND d.tipo IN ('RECETA','INSUMO')) AS filas_sin_precio,
                     COALESCE(SUM(d.cantidad*d.precio_unitario) FILTER (WHERE d.precio_unitario IS NOT NULL),0) AS esperado
@@ -280,8 +288,10 @@ export default class FinanzasRepository {
                 ORDER BY vd.fecha`, rango),
             pool.query(`SELECT COALESCE(SUM(i.monto),0) AS total FROM ingresos i
                 WHERE i.empresa_id=$1 AND i.anulado=false AND i.fecha BETWEEN $2 AND $3
-                  AND EXISTS (SELECT 1 FROM venta_diaria vd JOIN venta_diaria_detalle d ON d.venta_diaria_id=vd.id
-                              WHERE vd.empresa_id=$1 AND vd.fecha=i.fecha)`, rango),
+                  AND (EXISTS (SELECT 1 FROM venta_diaria vd JOIN venta_diaria_detalle d ON d.venta_diaria_id=vd.id
+                               WHERE vd.empresa_id=$1 AND vd.fecha=i.fecha)
+                       OR EXISTS (SELECT 1 FROM pos_cuentas c
+                                  WHERE c.empresa_id=$1 AND c.fecha_negocio=i.fecha AND c.estado='PAGADA'))`, rango),
             pool.query("SELECT to_char(date_trunc($4, fecha),'YYYY-MM-DD') AS periodo, SUM(monto)::numeric AS total FROM ingresos WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY 1", rangoUnit),
             pool.query("SELECT to_char(date_trunc($4, fecha),'YYYY-MM-DD') AS periodo, SUM(total)::numeric AS total FROM compra WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY 1", rangoUnit),
             pool.query("SELECT to_char(date_trunc($4, fecha),'YYYY-MM-DD') AS periodo, SUM(monto)::numeric AS total FROM gastos WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY 1", rangoUnit),
@@ -289,7 +299,19 @@ export default class FinanzasRepository {
                     COALESCE(SUM(CASE WHEN m.tipo_movimiento='VENTA' THEN m.cantidad*m.costo_unitario
                                       WHEN m.tipo_movimiento='DEVOLUCION' AND m.referencia_tipo IN ('VENTA_DIARIA','POS_CUENTA') THEN -m.cantidad*m.costo_unitario END),0) AS total
                 FROM movimientosinventario m JOIN productos p ON p.id=m.producto_id
-                WHERE p.empresa_id=$1 AND m.fecha::date BETWEEN $2 AND $3 GROUP BY 1`, rangoUnit),
+                WHERE p.empresa_id=$1 AND fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1)) BETWEEN $2 AND $3 GROUP BY 1`, rangoUnit),
+            // Lo cobrado en el POS (total con descuentos, sin propina): lo que el corte llevará a ingresos.
+            pool.query(`SELECT COUNT(*)::int AS cuentas, COALESCE(SUM(total),0) AS esperado
+                FROM pos_cuentas WHERE empresa_id=$1 AND estado='PAGADA' AND fecha_negocio BETWEEN $2 AND $3`, rango),
+            // Días con ventas cobradas en una caja que aún no se cierra: todavía no entran a ingresos.
+            pool.query(`SELECT DISTINCT c.fecha_negocio AS fecha FROM pos_cuentas c JOIN pos_turnos t ON t.id=c.turno_id
+                WHERE c.empresa_id=$1 AND c.estado='PAGADA' AND c.total > 0 AND t.estado='ABIERTO'
+                  AND c.fecha_negocio BETWEEN $2 AND $3 ORDER BY 1`, rango),
+            // Importe de esas ventas (sin propina): el costo de lo vendido ya cuenta desde el cobro, el ingreso no.
+            pool.query(`SELECT COUNT(*)::int AS cuentas, COALESCE(SUM(c.total),0) AS total
+                FROM pos_cuentas c JOIN pos_turnos t ON t.id=c.turno_id
+                WHERE c.empresa_id=$1 AND c.estado='PAGADA' AND c.total > 0 AND t.estado='ABIERTO'
+                  AND c.fecha_negocio BETWEEN $2 AND $3`, rango),
         ]);
 
         const c = costos.rows[0];
@@ -304,11 +326,15 @@ export default class FinanzasRepository {
             ventaCosto: c.venta_costo,
             devolucionCosto: c.devol_costo,
             mermaCosto: c.merma_costo,
-            ingresoEsperado: Number(esp.filas) === 0 ? null : esp.esperado,
+            ingresoEsperado: Number(esp.filas) === 0 && posEsperado.rows[0].cuentas === 0
+                ? null
+                : Number(esp.esperado) + Number(posEsperado.rows[0].esperado),
             // Renglones RECETA/INSUMO vendidos sin precio capturado: el esperado no los cuenta.
             esperadoFilasSinPrecio: Number(esp.filas_sin_precio) || 0,
             ingresosComparables: comparables.rows[0].total,
             diasSinIngreso: sinIngreso.rows.map((r) => String(r.fecha).slice(0, 10)),
+            diasTurnoAbierto: turnoAbierto.rows.map((r) => String(r.fecha).slice(0, 10)),
+            posSinCorte: { cuentas: posSinCorte.rows[0].cuentas, total: posSinCorte.rows[0].total },
             serieIngresos: sIng.rows,
             serieCompras: sCom.rows,
             serieGastos: sGas.rows,

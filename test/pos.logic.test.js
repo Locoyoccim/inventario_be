@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agruparPorArea, calcularCorte, descuentoDeRenglon, repartirDescuento, calcularTotales, diferenciaEfectivo, importeItem, normalizarPagos, payloadComanda, payloadPrecuenta, payloadTicket } from "../src/modules/pos/pos.logic.js";
+import { agruparPorArea, aplicarCorrecciones, calcularCorte, diferenciaPagos, efectivoDePagos, mismosPagos, descuentoDeRenglon, repartirDescuento, calcularTotales, diferenciaEfectivo, importeItem, normalizarPagos, payloadComanda, payloadPrecuenta, payloadTicket } from "../src/modules/pos/pos.logic.js";
 
 const item = (extra = {}) => ({ precio_unitario: 100, cantidad: 1, iva_pct: 16, precio_incluye_iva: true, estado: "ENVIADO", descuento: 0, cortesia: false, ...extra });
 
@@ -58,6 +58,19 @@ test("pos: la comanda lleva mesa, mesero, número y notas, sin precios", () => {
     assert.equal(p.comanda, 2);
     assert.deepEqual(p.items, [{ cantidad: 2, nombre: "Latte", notas: "sin azúcar" }]);
     assert.equal("precio" in p.items[0], false);
+});
+
+test("pos: el nombre de la cuenta de mesa va en comanda, precuenta y ticket; en las de llevar ya va en `llevar`", () => {
+    const cuenta = { folio: 3, tipo: "MESA", personas: 4, nombre_cliente: "Fam. Hernández" };
+    const base = { negocio: "Café Aroma", cuenta, mesa: { nombre: "Mesa 1" }, mesero: "Ana", items: [item({ nombre: "Latte", precio_unitario: 75 })] };
+    assert.equal(payloadComanda({ ...base, numero: 1, area: { nombre: "Barra" } }).cliente, "Fam. Hernández");
+    assert.equal(payloadPrecuenta(base).cliente, "Fam. Hernández");
+    assert.equal(payloadTicket({ ...base, cajero: "Luis", pagos: [], propina: 0, cambio: 0 }).cliente, "Fam. Hernández");
+    assert.equal(payloadPrecuenta({ ...base, cuenta: { ...cuenta, nombre_cliente: "" } }).cliente, null, "vacío = sin nombre");
+    assert.equal(payloadPrecuenta({ ...base, cuenta: { ...cuenta, nombre_cliente: null } }).cliente, null);
+    const llevar = payloadPrecuenta({ ...base, cuenta: { folio: 4, tipo: "LLEVAR", nombre_cliente: "Luis", personas: 1 }, mesa: null });
+    assert.equal(llevar.llevar, "Luis");
+    assert.equal(llevar.cliente, null);
 });
 
 test("pos: la precuenta excluye cancelados y trae totales", () => {
@@ -214,4 +227,33 @@ test("corte: las anulaciones restan ventas y el efectivo devuelto sale del cajó
     assert.equal(c.efectivo_cobrado, 180);
     assert.equal(c.devoluciones_efectivo, 80);
     assert.equal(c.efectivo_esperado, 600, "500 + 180 - 80");
+});
+
+test("correcciones: efectivo, igualdad y diferencia entre dos juegos de pagos", () => {
+    const antes = [{ metodo: "EFECTIVO", monto: 175, propina: 25, referencia: null }];
+    const despues = [{ metodo: "TARJETA", monto: 100, propina: 25 }, { metodo: "TRANSFERENCIA", monto: 75, propina: 0 }];
+    assert.equal(efectivoDePagos(antes), 200, "monto + propina en efectivo");
+    assert.equal(efectivoDePagos(despues), 0);
+    assert.equal(mismosPagos(antes, [{ metodo: "EFECTIVO", monto: "175.00", propina: 25 }]), true, "mismo reparto aunque cambie el formato");
+    assert.equal(mismosPagos(despues, [...despues].reverse()), true, "el orden no importa");
+    assert.equal(mismosPagos(antes, [{ metodo: "EFECTIVO", monto: 175, propina: 25, referencia: "A1" }]), false, "cambiar la referencia es una corrección");
+    const d = diferenciaPagos(antes, despues);
+    assert.equal(d.efectivo, -200);
+    assert.deepEqual(d.por_metodo.map((m) => [m.metodo, m.cuentas, m.monto, m.propina]), [["EFECTIVO", -1, -175, -25], ["TARJETA", 1, 100, 25], ["TRANSFERENCIA", 1, 75, 0]]);
+});
+
+test("correcciones: un corte cerrado suma solo lo corregido después del cierre y recalcula la diferencia", () => {
+    const corte = calcularCorte({ fondo: 500, filas: [{ metodo: "EFECTIVO", cuentas: 1, monto: 120, propina: 0 }, { metodo: "TARJETA", cuentas: 1, monto: 55, propina: 0 }] });
+    assert.equal(corte.efectivo_esperado, 620);
+    const pagoEf = [{ metodo: "EFECTIVO", monto: 120, propina: 0 }];
+    const pagoTj = [{ metodo: "TARJETA", monto: 120, propina: 0 }];
+    assert.equal(aplicarCorrecciones(corte, 500, []), null);
+    assert.equal(aplicarCorrecciones(corte, 500, [{ turno_cerrado: false, antes: pagoEf, despues: pagoTj }]), null, "lo corregido con el turno abierto ya va en el cierre");
+    const r = aplicarCorrecciones(corte, 500, [{ turno_cerrado: true, antes: pagoEf, despues: pagoTj }]);
+    assert.equal(r.corte.efectivo_esperado, 500);
+    assert.equal(r.corte.efectivo_cobrado, 0);
+    assert.equal(r.diferencia, 0, "contado 500 contra esperado 500");
+    assert.equal(r.corte.ventas, 175, "el total vendido no cambia");
+    assert.deepEqual(r.corte.por_metodo.map((m) => [m.metodo, m.cuentas, m.monto]), [["EFECTIVO", 0, 0], ["TARJETA", 2, 175], ["TRANSFERENCIA", 0, 0]]);
+    assert.equal(corte.efectivo_esperado, 620, "el corte original no se modifica");
 });

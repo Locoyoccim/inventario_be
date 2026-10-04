@@ -1,11 +1,22 @@
 import { asyncHandler } from "../../middlewares/asyncHandler.js";
 import ApiError from "../../utils/ApiError.js";
+import { aceptarInvitacion, consultarInvitacion } from "./invitacion.service.js";
 import { AUTH_COOKIE, authCookieOptions, clearAuthCookieOptions } from "../../utils/authCookie.js";
 
 export default class AuthController {
     constructor(authService) {
         this.authService = authService;
     }
+
+    // Activación de cuenta por enlace de invitación (pública: la autoriza el token de un solo uso).
+    verInvitacion = asyncHandler(async (req, res) => {
+        res.json({ success: true, data: await consultarInvitacion(req.params.token) });
+    });
+
+    aceptarInvitacion = asyncHandler(async (req, res) => {
+        const data = await aceptarInvitacion(req.body.token, req.body.password);
+        res.json({ success: true, data });
+    });
 
     setup = asyncHandler(async (req, res) => {
         // Si SETUP_TOKEN está definido en el entorno, exígelo por header (blindaje en producción)

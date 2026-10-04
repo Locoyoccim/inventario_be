@@ -4,6 +4,7 @@ import ApiError from "../../utils/ApiError.js";
 import { explotarRenglones } from "../../utils/consumo.js";
 import { resolverPreparaciones, armarPreparaciones } from "../../utils/preparaciones.js";
 import { aplicarConsumo, revertirPorReferencia } from "../movimientos/aplicarConsumo.js";
+import { usoPosDia } from "../pos/pos.dias.js";
 import { QUERIES } from "./venta.queries.js";
 
 export { resolverPreparaciones };
@@ -163,6 +164,14 @@ export default class VentaRepository {
         try {
             await client.query("BEGIN");
 
+            // Si el POS cobró (o cobrará) ese día, el CSV lo contaría dos veces: ingresos e inventario.
+            const uso = await usoPosDia(client, empresa_id, fecha);
+            if (uso.bloquea_importacion) {
+                throw ApiError.conflict(
+                    `El POS ya registra ventas del ${fecha}${uso.pagadas > 0 ? ` (${uso.pagadas} cuenta${uso.pagadas === 1 ? "" : "s"} cobrada${uso.pagadas === 1 ? "" : "s"})` : " (hay una caja abierta)"}. Importar el CSV de Toteat duplicaría esas ventas y su descuento de inventario.`,
+                );
+            }
+
             const venta = await this.#insertarEncabezadoYDetalle(
                 client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, productosPrecioRes, total_lineas, total_unidades,
             );
@@ -211,6 +220,26 @@ export default class VentaRepository {
     async listarDias(empresa_id, { desde = null, hasta = null } = {}) {
         const res = await pool.query(QUERIES.LIST_DIAS, [empresa_id, desde, hasta]);
         return res.rows;
+    }
+
+    // Días que cubre el POS propio (cuentas cobradas o caja abierta): el CSV ya no aplica a ellos.
+    async listarDiasPos(empresa_id, { desde = null, hasta = null } = {}) {
+        const res = await pool.query(
+            `SELECT d.fecha,
+                    COALESCE(c.cuentas, 0)::int AS cuentas,
+                    COALESCE(c.total, 0) AS total,
+                    COALESCE(t.abiertos, 0) > 0 AS caja_abierta
+             FROM (SELECT fecha_negocio AS fecha FROM pos_cuentas WHERE empresa_id = $1 AND estado = 'PAGADA'
+                   UNION SELECT fecha_negocio FROM pos_turnos WHERE empresa_id = $1 AND estado = 'ABIERTO') d
+             LEFT JOIN (SELECT fecha_negocio, COUNT(*) AS cuentas, SUM(total) AS total FROM pos_cuentas
+                        WHERE empresa_id = $1 AND estado = 'PAGADA' GROUP BY 1) c ON c.fecha_negocio = d.fecha
+             LEFT JOIN (SELECT fecha_negocio, COUNT(*) AS abiertos FROM pos_turnos
+                        WHERE empresa_id = $1 AND estado = 'ABIERTO' GROUP BY 1) t ON t.fecha_negocio = d.fecha
+             WHERE ($2::date IS NULL OR d.fecha >= $2::date) AND ($3::date IS NULL OR d.fecha <= $3::date)
+             ORDER BY d.fecha DESC`,
+            [empresa_id, desde, hasta],
+        );
+        return res.rows.map((r) => ({ fecha: String(r.fecha).slice(0, 10), cuentas: r.cuentas, total: Number(r.total), caja_abierta: r.caja_abierta }));
     }
 
     // Previsualiza el efecto de un mix de ventas SIN escribir nada (mapeo + consumo + auto-producción).

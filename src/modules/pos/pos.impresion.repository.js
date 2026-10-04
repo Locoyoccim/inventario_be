@@ -123,7 +123,8 @@ export default class PosImpresionRepository {
             ),
             pool.query(
                 `SELECT COUNT(*) FILTER (WHERE estado IN ('PENDIENTE','IMPRIMIENDO'))::int AS pendientes,
-                        COUNT(*) FILTER (WHERE estado = 'ERROR' AND created_at > now() - interval '1 day')::int AS errores
+                        COUNT(*) FILTER (WHERE estado = 'ERROR' AND created_at > now() - interval '1 day')::int AS errores,
+                        COUNT(*) FILTER (WHERE estado = 'SIN_IMPRESORA' AND created_at > now() - interval '1 day')::int AS sin_impresora
                  FROM pos_impresiones WHERE empresa_id = $1`,
                 [empresa_id],
             ),
@@ -139,6 +140,25 @@ export default class PosImpresionRepository {
              WHERE p.empresa_id = $1 AND ($2::text IS NULL OR p.estado = $2) ORDER BY p.id DESC LIMIT $3`,
             [empresa_id, estado, limit],
         )).rows;
+    }
+
+    // Un trabajo con su contenido, para dibujarlo e imprimirlo desde el navegador (sin impresora/agente).
+    async obtener(empresa_id, id) {
+        const r = await pool.query("SELECT id, tipo, estado, payload FROM pos_impresiones WHERE id = $1 AND empresa_id = $2", [id, empresa_id]);
+        if (!r.rows[0]) throw ApiError.notFound("Trabajo de impresión no encontrado");
+        return r.rows[0];
+    }
+
+    // El negocio lo imprimió desde el navegador: se cierra el trabajo para que no quede pendiente.
+    // Solo los que no tienen impresora (o fallaron); uno en cola lo imprimirá el agente.
+    async marcarImpresoNavegador(empresa_id, id) {
+        const r = await pool.query(
+            `UPDATE pos_impresiones SET estado = 'IMPRESO', impreso_at = now(), error = 'Impreso desde el navegador'
+             WHERE id = $1 AND empresa_id = $2 AND estado IN ('SIN_IMPRESORA', 'ERROR') RETURNING id, estado`,
+            [id, empresa_id],
+        );
+        if (!r.rows[0]) throw ApiError.conflict("Este trabajo no se puede marcar como impreso (ya se imprimió o está en la cola del agente)");
+        return r.rows[0];
     }
 
     // Vuelve a encolar un trabajo (p. ej. tras configurar la impresora que faltaba).
@@ -158,7 +178,7 @@ export default class PosImpresionRepository {
         }
         const r = await pool.query(
             `UPDATE pos_impresiones SET estado = 'PENDIENTE', impresora_id = $3, intentos = 0, error = NULL, bloqueado_hasta = NULL, impreso_at = NULL,
-                    reimpresiones = reimpresiones + CASE WHEN estado = 'ERROR' AND impreso_at IS NULL THEN 0 ELSE 1 END
+                    reimpresiones = reimpresiones + CASE WHEN estado IN ('ERROR', 'SIN_IMPRESORA') AND impreso_at IS NULL THEN 0 ELSE 1 END
              WHERE id = $1 AND empresa_id = $2 RETURNING id, estado`,
             [id, empresa_id, impresora.id],
         );

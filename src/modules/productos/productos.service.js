@@ -15,10 +15,6 @@ export default class ProductoService {
         return await this.productoRepository.createProducto(data, empresa_id);
     }
 
-    async existsProducto(id) {
-        return await this.productoRepository.exitsProducto(id);
-    }
-
     async updateProducto(id, data, empresa_id) {
         return await this.productoRepository.updateProducto(id, data, empresa_id);
     }

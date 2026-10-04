@@ -1,5 +1,6 @@
 import { calcularPreview, enriquecerReceta } from "../../utils/costeo.js";
-import { hoyISO, restarDias } from "../../utils/fecha.js";
+import { restarDias } from "../../utils/fecha.js";
+import { hoyEmpresa } from "../../utils/zonaHoraria.js";
 import { ventasRecetaQuerySchema } from "./receta.schema.js";
 import ApiError from "../../utils/ApiError.js";
 
@@ -54,7 +55,7 @@ export default class RecetaService {
 
     // Mezcla de ventas por receta + costo % ponderado (ingeniería de menú).
     async getVentasPorReceta(empresa_id, { desde, hasta }) {
-        const ayer = restarDias(hoyISO(), 1);
+        const ayer = restarDias(await hoyEmpresa(empresa_id), 1);
         const dDesde = desde || restarDias(ayer, 29); // por defecto, últimos 30 días hasta ayer
         const dHasta = hasta || ayer;
         const parsed = ventasRecetaQuerySchema.safeParse({ desde: dDesde, hasta: dHasta });
@@ -96,6 +97,7 @@ export default class RecetaService {
         return {
             periodo: { desde: dDesde, hasta: dHasta },
             dias_importados: raw.dias_importados,
+            dias_pos: raw.dias_pos,
             recetas,
             totales,
             sin_receta: raw.sin_receta,

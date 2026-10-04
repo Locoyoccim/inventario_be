@@ -6,7 +6,7 @@ import {
     areaCreateSchema, areaUpdateSchema, mesaCreateSchema, mesaUpdateSchema, asignarAreaSchema,
 } from "../modules/pos/posConfig.schema.js";
 import {
-    cuentaCreateSchema, itemsCreateSchema, itemUpdateSchema, motivoSchema, cancelarCuentaSchema, cambiarMesaSchema, juntarSchema, dividirSchema, cobroSchema, descuentoSchema, anularSchema,
+    cuentaCreateSchema, cuentaUpdateSchema, itemsCreateSchema, itemUpdateSchema, motivoSchema, cancelarCuentaSchema, cambiarMesaSchema, juntarSchema, dividirSchema, cobroSchema, corregirPagoSchema, descuentoSchema, anularSchema,
     turnoAbrirSchema, turnoCerrarSchema, impresoraCreateSchema, impresoraUpdateSchema, agenteCreateSchema, agenteUpdateSchema,
 } from "../modules/pos/pos.schema.js";
 
@@ -31,6 +31,7 @@ export default function registerPos(router) {
     router.get(`${b}/mesas`, ver, posConfigController.listarMesas);
     router.post(`${b}/mesas`, requireAdmin, validate(mesaCreateSchema), posConfigController.crearMesa);
     router.put(`${b}/mesas/:id`, requireAdmin, validate(mesaUpdateSchema), posConfigController.actualizarMesa);
+    router.delete(`${b}/mesas/:id`, requireAdmin, posConfigController.eliminarMesa);
     router.get(`${b}/asignacion-areas`, requireAdmin, posConfigController.listarAsignacion);
     router.put(`${b}/asignacion-areas/categoria/:id`, requireAdmin, validate(asignarAreaSchema), posConfigController.asignarAreaCategoria);
     router.put(`${b}/asignacion-areas/:tipo/:id`, requireAdmin, validate(asignarAreaSchema), posConfigController.asignarAreaArticulo);
@@ -40,12 +41,15 @@ export default function registerPos(router) {
     router.get(`${b}/mapa`, ver, posController.mapa);
     router.post(`${b}/cuentas`, ordenar, validate(cuentaCreateSchema), posController.abrir);
     router.get(`${b}/cuentas/:id`, ver, posController.obtener);
+    router.post(`${b}/cuentas/:id/descartar`, ordenar, posController.descartarCuenta);
+    router.patch(`${b}/cuentas/:id`, ordenar, validate(cuentaUpdateSchema), posController.actualizarCuenta);
     router.post(`${b}/cuentas/:id/items`, ordenar, validate(itemsCreateSchema), posController.agregarItems);
     router.put(`${b}/cuentas/:id/items/:itemId`, ordenar, validate(itemUpdateSchema), posController.actualizarItem);
     router.delete(`${b}/cuentas/:id/items/:itemId`, ordenar, posController.eliminarItem);
     router.post(`${b}/cuentas/:id/items/:itemId/cancelar`, ordenar, validate(motivoSchema), intentos, posController.cancelarItem);
     router.post(`${b}/cuentas/:id/items/:itemId/descuento`, ordenar, validate(descuentoSchema), intentos, posController.descuentoItem);
     router.post(`${b}/cuentas/:id/descuento`, ordenar, validate(descuentoSchema), intentos, posController.descuentoCuenta);
+    router.post(`${b}/cuentas/:id/corregir-pago`, cobrar, validate(corregirPagoSchema), intentos, posController.corregirPago);
     router.post(`${b}/cuentas/:id/anular`, cobrar, validate(anularSchema), intentos, posController.anular);
     router.post(`${b}/cuentas/:id/enviar`, ordenar, posController.enviar);
     router.post(`${b}/cuentas/:id/cambiar-mesa`, ordenar, validate(cambiarMesaSchema), posController.cambiarMesa);
@@ -68,6 +72,8 @@ export default function registerPos(router) {
     router.get(`${b}/impresion/estado`, ver, posController.estadoImpresion);
     router.get(`${b}/impresiones`, autorizar, posController.cola);
     router.post(`${b}/impresiones/:id/reimprimir`, ordenar, posController.reimprimir);
+    router.get(`${b}/impresiones/:id`, ordenar, posController.impresion_);
+    router.post(`${b}/impresiones/:id/impreso-navegador`, ordenar, posController.impresoNavegador);
     router.get(`${b}/impresoras`, requireAdmin, posController.impresoras);
     router.post(`${b}/impresoras`, requireAdmin, validate(impresoraCreateSchema), posController.crearImpresora);
     router.put(`${b}/impresoras/:id`, requireAdmin, validate(impresoraUpdateSchema), posController.actualizarImpresora);

@@ -20,6 +20,13 @@ export const cuentaCreateSchema = z
     })
     .refine((d) => d.tipo === "LLEVAR" || d.mesa_id !== undefined, { message: "Elige la mesa", path: ["mesa_id"] });
 
+export const cuentaUpdateSchema = z
+    .object({
+        nombre_cliente: texto(80).optional(),
+        personas: z.coerce.number().int().min(1).max(99).optional(),
+    })
+    .refine((d) => d.nombre_cliente !== undefined || d.personas !== undefined, { message: "Envía el nombre o las personas" });
+
 export const itemsCreateSchema = z.object({
     lineas: z
         .array(
@@ -62,19 +69,25 @@ export const juntarSchema = z.object({ destino_id: id });
 export const dividirSchema = z.object({
     partes: z.array(z.object({ item_id: id, cantidad: z.coerce.number().int().min(1).max(99) })).min(1, "Elige qué mover").max(100),
 });
-export const cobroSchema = z.object({
-    pagos: z
-        .array(
-            z.object({
-                metodo: z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA"]),
-                monto: dineroMax2.default(0),
-                propina: dineroMax2.default(0),
-                recibido: dineroMax2.optional(),
-                referencia: texto(40).optional(),
-            }),
-        )
-        .max(6, "Máximo 6 pagos por cuenta")
-        .default([]),
+const pagosSchema = z
+    .array(
+        z.object({
+            metodo: z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA"]),
+            monto: dineroMax2.default(0),
+            propina: dineroMax2.default(0),
+            recibido: dineroMax2.optional(),
+            referencia: texto(40).optional(),
+        }),
+    )
+    .max(6, "Máximo 6 pagos por cuenta");
+
+export const cobroSchema = z.object({ pagos: pagosSchema.default([]) });
+
+// Corregir cómo se pagó una cuenta ya cobrada: los pagos nuevos (deben sumar el total) y el motivo.
+export const corregirPagoSchema = z.object({
+    pagos: pagosSchema.min(1, "Captura al menos un pago"),
+    motivo: texto(200).min(1, "Indica el motivo de la corrección"),
+    autorizacion,
 });
 export const turnoCerrarSchema = z.object({
     efectivo_contado: dineroMax2,

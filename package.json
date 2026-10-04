@@ -15,6 +15,9 @@
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",
         "migrate:mark": "node db/migrate.js mark",
+        "backup": "node scripts/respaldo.js respaldar",
+        "backup:verify": "node scripts/respaldo.js verificar",
+        "backup:restore": "node scripts/respaldo.js restaurar",
         "test:watch": "NODE_ENV=test node --test --watch",
         "lint": "eslint .",
         "format": "prettier --write .",
@@ -31,6 +34,7 @@
         "express-rate-limit": "^8.7.0",
         "helmet": "^8.0.0",
         "jsonwebtoken": "^9.0.3",
+        "nodemailer": "^10.0.14",
         "pg": "^8.16.3",
         "zod": "^4.6.5"
     },

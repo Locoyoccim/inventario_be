@@ -3,9 +3,15 @@ import ApiError from "../../utils/ApiError.js";
 
 const VIEW = `
     SELECT r.id, r.empresa_id, r.nombre_cliente, r.telefono_cliente, r.fecha, r.hora, r.personas,
-           r.alergias, r.comentarios, r.estado, r.usuario_id, u.nombre AS usuario, r.created_at, r.updated_at
+           r.alergias, r.comentarios, r.estado, r.usuario_id, u.nombre AS usuario, r.created_at, r.updated_at,
+           cu.id AS cuenta_id, cu.folio AS cuenta_folio, cu.estado AS cuenta_estado
     FROM reservaciones r
-    LEFT JOIN usuarios u ON u.id = r.usuario_id`;
+    LEFT JOIN usuarios u ON u.id = r.usuario_id
+    -- La cuenta del POS que se abrió al sentarla (la más reciente que no se canceló).
+    LEFT JOIN LATERAL (
+        SELECT c.id, c.folio, c.estado FROM pos_cuentas c
+        WHERE c.reservacion_id = r.id AND c.estado <> 'CANCELADA' ORDER BY c.id DESC LIMIT 1
+    ) cu ON true`;
 
 export default class ReservacionRepository {
     async getById(empresa_id, id) {
