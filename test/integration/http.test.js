@@ -45,6 +45,7 @@ describe("Integración HTTP", { skip: SKIP }, () => {
         await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", emp);
         await pool.query("DELETE FROM proveedores WHERE empresa_id = ANY($1)", emp);
         await pool.query("DELETE FROM usuarios WHERE empresa_id = ANY($1)", emp);
+        await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", emp);
         await pool.query("DELETE FROM empresas WHERE id = ANY($1)", emp);
     };
 
@@ -58,6 +59,11 @@ describe("Integración HTTP", { skip: SKIP }, () => {
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Emp A'),($2,'Emp B')", [A, B]);
+        // 028 exige que la categoría exista en el catálogo de la empresa.
+        await pool.query(
+            "INSERT INTO categorias (empresa_id, nombre) SELECT e, n FROM unnest($1::int[]) e, unnest($2::text[]) n ON CONFLICT DO NOTHING",
+            [[A, B], ["Insumo", "Panadería", "Prep", "Preparación"]],
+        );
         const mkUser = async (emp, nombre, codigo, admin, owner) => (await pool.query(
             "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ($1,$2,$3,$4,$5) RETURNING id",
             [nombre, codigo, admin, owner, emp])).rows[0].id;

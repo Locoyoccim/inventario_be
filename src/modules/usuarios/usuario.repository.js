@@ -18,17 +18,20 @@ const QUERIES = {
         WHERE u.empresa_id = $1 AND u.id = $2
     `,
     SELECT_PROFILE: `
-        SELECT id, nombre, email, is_admin, is_owner, is_platform_admin, must_change_password, empresa_id, activo
-        FROM usuarios
-        WHERE empresa_id = $1 AND id = $2
+        SELECT u.id, u.nombre, u.email, u.is_admin, u.is_owner, u.is_platform_admin, u.must_change_password,
+               u.empresa_id, u.activo, u.role_id, r.permisos
+        FROM usuarios u
+        LEFT JOIN roles r ON r.id = u.role_id
+        WHERE u.empresa_id = $1 AND u.id = $2
     `,
     SELECT_COUNT: `SELECT COUNT(*)::int AS total FROM usuarios`,
     SELECT_BY_EMAIL: `
         SELECT u.id, u.nombre, u.email, u.password_hash, u.is_admin, u.is_owner, u.is_platform_admin,
                u.must_change_password, u.role_id, u.empresa_id, u.activo, u.token_version,
-               e.activo AS empresa_activa
+               e.activo AS empresa_activa, r.permisos
         FROM usuarios u
         JOIN empresas e ON e.id = u.empresa_id
+        LEFT JOIN roles r ON r.id = u.role_id
         WHERE lower(trim(u.email)) = lower(trim($1))
         ORDER BY u.id
         LIMIT 1

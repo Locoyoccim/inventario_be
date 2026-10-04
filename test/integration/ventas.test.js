@@ -48,6 +48,7 @@ describe("Integración HTTP — Ventas: auto-producción de preparaciones", { sk
         await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM proveedores WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM usuarios WHERE empresa_id = ANY($1)", e);
+        await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM empresas WHERE id = ANY($1)", e);
     };
 
@@ -61,6 +62,11 @@ describe("Integración HTTP — Ventas: auto-producción de preparaciones", { sk
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Auto A')", [A]);
+        // 028 exige que la categoría exista en el catálogo de la empresa.
+        await pool.query(
+            "INSERT INTO categorias (empresa_id, nombre) SELECT $1, n FROM unnest($2::text[]) n ON CONFLICT DO NOTHING",
+            [A, ["Insumo", "Salsas", "Platillos", "Preparación"]],
+        );
         const adminId = (await pool.query(
             "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ('Adm','AU-adm',true,true,$1) RETURNING id", [A])).rows[0].id;
         tokAdmin = signToken({ id: adminId, empresa_id: A, is_admin: true, is_owner: true, tv: 0 });

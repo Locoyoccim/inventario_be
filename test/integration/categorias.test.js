@@ -60,6 +60,11 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
         base = `http://127.0.0.1:${server.address().port}`;
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Cat A')", [A]);
+        // 028 exige que la categoría exista en el catálogo de la empresa.
+        await pool.query(
+            "INSERT INTO categorias (empresa_id, nombre) SELECT $1, n FROM unnest($2::text[]) n ON CONFLICT DO NOTHING",
+            [A, ["Insumo", "Salsas"]],
+        );
         const adminId = (await pool.query(
             "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ('Adm','CA-adm',true,true,$1) RETURNING id", [A])).rows[0].id;
         tok = signToken({ id: adminId, empresa_id: A, is_admin: true, is_owner: true, tv: 0 });
@@ -119,9 +124,14 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
     });
 
     it("migración 017: inserta nombres faltantes con su tipo y es idempotente", async () => {
-        // Nombres usados por productos/recetas que NO existen en la tabla categorias.
+        // Nombres usados por productos/recetas que NO existen en la tabla categorias. Desde 028
+        // la app no permite crearlos así: se crean con su categoría y luego se borra la fila del
+        // catálogo por fuera de la app (el caso legacy que 017 debe reparar).
+        await catId("MigProd");
+        await catId("MigRec");
         await mkProd("Harina", "MigProd");
         await mkRecipe("Pan integral", "MigRec");
+        await pool.query("DELETE FROM categorias WHERE empresa_id=$1 AND nombre = ANY($2)", [A, ["MigProd", "MigRec"]]);
         // Categoría existente usada por producto Y receta -> debe quedar AMBAS tras backfill.
         await catId("AmbasUse", "PRODUCTO");
         await mkProd("Cosa ambas", "AmbasUse");

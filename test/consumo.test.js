@@ -1,6 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { calcularConsumo } from "../src/modules/ventas/venta.repository.js";
+import { explotarRenglones } from "../src/utils/consumo.js";
+
+test("renglones: receta explota con merma y producto directo sin merma", () => {
+    const detalle = [{ receta_id: 1, producto_id: 10, cantidad: 100 }];
+    const merma = new Map([[10, 8], [20, 50]]);
+    const { consumo } = explotarRenglones(
+        [{ receta_id: 1, cantidad: 2 }, { producto_id: 20, cantidad: 3 }],
+        detalle,
+        merma,
+    );
+    assert.equal(consumo.get(10), Number((200 / (1 - 0.08)).toFixed(3)));
+    assert.equal(consumo.get(20), 3);
+});
+
+test("renglones: mismo producto vendido directo y dentro de receta se suma", () => {
+    const detalle = [{ receta_id: 1, producto_id: 30, cantidad: 1 }];
+    const { consumo } = explotarRenglones([{ receta_id: 1, cantidad: 2 }, { producto_id: 30, cantidad: 1 }], detalle);
+    assert.equal(consumo.get(30), 3);
+});
+
+test("renglones: receta sin escandallo se devuelve intacta y no consume", () => {
+    const { consumo, recetas_sin_escandallo } = explotarRenglones([{ receta_id: 7, cantidad: 1, item_id: 99 }], []);
+    assert.equal(consumo.size, 0);
+    assert.equal(recetas_sin_escandallo[0].item_id, 99);
+});
+
+test("consumo: RECETA con factor equivale a renglón con cantidad * factor", () => {
+    const detalle = [{ receta_id: 1, producto_id: 10, cantidad: 0.35 }];
+    const merma = new Map([[10, 12.5]]);
+    const porPos = calcularConsumo([{ nombre_pos: "X", cantidad: 3 }], [{ nombre_pos: "X", tipo: "RECETA", receta_id: 1, factor: 1.5 }], detalle, merma);
+    const porRenglon = explotarRenglones([{ receta_id: 1, cantidad: 4.5 }], detalle, merma);
+    assert.equal(porPos.consumo.get(10), porRenglon.consumo.get(10));
+});
 
 test("consumo: una RECETA explota a sus insumos por la cantidad vendida", () => {
     const posMap = [{ nombre_pos: "Chilaquiles", tipo: "RECETA", receta_id: 1, factor: 1 }];

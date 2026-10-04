@@ -46,7 +46,6 @@ export const QUERIES = {
         WHERE m.referencia_tipo = 'VENTA_DIARIA' AND m.referencia_id = $1 AND p.empresa_id = $2
         ORDER BY m.id ASC
     `,
-    LOCK_INV: `SELECT producto_id FROM inventario WHERE producto_id = ANY($1::int[]) ORDER BY producto_id FOR UPDATE`,
     DELETE_VENTA: `DELETE FROM venta_diaria WHERE id = $1 AND empresa_id = $2 RETURNING id`,
     // Días importados con conteo de productos que quedaron en negativo AL MOMENTO del import
     // (incluye VENTA de insumos/elaborados y PRODUCCION de insumos auto-producidos).

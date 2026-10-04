@@ -17,6 +17,10 @@ export function invalidarUsuarioActivo(id) {
 // simplemente sin rol elegido): conserva el acceso que siempre tuvo, igual al rol "completo".
 const PERMISOS_SIN_ROL = ["compras.crear", "conteos.crear", "produccion.crear", "gastos.crear", "ingresos.crear"];
 
+export function permisosEfectivos(role_id, permisos) {
+    return role_id == null ? PERMISOS_SIN_ROL : (permisos ?? []);
+}
+
 async function cargar(id, query) {
     const key = Number(id);
     const hit = cache.get(key);
@@ -39,7 +43,7 @@ async function cargar(id, query) {
               is_owner: !!row.is_owner,
               is_platform_admin: !!row.is_platform_admin,
               must_change_password: !!row.must_change_password,
-              permisos: row.role_id == null ? PERMISOS_SIN_ROL : (row.permisos ?? []),
+              permisos: permisosEfectivos(row.role_id, row.permisos),
               tv: Number(row.token_version ?? 0),
               at: Date.now(),
           }

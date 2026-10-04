@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { signToken } from "../../utils/jwt.js";
 import ApiError from "../../utils/ApiError.js";
-import { invalidarUsuarioActivo } from "../../middlewares/activeUser.js";
+import { invalidarUsuarioActivo, permisosEfectivos } from "../../middlewares/activeUser.js";
 
 // Hash dummy (sin usuario real detrás) para que login() tarde lo mismo cuando el email no
 // existe que cuando existe pero la contraseña es incorrecta — sin esto, la ausencia del
@@ -48,6 +48,7 @@ export default class AuthService {
             id: u.id, nombre: u.nombre, email: u.email,
             empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
             is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
+            permisos: permisosEfectivos(u.role_id, u.permisos),
         };
     }
 
@@ -77,6 +78,7 @@ export default class AuthService {
                 id: u.id, nombre: u.nombre, email: u.email,
                 empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
                 is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
+                permisos: permisosEfectivos(u.role_id, u.permisos),
             },
         };
     }

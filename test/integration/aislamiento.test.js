@@ -20,8 +20,11 @@ test("D5: aislamiento multiempresa (ninguna empresa ve datos de otra)", { skip: 
     await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", [[A, B]]);
     await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", [[A, B]]);
     await pool.query("DELETE FROM proveedores WHERE empresa_id = ANY($1)", [[A, B]]);
+    await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", [[A, B]]);
     await pool.query("DELETE FROM empresas WHERE id = ANY($1)", [[A, B]]);
     await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Empresa A'),($2,'Empresa B')", [A, B]);
+    // 028 exige que la categoría exista en el catálogo de la empresa.
+    await pool.query("INSERT INTO categorias (empresa_id, nombre) SELECT unnest($1::int[]), 'X' ON CONFLICT DO NOTHING", [[A, B]]);
 
     const mkProd = async (emp, nombre) => (await pool.query(
         "INSERT INTO productos (producto,unidad_medida,categoria,empresa_id,cantidad_presentacion,costo_presentacion) VALUES ($1,'u','X',$2,1,10) RETURNING id",
@@ -49,6 +52,7 @@ test("D5: aislamiento multiempresa (ninguna empresa ve datos de otra)", { skip: 
     await pool.query("DELETE FROM inventario WHERE empresa_id = ANY($1)", [[A, B]]);
     await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", [[A, B]]);
     await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", [[A, B]]);
+    await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", [[A, B]]);
     await pool.query("DELETE FROM empresas WHERE id = ANY($1)", [[A, B]]);
     await pool.end();
 });

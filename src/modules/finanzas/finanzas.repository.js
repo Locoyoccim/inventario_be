@@ -263,7 +263,7 @@ export default class FinanzasRepository {
             pool.query("SELECT COALESCE(SUM(total),0)::numeric AS total FROM compra WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false", rango),
             pool.query(`SELECT
                     COALESCE(SUM(CASE WHEN m.tipo_movimiento='VENTA' THEN m.cantidad*m.costo_unitario END),0) AS venta_costo,
-                    COALESCE(SUM(CASE WHEN m.tipo_movimiento='DEVOLUCION' AND m.referencia_tipo='VENTA_DIARIA' THEN m.cantidad*m.costo_unitario END),0) AS devol_costo,
+                    COALESCE(SUM(CASE WHEN m.tipo_movimiento='DEVOLUCION' AND m.referencia_tipo IN ('VENTA_DIARIA','POS_CUENTA') THEN m.cantidad*m.costo_unitario END),0) AS devol_costo,
                     COALESCE(SUM(CASE WHEN m.tipo_movimiento='MERMA'
                                       OR (m.tipo_movimiento='AJUSTE' AND m.stock_nuevo < m.stock_anterior)
                                  THEN m.cantidad*m.costo_unitario END),0) AS merma_costo
@@ -287,7 +287,7 @@ export default class FinanzasRepository {
             pool.query("SELECT to_char(date_trunc($4, fecha),'YYYY-MM-DD') AS periodo, SUM(monto)::numeric AS total FROM gastos WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY 1", rangoUnit),
             pool.query(`SELECT to_char(date_trunc($4, m.fecha),'YYYY-MM-DD') AS periodo,
                     COALESCE(SUM(CASE WHEN m.tipo_movimiento='VENTA' THEN m.cantidad*m.costo_unitario
-                                      WHEN m.tipo_movimiento='DEVOLUCION' AND m.referencia_tipo='VENTA_DIARIA' THEN -m.cantidad*m.costo_unitario END),0) AS total
+                                      WHEN m.tipo_movimiento='DEVOLUCION' AND m.referencia_tipo IN ('VENTA_DIARIA','POS_CUENTA') THEN -m.cantidad*m.costo_unitario END),0) AS total
                 FROM movimientosinventario m JOIN productos p ON p.id=m.producto_id
                 WHERE p.empresa_id=$1 AND m.fecha::date BETWEEN $2 AND $3 GROUP BY 1`, rangoUnit),
         ]);

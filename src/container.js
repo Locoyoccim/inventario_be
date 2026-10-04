@@ -58,6 +58,14 @@ import RolRepository from "./modules/roles/rol.repository.js";
 import ReservacionController from "./modules/reservaciones/reservaciones.controller.js";
 import ReservacionService from "./modules/reservaciones/reservaciones.service.js";
 import ReservacionRepository from "./modules/reservaciones/reservaciones.repository.js";
+import PosConfigController from "./modules/pos/posConfig.controller.js";
+import PosConfigService from "./modules/pos/posConfig.service.js";
+import PosConfigRepository from "./modules/pos/posConfig.repository.js";
+import PosController from "./modules/pos/pos.controller.js";
+import PosCuentasRepository from "./modules/pos/pos.cuentas.repository.js";
+import PosImpresionRepository from "./modules/pos/pos.impresion.repository.js";
+import PosTurnosRepository from "./modules/pos/pos.turnos.repository.js";
+import PosAjustesRepository from "./modules/pos/pos.ajustes.repository.js";
 
 // Repos base compartidos
 const empresaRepo = new EmpresaRepository();
@@ -84,3 +92,7 @@ export const finanzasController = new FinanzasController(new FinanzasService(new
 export const platformController = new PlatformController(new PlatformService(new PlatformRepository()));
 export const rolController = new RolController(new RolService(new RolRepository()));
 export const reservacionController = new ReservacionController(new ReservacionService(new ReservacionRepository()));
+const posConfigRepo = new PosConfigRepository();
+export const posConfigController = new PosConfigController(new PosConfigService(posConfigRepo));
+const posCuentasRepo = new PosCuentasRepository(posConfigRepo, movimientoRepo);
+export const posController = new PosController(posCuentasRepo, new PosImpresionRepository(), new PosTurnosRepository(), new PosAjustesRepository(posCuentasRepo, movimientoRepo));

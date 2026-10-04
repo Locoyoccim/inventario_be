@@ -4,6 +4,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import routes from "./routes/index.js";
 import authRoutes from "./routes/auth.routes.js";
+import agenteRoutes from "./routes/agente.routes.js";
 import { requireAuth } from "./middlewares/auth.js";
 import { requireActiveUser, requirePasswordCurrent } from "./middlewares/activeUser.js";
 import { requestLogger } from "./middlewares/requestLogger.js";
@@ -62,6 +63,9 @@ if (process.env.NODE_ENV !== "test") {
 
 // Rutas de autenticación (login abierto)
 app.use("/api/auth", authRoutes);
+
+// Agente de impresión: token propio, fuera de la sesión de usuario.
+app.use("/api/agente", agenteRoutes);
 
 // Resto de la API: requiere token válido. requirePasswordCurrent bloquea todo salvo
 // /api/auth/* (montado arriba, fuera de esta cadena) mientras haya una contraseña temporal

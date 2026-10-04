@@ -1,8 +1,9 @@
 import pool from "../../config/db.js";
 import { normalizar } from "../../utils/normalize.js";
 import ApiError from "../../utils/ApiError.js";
-import { netoABruto } from "../../utils/costeo.js";
+import { explotarRenglones } from "../../utils/consumo.js";
 import { resolverPreparaciones, armarPreparaciones } from "../../utils/preparaciones.js";
+import { aplicarConsumo, revertirPorReferencia } from "../movimientos/aplicarConsumo.js";
 import { QUERIES } from "./venta.queries.js";
 
 export { resolverPreparaciones };
@@ -16,20 +17,9 @@ export function calcularConsumo(lineas, posMap, recetaDetalle, mermaPorId = new 
     const mapa = new Map(); // nombre_pos normalizado -> fila de pos_map
     for (const m of posMap) mapa.set(normalizar(m.nombre_pos), m);
 
-    const porReceta = new Map(); // receta_id -> [{producto_id, cantidad}]
-    for (const d of recetaDetalle) {
-        if (!porReceta.has(d.receta_id)) porReceta.set(d.receta_id, []);
-        porReceta.get(d.receta_id).push(d);
-    }
-
-    // Se separa el consumo NETO de explosión de recetas (sujeto a merma) del consumo
-    // de mapeos POS tipo INSUMO (se descuenta tal cual, sin merma).
-    const netoReceta = new Map();
-    const netoInsumo = new Map();
+    const renglones = [];
     const sin_mapeo = [];
     const ignorados = [];
-    const recetas_sin_escandallo = [];
-    const acum = (map, pid, cant) => map.set(pid, (map.get(pid) ?? 0) + cant);
 
     for (const linea of lineas) {
         const cant = Number(linea.cantidad);
@@ -44,33 +34,19 @@ export function calcularConsumo(lineas, posMap, recetaDetalle, mermaPorId = new 
         if (m.tipo === "IGNORAR") {
             ignorados.push({ nombre_pos: linea.nombre_pos, cantidad: cant });
         } else if (m.tipo === "INSUMO") {
-            acum(netoInsumo, Number(m.producto_id), cant * factor);
+            renglones.push({ producto_id: Number(m.producto_id), cantidad: cant * factor });
         } else if (m.tipo === "RECETA") {
-            const detalles = porReceta.get(Number(m.receta_id)) ?? [];
-            if (detalles.length === 0) {
-                recetas_sin_escandallo.push({
-                    nombre_pos: linea.nombre_pos,
-                    receta_id: Number(m.receta_id),
-                    cantidad: cant,
-                });
-                continue;
-            }
-            for (const d of detalles) {
-                acum(netoReceta, Number(d.producto_id), cant * factor * Number(d.cantidad));
-            }
+            renglones.push({ receta_id: Number(m.receta_id), cantidad: cant * factor, nombre_pos: linea.nombre_pos, cantidad_pos: cant });
         }
     }
 
-    // Descuento final BRUTO: lo explotado de receta pasa por merma; lo mapeado como INSUMO no.
-    const consumo = new Map();
-    const pids = new Set([...netoReceta.keys(), ...netoInsumo.keys()]);
-    for (const pid of pids) {
-        const bruto = netoReceta.has(pid) ? netoABruto(netoReceta.get(pid), mermaPorId.get(pid)) : 0;
-        const directo = netoInsumo.get(pid) ?? 0;
-        consumo.set(pid, Number((bruto + directo).toFixed(3)));
-    }
-
-    return { consumo, sin_mapeo, ignorados, recetas_sin_escandallo };
+    const { consumo, recetas_sin_escandallo } = explotarRenglones(renglones, recetaDetalle, mermaPorId);
+    return {
+        consumo,
+        sin_mapeo,
+        ignorados,
+        recetas_sin_escandallo: recetas_sin_escandallo.map((r) => ({ nombre_pos: r.nombre_pos, receta_id: r.receta_id, cantidad: r.cantidad_pos })),
+    };
 }
 
 // --- Repositorio ----------------------------------------------------------
@@ -158,115 +134,6 @@ export default class VentaRepository {
         return venta;
     }
 
-    // Pre-bloqueo de inventario en orden ascendente por producto_id: evita deadlocks
-    // entre importaciones/producciones concurrentes, aunque los movimientos se apliquen
-    // en fases (auto-producción y luego VENTA).
-    async #bloquearInventario(client, aDescontar, autoProduccion) {
-        const idsTocados = new Set();
-        for (const it of aDescontar) idsTocados.add(Number(it.producto_id));
-        for (const ap of autoProduccion) {
-            idsTocados.add(Number(ap.producto_elaborado_id));
-            for (const ins of ap.insumos) idsTocados.add(Number(ins.producto_id));
-        }
-        const idsOrden = [...idsTocados].sort((a, b) => a - b);
-        if (idsOrden.length > 0) await client.query(QUERIES.LOCK_INV, [idsOrden]);
-    }
-
-    // Fase 1: Insumos auto-producidos: PRODUCCION de salida (permite negativo).
-    async #aplicarAutoProduccionInsumos(client, empresa_id, fecha, venta_id, autoProduccion, nombrePorId, errores, negativos) {
-        const notaAuto = `Producción automática por venta del ${fecha}`;
-
-        for (const ap of autoProduccion) {
-            for (const ins of ap.insumos) {
-                if (!nombrePorId.has(Number(ins.producto_id))) {
-                    errores.push({ producto_id: ins.producto_id, motivo: "Insumo de preparación inexistente en la empresa" });
-                    ins.stock_resultante = null;
-                    continue;
-                }
-                const mov = await this.movimientoRepository.aplicar(
-                    client, ins.producto_id, empresa_id,
-                    {
-                        tipo_movimiento: "PRODUCCION",
-                        cantidad: ins.cantidad,
-                        motivo: notaAuto,
-                        referencia_tipo: "VENTA_DIARIA",
-                        referencia_id: venta_id,
-                    },
-                    { permitirNegativo: true },
-                );
-                if (!mov) {
-                    errores.push({ producto_id: ins.producto_id, producto: nombrePorId.get(Number(ins.producto_id)), motivo: "El insumo no tiene fila de inventario" });
-                    ins.stock_resultante = null;
-                    continue;
-                }
-                ins.producto = nombrePorId.get(Number(ins.producto_id));
-                ins.stock_resultante = Number(mov.stock_nuevo);
-                if (Number(mov.stock_nuevo) < 0) {
-                    negativos.push({ producto_id: ins.producto_id, producto: ins.producto, cantidad: ins.cantidad, stock_nuevo: Number(mov.stock_nuevo), origen: "PRODUCCION" });
-                }
-            }
-        }
-    }
-
-    // Fase 2: Elaborados auto-producidos: PRODUCCION de entrada (costo = costo vigente del elaborado).
-    async #aplicarAutoProduccionElaborados(client, empresa_id, fecha, venta_id, autoProduccion, nombrePorId) {
-        const notaAuto = `Producción automática por venta del ${fecha}`;
-
-        for (const ap of autoProduccion) {
-            const mov = await this.movimientoRepository.aplicar(
-                client, ap.producto_elaborado_id, empresa_id,
-                {
-                    tipo_movimiento: "PRODUCCION",
-                    cantidad: ap.cantidad,
-                    motivo: notaAuto,
-                    referencia_tipo: "VENTA_DIARIA",
-                    referencia_id: venta_id,
-                },
-                { direccion: 1, permitirNegativo: true },
-            );
-            ap.producto = nombrePorId.get(Number(ap.producto_elaborado_id)) ?? ap.nombre;
-            ap.producto_id = Number(ap.producto_elaborado_id);
-            ap.stock_elaborado_nuevo = mov ? Number(mov.stock_nuevo) : null;
-        }
-    }
-
-    // Fase 3: VENTA del consumo (como siempre). El elaborado ya fue producido, así queda en 0 y no negativo.
-    // permitirNegativo siempre true: la venta ya ocurrió según el POS, no se puede "rechazar"
-    // retroactivamente por falta de inventario — un stock negativo aquí es una señal real de
-    // que el inventario está desfasado (compra faltante, conteo pendiente), no un error a bloquear.
-    async #aplicarVenta(client, empresa_id, fecha, venta_id, aDescontar, nombrePorId, errores, negativos) {
-        const descontado = [];
-
-        aDescontar.sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
-        for (const item of aDescontar) {
-            const mov = await this.movimientoRepository.aplicar(
-                client, item.producto_id, empresa_id,
-                {
-                    tipo_movimiento: "VENTA",
-                    cantidad: item.cantidad,
-                    motivo: `Venta diaria ${fecha}`,
-                    referencia_tipo: "VENTA_DIARIA",
-                    referencia_id: venta_id,
-                },
-                { permitirNegativo: true },
-            );
-            if (!mov) {
-                errores.push({ producto_id: item.producto_id, producto: nombrePorId.get(item.producto_id), motivo: "El insumo no tiene fila de inventario" });
-                continue;
-            }
-            const registro = {
-                producto_id: item.producto_id,
-                producto: nombrePorId.get(item.producto_id),
-                cantidad: item.cantidad,
-                stock_nuevo: Number(mov.stock_nuevo),
-            };
-            descontado.push(registro);
-            if (Number(mov.stock_nuevo) < 0) negativos.push({ ...registro, origen: "VENTA" });
-        }
-
-        return descontado;
-    }
-
     async importarDia(empresa_id, fecha, lineas) {
         const [existeRes, recetasPrecioRes, productosPrecioRes] = await Promise.all([
             pool.query(QUERIES.VENTA_EXISTE, [empresa_id, fecha]),
@@ -289,22 +156,10 @@ export default class VentaRepository {
         } = await this.#cargarContextoVenta(empresa_id, lineas);
 
         const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
-        const errores = [];
-        // VENTA: el consumo original (insumos directos + elaborados explotados un nivel).
-        const aDescontar = [];
-        for (const [producto_id, cantidad] of consumo.entries()) {
-            if (!nombrePorId.has(producto_id)) {
-                errores.push({ producto_id, motivo: "El mapeo apunta a un insumo inexistente en la empresa" });
-            } else {
-                aDescontar.push({ producto_id, cantidad });
-            }
-        }
-
         const total_lineas = lineas.length;
         const total_unidades = lineas.reduce((s, l) => s + Number(l.cantidad), 0);
 
         const client = await pool.connect();
-        const negativos = [];
         try {
             await client.query("BEGIN");
 
@@ -312,13 +167,15 @@ export default class VentaRepository {
                 client, empresa_id, fecha, lineas, posMapRes, recetasPrecioRes, productosPrecioRes, total_lineas, total_unidades,
             );
 
-            await this.#bloquearInventario(client, aDescontar, autoProduccion);
-
-            await this.#aplicarAutoProduccionInsumos(client, empresa_id, fecha, venta.id, autoProduccion, nombrePorId, errores, negativos);
-
-            await this.#aplicarAutoProduccionElaborados(client, empresa_id, fecha, venta.id, autoProduccion, nombrePorId);
-
-            const descontado = await this.#aplicarVenta(client, empresa_id, fecha, venta.id, aDescontar, nombrePorId, errores, negativos);
+            const { descontado, negativos, errores } = await aplicarConsumo(client, this.movimientoRepository, empresa_id, {
+                consumo,
+                autoProduccion,
+                nombrePorId,
+                referencia_tipo: "VENTA_DIARIA",
+                referencia_id: venta.id,
+                motivoAuto: `Producción automática por venta del ${fecha}`,
+                motivoVenta: `Venta diaria ${fecha}`,
+            });
 
             await client.query("COMMIT");
 
@@ -492,44 +349,11 @@ export default class VentaRepository {
                 return null;
             }
 
-            const movs = (await client.query(QUERIES.MOV_POR_REFERENCIA, [venta.id, empresa_id])).rows;
-
-            // Pre-bloqueo en orden ascendente por producto_id (deadlock-safe).
-            const ids = [...new Set(movs.map((m) => Number(m.producto_id)))].sort((a, b) => a - b);
-            if (ids.length > 0) await client.query(QUERIES.LOCK_INV, [ids]);
-
-            const enOrden = [...movs].sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
-            let revertidos = 0;
-            for (const m of enOrden) {
-                const subio = Number(m.stock_nuevo) > Number(m.stock_anterior);
-                let data;
-                if (m.tipo_movimiento === "VENTA") {
-                    data = {
-                        tipo_movimiento: "DEVOLUCION",
-                        cantidad: m.cantidad,
-                        costo_unitario: m.costo_unitario,
-                        motivo: `Reversa venta diaria ${fecha}`,
-                        referencia_tipo: "VENTA_DIARIA",
-                        referencia_id: venta.id,
-                    };
-                } else if (m.tipo_movimiento === "PRODUCCION") {
-                    // Inverso de la producción: NO usar DEVOLUCION (ensuciaría costo_ventas).
-                    data = {
-                        tipo_movimiento: "PRODUCCION",
-                        cantidad: m.cantidad,
-                        costo_unitario: m.costo_unitario,
-                        motivo: `Reversa venta diaria ${fecha}`,
-                        referencia_tipo: "VENTA_DIARIA",
-                        referencia_id: venta.id,
-                    };
-                } else {
-                    continue;
-                }
-                const opts = { permitirNegativo: true };
-                if (m.tipo_movimiento === "PRODUCCION") opts.direccion = subio ? -1 : 1;
-                await this.movimientoRepository.aplicar(client, m.producto_id, empresa_id, data, opts);
-                revertidos++;
-            }
+            const revertidos = await revertirPorReferencia(client, this.movimientoRepository, empresa_id, {
+                referencia_tipo: "VENTA_DIARIA",
+                referencia_id: venta.id,
+                motivo: `Reversa venta diaria ${fecha}`,
+            });
             const delRes = await client.query(QUERIES.DELETE_VENTA, [venta.id, empresa_id]);
             if (delRes.rowCount === 0) {
                 await client.query("ROLLBACK");

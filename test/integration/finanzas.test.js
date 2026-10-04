@@ -40,6 +40,7 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
         await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM proveedores WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM usuarios WHERE empresa_id = ANY($1)", e);
+        await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM empresas WHERE id = ANY($1)", e);
     };
 
@@ -53,6 +54,11 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Fin A'),($2,'Fin B')", [A, B]);
+        // 028 exige que la categoría exista en el catálogo de la empresa.
+        await pool.query(
+            "INSERT INTO categorias (empresa_id, nombre) SELECT e, n FROM unnest($1::int[]) e, unnest($2::text[]) n ON CONFLICT DO NOTHING",
+            [[A, B], ["Insumo", "Bebidas"]],
+        );
         const mkUser = async (emp, nombre, cod, admin) => (await pool.query(
             "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ($1,$2,$3,$3,$4) RETURNING id",
             [nombre, cod, admin, emp])).rows[0].id;
@@ -240,7 +246,7 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
 
         // Solo una compra anulada -> ultimas_compras vacío, referencias.compras=1, false, DELETE 409
         const cProv = (await req("POST", `/api/proveedores/${A}`, { token: tokAdminA, body: { nombre: "Solo compra 7b" } })).json.data.id;
-        const cc = await req("POST", `/api/compras/${A}`, { token: tokAdminA, body: { proveedor_id: cProv, referencia: "7B-C", lineas: [{ producto_id: insumoId, cantidad: 10, costo_total: 5 }] } });
+        const cc = await req("POST", `/api/compras/${A}`, { token: tokAdminA, body: { proveedor_id: cProv, referencia: "7B-C", lineas: [{ producto_id: insumoId, cantidad: 10, costo_total: 5 }], confirmarCostoAtipico: true } });
         await req("POST", `/api/compras/${A}/${cc.json.data.compra.id}/anular`, { token: tokAdminA, body: { motivo: "x" } });
         const rc = await req("GET", `/api/proveedores/${A}/${cProv}/resumen`, { token: tokAdminA });
         assert.equal(rc.json.data.ultimas_compras.length, 0, "la compra anulada no aparece en ultimas_compras");

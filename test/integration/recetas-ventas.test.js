@@ -34,6 +34,7 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
         await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM proveedores WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM usuarios WHERE empresa_id = ANY($1)", e);
+        await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM empresas WHERE id = ANY($1)", e);
     };
 
@@ -46,6 +47,11 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
         base = `http://127.0.0.1:${server.address().port}`;
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Ventas A'),($2,'Ventas B')", [A, B]);
+        // 028 exige que la categoría exista en el catálogo de la empresa.
+        await pool.query(
+            "INSERT INTO categorias (empresa_id, nombre) SELECT e, n FROM unnest($1::int[]) e, unnest($2::text[]) n ON CONFLICT DO NOTHING",
+            [[A, B], ["Insumo", "Bebidas"]],
+        );
         const mk = async (emp, nombre, cod, admin) => (await pool.query(
             "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ($1,$2,$3,$3,$4) RETURNING id",
             [nombre, cod, admin, emp])).rows[0].id;
