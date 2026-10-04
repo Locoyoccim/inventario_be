@@ -33,8 +33,12 @@ const GASTO_VIEW = `
     LEFT JOIN proveedores pr ON pr.id = g.proveedor_id
     LEFT JOIN usuarios u ON u.id = g.usuario_id`;
 
+// Los ingresos que nacen del corte de caja son el espejo del POS: se ajustan desde Caja (corregir pago o anular
+// la cuenta), que mueven el corte y Finanzas a la vez. Editarlos aquí los desalinearía.
+const MSG_INGRESO_POS = "Este ingreso lo generó el corte de caja. Para ajustarlo corrige el pago o anula la cuenta desde el POS.";
+
 const INGRESO_VIEW = `
-    SELECT i.id, i.empresa_id, i.fecha, i.metodo_pago, i.monto, i.concepto, i.nota,
+    SELECT i.id, i.empresa_id, i.fecha, i.metodo_pago, i.monto, i.concepto, i.nota, i.pos_turno_id,
            i.usuario_id, u.nombre AS usuario, i.anulado, i.anulado_at, i.anulado_por, i.motivo_anulacion, i.created_at
     FROM ingresos i
     LEFT JOIN usuarios u ON u.id = i.usuario_id`;
@@ -193,6 +197,7 @@ export default class FinanzasRepository {
         const actual = await this.getIngresoById(empresa_id, id);
         if (!actual) throw ApiError.notFound("Ingreso no encontrado");
         if (actual.anulado) throw ApiError.conflict("El ingreso está anulado y no puede editarse");
+        if (actual.pos_turno_id) throw ApiError.conflict(MSG_INGRESO_POS);
         const { fecha, metodo_pago, monto, concepto = null, nota = null } = data;
         await pool.query(
             `UPDATE ingresos SET fecha=$3, metodo_pago=$4, monto=$5, concepto=COALESCE($6,'Venta del día'), nota=$7
@@ -206,6 +211,7 @@ export default class FinanzasRepository {
         const actual = await this.getIngresoById(empresa_id, id);
         if (!actual) throw ApiError.notFound("Ingreso no encontrado");
         if (actual.anulado) throw ApiError.conflict("El ingreso ya está anulado");
+        if (actual.pos_turno_id) throw ApiError.conflict(MSG_INGRESO_POS);
         await pool.query(
             "UPDATE ingresos SET anulado=true, anulado_at=now(), anulado_por=$3, motivo_anulacion=$4 WHERE id=$1 AND empresa_id=$2",
             [id, empresa_id, usuario_id, motivo]
@@ -262,7 +268,7 @@ export default class FinanzasRepository {
             pool.query("SELECT to_char(date_trunc($4, fecha),'YYYY-MM-DD') AS periodo, SUM(monto)::numeric AS total FROM ingresos WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY 1", rangoUnit),
             pool.query("SELECT to_char(date_trunc($4, fecha),'YYYY-MM-DD') AS periodo, SUM(total)::numeric AS total FROM compra WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY 1", rangoUnit),
             pool.query("SELECT to_char(date_trunc($4, fecha),'YYYY-MM-DD') AS periodo, SUM(monto)::numeric AS total FROM gastos WHERE empresa_id=$1 AND fecha BETWEEN $2 AND $3 AND anulado=false GROUP BY 1", rangoUnit),
-            pool.query(`SELECT to_char(date_trunc($4, m.fecha),'YYYY-MM-DD') AS periodo,
+            pool.query(`SELECT to_char(date_trunc($4, fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1))::timestamp),'YYYY-MM-DD') AS periodo,
                     COALESCE(SUM(CASE WHEN m.tipo_movimiento='VENTA' THEN m.cantidad*m.costo_unitario
                                       WHEN m.tipo_movimiento='DEVOLUCION' AND m.referencia_tipo IN ('VENTA_DIARIA','POS_CUENTA') THEN -m.cantidad*m.costo_unitario END),0) AS total
                 FROM movimientosinventario m JOIN productos p ON p.id=m.producto_id

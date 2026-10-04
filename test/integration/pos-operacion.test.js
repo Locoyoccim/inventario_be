@@ -11,7 +11,7 @@ if (DB) {
 describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { skip: SKIP }, () => {
     const A = 9411;
     const B = 9412;
-    let server, base, pool, signToken;
+    let server, base, pool, signToken, reiniciarPurga;
     let tokAdmin, tokMesero, tokCajero, tokSupervisor, tokHostess, tokAdminB;
     let m1, m2, m3, barra, sinComanda;
     let latte, baguette, pellegrino;
@@ -70,6 +70,7 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
+        ({ reiniciarPurga } = await import("../../src/modules/pos/pos.cuentas.repository.js"));
         server = appMod.default.listen(0);
         await new Promise((r) => server.once("listening", r));
         base = `http://127.0.0.1:${server.address().port}`;
@@ -397,8 +398,13 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         assert.equal(dos.items[0].cantidad, 4);
         const conNota = await agregar(c.id, [linea(latte, 1, "sin hielo")]);
         assert.equal(conNota.items.length, 2, "con notas no se mezcla");
-        const tope = await agregar(c.id, [linea(latte, 99)]);
-        assert.equal(tope.items.find((i) => !i.notas).cantidad, 99, "tope de 99 por renglón");
+        // El tope de 99 por renglón avisa en lugar de recortar en silencio, y no cambia lo ya capturado.
+        const pasado = await req("POST", api(`/cuentas/${c.id}/items`), { token: tokMesero, body: { lineas: [linea(latte, 99)] } });
+        assert.equal(pasado.status, 400);
+        assert.match(pasado.json.error, /máximo 99/);
+        assert.equal((await req("GET", api(`/cuentas/${c.id}`), { token: tokMesero })).json.data.items.find((i) => !i.notas).cantidad, 4);
+        const tope = await agregar(c.id, [linea(latte, 95)]);
+        assert.equal(tope.items.find((i) => !i.notas).cantidad, 99, "se puede llegar exactamente a 99");
         await req("POST", api(`/cuentas/${c.id}/enviar`), { token: tokMesero });
         const nuevo = await agregar(c.id, [linea(latte)]);
         assert.equal(nuevo.items.filter((i) => i.estado === "PENDIENTE").length, 1, "tras enviar, lo nuevo es otro renglón");
@@ -485,6 +491,7 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         } finally {
             await pool.query("ALTER TABLE pos_cuentas ENABLE TRIGGER pos_cuentas_actividad");
         }
+        reiniciarPurga(); // la revisión se hace a lo mucho una vez por minuto por empresa
         const mapa = (await req("GET", api("/mapa"), { token: tokMesero })).json.data.mesas;
         assert.equal(mapa.find((m) => m.id === mesa).cuentas.length, 0, "la vacía se liberó");
         assert.equal(mapa.find((m) => m.id === otra).cuentas.length, 1, "la que tiene productos se queda");

@@ -36,7 +36,7 @@ export default class PosController {
         ok(res, await this.cuentas.actualizarItem(req.params.empresa_id, req.params.id, req.params.itemId, req.body)));
     eliminarItem = asyncHandler(async (req, res) => ok(res, await this.cuentas.eliminarItem(req.params.empresa_id, req.params.id, req.params.itemId)));
     cancelarItem = asyncHandler(async (req, res) =>
-        ok(res, await this.cuentas.cancelarItem(req.params.empresa_id, req.params.id, req.params.itemId, req.body.motivo, await this.#autorizacion(req))));
+        ok(res, await this.cuentas.cancelarItem(req.params.empresa_id, req.params.id, req.params.itemId, req.body.motivo, { ...(await this.#autorizacion(req)), merma: req.body.merma === true })));
     descuentoItem = asyncHandler(async (req, res) =>
         ok(res, await this.ajustes.descuentoItem(req.params.empresa_id, req.params.id, req.params.itemId, req.body, exigir(await this.#autorizacion(req)))));
     descuentoCuenta = asyncHandler(async (req, res) =>
@@ -52,7 +52,7 @@ export default class PosController {
     juntar = asyncHandler(async (req, res) => ok(res, await this.cuentas.juntar(req.params.empresa_id, Number(req.params.id), req.body.destino_id)));
     dividir = asyncHandler(async (req, res) => ok(res, await this.cuentas.dividir(req.params.empresa_id, req.params.id, req.body.partes, req.user.id)));
     cancelarCuenta = asyncHandler(async (req, res) =>
-        ok(res, await this.cuentas.cancelarCuenta(req.params.empresa_id, req.params.id, { motivo: req.body.motivo, ...(await this.#autorizacion(req)) })));
+        ok(res, await this.cuentas.cancelarCuenta(req.params.empresa_id, req.params.id, { motivo: req.body.motivo, merma: req.body.merma === true, ...(await this.#autorizacion(req)) })));
     precuenta = asyncHandler(async (req, res) => ok(res, await this.cuentas.precuenta(req.params.empresa_id, req.params.id, req.user.id)));
 
     cobrar = asyncHandler(async (req, res) => ok(res, await this.cuentas.cobrar(req.params.empresa_id, req.params.id, req.body.pagos, req.user.id)));

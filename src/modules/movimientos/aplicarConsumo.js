@@ -28,11 +28,12 @@ async function bloquearInventario(client, aDescontar, autoProduccion) {
 }
 
 // Aplica el consumo en 3 fases: (1) salida de insumos auto-producidos, (2) entrada de los
-// elaborados auto-producidos, (3) VENTA del consumo. Siempre permite negativo: la venta ya
+// elaborados auto-producidos, (3) salida del consumo (VENTA, o MERMA si se preparó y no se vendió). Siempre permite negativo: la venta ya
 // ocurrió y un stock negativo es señal de inventario desfasado, no un error a bloquear.
 // Muta autoProduccion (producto, producto_id, stock_resultante...) para el reporte de quien llama.
 export async function aplicarConsumo(client, movimientoRepository, empresa_id, opts) {
-    const { consumo, autoProduccion, nombrePorId, referencia_tipo, referencia_id, usuario_id = null, motivoAuto, motivoVenta } = opts;
+    // tipoSalida: «VENTA» (lo vendido) o «MERMA» (lo preparado y no vendido, p. ej. un platillo cancelado ya enviado a cocina).
+    const { consumo, autoProduccion, nombrePorId, referencia_tipo, referencia_id, usuario_id = null, motivoAuto, motivoVenta, tipoSalida = "VENTA" } = opts;
     const errores = [];
     const negativos = [];
     const descontado = [];
@@ -89,7 +90,7 @@ export async function aplicarConsumo(client, movimientoRepository, empresa_id, o
     for (const item of aDescontar) {
         const mov = await movimientoRepository.aplicar(
             client, item.producto_id, empresa_id,
-            { tipo_movimiento: "VENTA", cantidad: item.cantidad, motivo: motivoVenta, ...ref },
+            { tipo_movimiento: tipoSalida, cantidad: item.cantidad, motivo: motivoVenta, ...ref },
             { permitirNegativo: true },
         );
         if (!mov) {
@@ -98,7 +99,7 @@ export async function aplicarConsumo(client, movimientoRepository, empresa_id, o
         }
         const registro = { producto_id: item.producto_id, producto: nombrePorId.get(item.producto_id), cantidad: item.cantidad, stock_nuevo: Number(mov.stock_nuevo) };
         descontado.push(registro);
-        if (Number(mov.stock_nuevo) < 0) negativos.push({ ...registro, origen: "VENTA" });
+        if (Number(mov.stock_nuevo) < 0) negativos.push({ ...registro, origen: tipoSalida });
     }
 
     return { descontado, negativos, errores };

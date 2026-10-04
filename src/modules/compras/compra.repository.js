@@ -1,6 +1,7 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
 import { propagarCostoInsumos } from "../../utils/costeo.js";
+import { hoyEmpresa } from "../../utils/zonaHoraria.js";
 import { normalizarLineaCompra, costoUltimaCompra, costoPresentacionDesde } from "./compra.logic.js";
 
 // Mismo umbral que CompraNuevaPage.tsx (UMBRAL_VARIACION_COSTO): a partir de este cambio (%)
@@ -11,7 +12,7 @@ const UMBRAL_VARIACION_COSTO = 40;
 const QUERIES = {
     INSERT_HEADER: `
         INSERT INTO compra (empresa_id, fecha, proveedor_id, referencia, usuario_id, estado)
-        VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4, $5, COALESCE($6, 'RECIBIDA'))
+        VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'RECIBIDA'))
         RETURNING id, empresa_id, fecha, proveedor_id, referencia, total, usuario_id, created_at, estado;`,
     // Bloquea inventario y trae datos del producto para el costeo
     LOCK_PRODUCTO: `
@@ -48,8 +49,12 @@ const QUERIES = {
     MARK_RECIBIDA: `UPDATE compra SET estado = 'RECIBIDA' WHERE id = $1 AND empresa_id = $2
         RETURNING id, empresa_id, fecha, proveedor_id, referencia, total, usuario_id, created_at, estado;`,
     LOCK_INV: `SELECT stock_actual FROM inventario WHERE producto_id = $1 FOR UPDATE`,
+    // Últimas compras del producto que sirven de referencia de costo: las vigentes, más la que se está anulando
+    // ($2, todavía sin marcar). Una compra ya anulada no puede devolverle al producto su costo.
     LAST_COMPRA_MOV: `SELECT m.referencia_id, m.costo_unitario FROM movimientosinventario m
-        WHERE m.producto_id = $1 AND m.referencia_tipo = 'COMPRA' ORDER BY m.fecha DESC, m.id DESC LIMIT 2`,
+        JOIN compra c ON c.id = m.referencia_id
+        WHERE m.producto_id = $1 AND m.referencia_tipo = 'COMPRA' AND (c.anulado = false OR c.id = $2)
+        ORDER BY m.fecha DESC, m.id DESC LIMIT 2`,
     MARK_ANULADA: `UPDATE compra SET anulado=true, anulado_at=now(), anulado_por=$3, motivo_anulacion=$4
         WHERE id=$1 AND empresa_id=$2
         RETURNING id, empresa_id, fecha, proveedor_id, referencia, total, usuario_id, created_at, anulado, anulado_at, anulado_por, motivo_anulacion, estado`,
@@ -148,7 +153,7 @@ export default class CompraRepository {
             // 3) Restaurar costo solo si esta compra fue la ÚLTIMA que lo actualizó.
             const afectados = [];
             for (const pid of ids) {
-                const movs = (await client.query(QUERIES.LAST_COMPRA_MOV, [pid])).rows;
+                const movs = (await client.query(QUERIES.LAST_COMPRA_MOV, [pid, id])).rows;
                 if (movs.length && Number(movs[0].referencia_id) === Number(id) && movs.length >= 2) {
                     const prev = Number(movs[1].costo_unitario);
                     const prod = (await client.query("SELECT cantidad_presentacion FROM productos WHERE id = $1", [pid])).rows[0];
@@ -183,7 +188,7 @@ export default class CompraRepository {
         return { ...cab.rows[0], lineas: lineas.rows };
     }
 
-    // Ingresa una compra: suma stock (COMPRA) y actualiza el costo con promedio ponderado.
+    // Ingresa una compra: suma stock (COMPRA) y deja como costo vigente el de ESTA compra (último costo).
     async crear(empresa_id, { fecha = null, proveedor_id = null, referencia = null, usuario_id = null, lineas, confirmarCostoAtipico = false }) {
         if (!Array.isArray(lineas) || lineas.length === 0) {
             throw ApiError.badRequest("Se requiere al menos una línea en 'lineas'");
@@ -207,7 +212,7 @@ export default class CompraRepository {
         try {
             await client.query("BEGIN");
             const cab = (await client.query(QUERIES.INSERT_HEADER, [
-                empresa_id, fecha, proveedor_id, referencia, usuario_id, null,
+                empresa_id, fecha ?? await hoyEmpresa(empresa_id, client), proveedor_id, referencia, usuario_id, null,
             ])).rows[0];
 
             const detalle = [];
@@ -326,7 +331,7 @@ export default class CompraRepository {
         try {
             await client.query("BEGIN");
             const cab = (await client.query(QUERIES.INSERT_HEADER, [
-                empresa_id, fecha, proveedor_id, referencia, usuario_id, "PEDIDO",
+                empresa_id, fecha ?? await hoyEmpresa(empresa_id, client), proveedor_id, referencia, usuario_id, "PEDIDO",
             ])).rows[0];
 
             const detalle = [];

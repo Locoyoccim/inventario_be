@@ -6,7 +6,7 @@ export const usuarioCreateSchema = z.object({
     is_admin: z.boolean().optional(),
     role_id: z.coerce.number().int().positive().optional(),
     email: z.string().trim().toLowerCase().email("email inválido").optional(),
-    password: z.string().min(6, "password debe tener al menos 6 caracteres").optional(),
+    password: z.string().min(8, "password debe tener al menos 8 caracteres").optional(),
 });
 // Update: password opcional (solo si se cambia), activo para activar/desactivar; is_owner no se toca.
 export const usuarioUpdateSchema = usuarioCreateSchema

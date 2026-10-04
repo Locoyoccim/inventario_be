@@ -48,8 +48,9 @@ export const itemUpdateSchema = z
 // Credenciales de un supervisor que autoriza en el equipo de quien no tiene permiso (las mismas del login).
 const autorizacion = z.object({ email: texto(120).min(1, "Captura el correo del supervisor"), password: z.string().min(1, "Captura la contraseña del supervisor").max(200) }).optional();
 
-export const motivoSchema = z.object({ motivo: texto(200).min(1, "Indica el motivo"), autorizacion });
-export const cancelarCuentaSchema = z.object({ motivo: texto(200).optional(), autorizacion });
+// merma: lo cancelado ya se preparó en cocina o barra; sus insumos se registran como merma (no se vendieron, pero se gastaron).
+export const motivoSchema = z.object({ motivo: texto(200).min(1, "Indica el motivo"), merma: z.boolean().optional(), autorizacion });
+export const cancelarCuentaSchema = z.object({ motivo: texto(200).optional(), merma: z.boolean().optional(), autorizacion });
 export const anularSchema = z.object({ motivo: texto(200).min(1, "Indica el motivo de la anulación"), autorizacion });
 export const descuentoSchema = z
     .object({
