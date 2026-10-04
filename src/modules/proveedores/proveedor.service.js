@@ -8,10 +8,6 @@ export default class ProveedorService {
         return await this.proveedorRepository.findAll(empresa_id, opts);
     }
 
-    async getProveedorById(empresa_id, id) {
-        return await this.proveedorRepository.findByID(empresa_id, id);
-    }
-
     async deleteProveedor(id, empresa_id) {
         return await this.proveedorRepository.remove(id, empresa_id);
     }

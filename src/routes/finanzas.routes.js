@@ -4,7 +4,7 @@ import { finanzasController } from "../container.js";
 import {
     categoriaGastoCreateSchema, categoriaGastoUpdateSchema,
     gastoCreateSchema, gastoUpdateSchema,
-    ingresoCreateSchema, ingresoUpdateSchema, ingresoLoteSchema,
+    ingresoCreateSchema, ingresoUpdateSchema,
     anularSchema,
 } from "../modules/finanzas/finanzas.schema.js";
 
@@ -22,9 +22,8 @@ export default function registerFinanzas(router) {
     router.post(`${b}/gastos/:id/anular`, requireAdmin, validate(anularSchema), finanzasController.anularGasto);
     router.put(`${b}/gastos/:id`, requireAdmin, validate(gastoUpdateSchema), finanzasController.actualizarGasto);
 
-    // Ingresos (crear/lote: Admin y Operativo; editar/anular: Admin)
+    // Ingresos (crear: Admin y Operativo; editar/anular: Admin)
     router.get(`${b}/ingresos`, finanzasController.listarIngresos);
-    router.post(`${b}/ingresos/lote`, requirePermiso("ingresos.crear"), validate(ingresoLoteSchema), finanzasController.crearIngresosLote);
     router.post(`${b}/ingresos/:id/anular`, requireAdmin, validate(anularSchema), finanzasController.anularIngreso);
     router.post(`${b}/ingresos`, requirePermiso("ingresos.crear"), validate(ingresoCreateSchema), finanzasController.crearIngreso);
     router.put(`${b}/ingresos/:id`, requireAdmin, validate(ingresoUpdateSchema), finanzasController.actualizarIngreso);

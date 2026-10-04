@@ -5,7 +5,6 @@ import { proveedorCreateSchema, proveedorUpdateSchema, fusionarSchema } from "..
 
 export default function registerProveedores(router) {
     router.get("/proveedores/:empresa_id", proveedorController.listar);
-    router.get("/proveedores/:empresa_id/:id", proveedorController.listarPorId);
     router.post("/proveedores/:empresa_id", requireAdmin, validate(proveedorCreateSchema), proveedorController.crear);
     router.put("/proveedores/:empresa_id/:id", requireAdmin, validate(proveedorUpdateSchema), proveedorController.actualizar);
     router.get("/proveedores/:empresa_id/:id/resumen", proveedorController.resumen);

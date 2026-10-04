@@ -218,8 +218,7 @@ export default class ReporteRepository {
                 (SELECT COUNT(*) FROM mesas WHERE empresa_id = $1 AND activo)::int AS mesas,
                 (SELECT COUNT(*) FROM impresoras WHERE empresa_id = $1 AND activo)::int AS impresoras,
                 (SELECT COUNT(*) FROM usuarios WHERE empresa_id = $1)::int AS usuarios,
-                (SELECT COUNT(*) FROM pos_cuentas WHERE empresa_id = $1 AND estado = 'PAGADA')::int AS ventas_pos,
-                (SELECT COUNT(*) FROM venta_diaria WHERE empresa_id = $1)::int AS ventas_csv`,
+                (SELECT COUNT(*) FROM pos_cuentas WHERE empresa_id = $1 AND estado = 'PAGADA')::int AS ventas_pos`,
             [empresa_id],
         )).rows[0];
         const pasos = [
@@ -230,7 +229,7 @@ export default class ReporteRepository {
             { id: "mesas", hecho: r.mesas > 0, cantidad: r.mesas, requerido: true, ruta: "/pos/configuracion" },
             { id: "impresora", hecho: r.impresoras > 0, cantidad: r.impresoras, requerido: false, ruta: "/pos/configuracion" },
             { id: "equipo", hecho: r.usuarios > 1, cantidad: Math.max(r.usuarios - 1, 0), requerido: false, ruta: "/usuarios" },
-            { id: "primera_venta", hecho: r.ventas_pos + r.ventas_csv > 0, cantidad: r.ventas_pos + r.ventas_csv, requerido: false, ruta: "/pos" },
+            { id: "primera_venta", hecho: r.ventas_pos > 0, cantidad: r.ventas_pos, requerido: false, ruta: "/pos" },
         ];
         return { pasos, listo: pasos.filter((p) => p.requerido).every((p) => p.hecho) };
     }
@@ -238,7 +237,7 @@ export default class ReporteRepository {
     // ¿La empresa ya opera con el POS? Si es así, importar el CSV deja de ser una tarea diaria y Inicio lo
     // oculta. Además, las cajas de días anteriores que siguen abiertas: su venta aún no llega a Finanzas.
     async estadoPos(empresa_id, hoy) {
-        const [opera, vencidos, csv] = await Promise.all([
+        const [opera, vencidos] = await Promise.all([
             pool.query("SELECT EXISTS (SELECT 1 FROM pos_turnos WHERE empresa_id = $1) AS opera", [empresa_id]),
             pool.query(
                 `SELECT t.id, t.fecha_negocio, t.abierto_at, u.nombre AS cajero
@@ -247,12 +246,9 @@ export default class ReporteRepository {
                  ORDER BY t.fecha_negocio, t.id`,
                 [empresa_id, hoy],
             ),
-            // ¿Alguna vez importó ventas por CSV? Si no, Inicio no le pide importar "las de ayer".
-            pool.query("SELECT EXISTS (SELECT 1 FROM venta_diaria WHERE empresa_id = $1) AS importa", [empresa_id]),
         ]);
         return {
             activo: opera.rows[0].opera,
-            csv_importado: csv.rows[0].importa,
             turnos_sin_cerrar: vencidos.rows.map((t) => ({ id: t.id, fecha_negocio: String(t.fecha_negocio).slice(0, 10), abierto_at: t.abierto_at, cajero: t.cajero })),
         };
     }

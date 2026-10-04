@@ -39,7 +39,6 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
     const limpiar = async () => {
         const e = [[A]];
         await pool.query("DELETE FROM venta_diaria WHERE empresa_id = ANY($1)", e);
-        await pool.query("DELETE FROM pos_map WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM receta_detalle WHERE receta_id IN (SELECT id FROM recetas WHERE empresa_id = ANY($1))", e);
         await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM movimientosinventario WHERE producto_id IN (SELECT id FROM productos WHERE empresa_id = ANY($1))", e);

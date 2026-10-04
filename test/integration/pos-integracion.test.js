@@ -32,7 +32,6 @@ describe("Integración HTTP — POS: integración con Finanzas, ventas por recet
     const limpiar = async () => {
         const e = [[A, B]];
         await pool.query("DELETE FROM venta_diaria WHERE empresa_id = ANY($1)", e);
-        await pool.query("DELETE FROM pos_map WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM ingresos WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM pos_impresiones WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM impresoras WHERE empresa_id = ANY($1)", e);
@@ -75,9 +74,7 @@ describe("Integración HTTP — POS: integración con Finanzas, ventas por recet
         return c.id;
     };
     const cobrar = (id, pagos) => req("POST", api(`/cuentas/${id}/cobrar`), { token: tokCajero, body: { pagos } });
-    const importar = (fecha) => req("POST", `/api/ventas/${A}/importar`, { token: tokAdmin, body: { fecha, lineas: [{ nombre_pos: "Latte POS", cantidad: 2 }] } });
     const resumen = async (desde, hasta) => (await req("GET", `/api/finanzas/${A}/resumen?desde=${desde}&hasta=${hasta}&agrupar=dia`, { token: tokAdmin })).json.data;
-    const lote = (fecha) => req("POST", `/api/finanzas/${A}/ingresos/lote`, { token: tokAdmin, body: { fecha, lineas: [{ metodo_pago: "EFECTIVO", monto: 10 }] } });
     const estado = async (token = tokMesero) => (await req("GET", `/api/reportes/${A}/pos?fecha=${hoy}`, { token })).json.data;
 
     before(async () => {
@@ -107,7 +104,6 @@ describe("Integración HTTP — POS: integración con Finanzas, ventas por recet
         const mkReceta = async (b) => (await req("POST", `/api/recetas/${A}`, { token: tokAdmin, body: { ...b, ingredientes: [{ producto_id: leche, cantidad: 1 }] } })).json.data.id;
         latte = { tipo: "RECETA", id: await mkReceta({ nombre: "Latte", categoria: "Bebidas", precio_venta: 55 }) };
         baguette = { tipo: "RECETA", id: await mkReceta({ nombre: "Baguette", categoria: "Platillos", precio_venta: 120 }) };
-        await req("POST", `/api/pos-map/${A}`, { token: tokAdmin, body: { nombre_pos: "Latte POS", tipo: "RECETA", receta_id: latte.id, factor: 1 } });
     });
 
     after(async () => {
@@ -116,58 +112,32 @@ describe("Integración HTTP — POS: integración con Finanzas, ventas por recet
         server.close();
     });
 
-    it("antes de operar con el POS: el CSV se importa normal y Inicio no marca el POS como activo", async () => {
+    it("antes de operar con el POS: Inicio no lo marca activo y la empresa nueva no figura como importadora de CSV", async () => {
         assert.equal((await estado()).activo, false);
-        assert.equal((await importar(ayer)).status, 201);
-        assert.equal((await req("DELETE", `/api/ventas/${A}/${ayer}`, { token: tokAdmin })).status, 200);
+        assert.equal((await estado()).csv_importado, undefined, "la importación del CSV ya no existe");
     });
 
-    it("abrir caja avisa si ese día ya se importó el CSV (no bloquea)", async () => {
-        assert.equal((await importar(hoy)).status, 201);
+    it("abrir caja: el turno queda abierto y el POS pasa a figurar activo", async () => {
         const abierta = await req("POST", api("/turnos/abrir"), { token: tokCajero, body: { fondo_inicial: 300 } });
         assert.equal(abierta.status, 201);
-        assert.equal(abierta.json.data.csv_importado, true);
+        assert.equal(abierta.json.data.csv_importado, undefined);
         const actual = await req("GET", api("/turnos/actual"), { token: tokCajero });
-        assert.equal(actual.json.data.csv_importado, true);
-        // Se deshace para seguir con el POS solo.
-        assert.equal((await req("DELETE", `/api/ventas/${A}/${hoy}`, { token: tokAdmin })).status, 200);
-        assert.equal((await req("GET", api("/turnos/actual"), { token: tokCajero })).json.data.csv_importado, false);
+        assert.equal(actual.json.data.id, abierta.json.data.id);
+        assert.equal((await estado()).activo, true);
     });
 
-    it("con una caja abierta o ventas cobradas, importar el CSV de ese día se rechaza (doble conteo)", async () => {
-        const abierta = await importar(hoy);
-        assert.equal(abierta.status, 409);
-        assert.match(abierta.json.error, /caja abierta/);
-        assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM venta_diaria WHERE empresa_id = $1 AND fecha = $2", [A, hoy])).rows[0].n, 0);
-
+    it("cobrar una cuenta en la caja abierta", async () => {
         const c = await cuentaLista([linea(latte), linea(baguette)]);
         assert.equal((await cobrar(c, [{ metodo: "EFECTIVO", monto: 175, recibido: 200 }])).status, 200);
-        const cobrada = await importar(hoy);
-        assert.equal(cobrada.status, 409);
-        assert.match(cobrada.json.error, /1 cuenta cobrada/);
-        // Otro día sigue libre.
-        assert.equal((await importar(ayer)).status, 201);
-        assert.equal((await req("DELETE", `/api/ventas/${A}/${ayer}`, { token: tokAdmin })).status, 200);
     });
 
-    it("GET /ventas/dias-pos lista los días que cubre el POS (para el calendario del CSV)", async () => {
-        const r = await req("GET", `/api/ventas/${A}/dias-pos?desde=${ayer}&hasta=${hoy}`, { token: tokAdmin });
-        assert.equal(r.status, 200);
-        assert.deepEqual(r.json.data, [{ fecha: hoy, cuentas: 1, total: 175, caja_abierta: true }]);
-        const otra = await mkUsuario(B, "IN-admB2", { admin: true });
-        assert.deepEqual((await req("GET", `/api/ventas/${B}/dias-pos`, { token: otra })).json.data, []);
-    });
-
-    it("el cierre manual del día se rechaza si el POS tiene caja ese día; el ingreso individual sigue disponible", async () => {
-        const r = await lote(hoy);
-        assert.equal(r.status, 409);
-        assert.match(r.json.error, /corte de caja/);
-        assert.equal((await lote(ayer)).status, 201);
+    it("el cierre manual por lote ya no existe; el ingreso individual sigue disponible", async () => {
+        const lote = await req("POST", `/api/finanzas/${A}/ingresos/lote`, { token: tokAdmin, body: { fecha: ayer, lineas: [{ metodo_pago: "EFECTIVO", monto: 10 }] } });
+        assert.equal(lote.status, 404);
         const solo = await req("POST", `/api/finanzas/${A}/ingresos`, {
             token: tokAdmin, body: { fecha: hoy, metodo_pago: "EFECTIVO", monto: 20, concepto: "Ventas antes del POS" },
         });
         assert.equal(solo.status, 201);
-        await pool.query("DELETE FROM ingresos WHERE empresa_id = $1 AND fecha = $2", [A, ayer]);
         await pool.query("DELETE FROM ingresos WHERE empresa_id = $1 AND fecha = $2", [A, hoy]);
     });
 

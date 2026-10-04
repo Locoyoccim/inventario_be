@@ -8,6 +8,8 @@ if (DB) {
     process.env.JWT_SECRET = process.env.JWT_SECRET || "test_secret_de_al_menos_32_caracteres_ok";
 }
 
+import { borrarVentaCsv, sembrarVentaCsv } from "../helpers/ventaHistorica.js";
+
 describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % ponderado)", { skip: SKIP }, () => {
     const A = 9701, B = 9702;
     let server, base, pool, signToken, tokAdmin, tokOper, tokAdminB, provId, cafeId, latteId, americanoId;
@@ -26,7 +28,6 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
     const limpiar = async () => {
         const e = [[A, B]];
         await pool.query("DELETE FROM venta_diaria WHERE empresa_id = ANY($1)", e);
-        await pool.query("DELETE FROM pos_map WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM receta_detalle WHERE receta_id IN (SELECT id FROM recetas WHERE empresa_id = ANY($1))", e);
         await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM movimientosinventario WHERE producto_id IN (SELECT id FROM productos WHERE empresa_id = ANY($1))", e);
@@ -65,9 +66,6 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
         latteId = (await req("POST", `/api/recetas/${A}`, { token: tokAdmin, body: { nombre: "Latte", categoria: "Bebidas", precio_venta: 116, iva_pct: 16, precio_incluye_iva: true, ingredientes: [{ producto_id: cafeId, cantidad: 1 }] } })).json.data.id;
         // Americano: precio 100 SIN IVA incluido -> neto 100; costo_total 10 (2×café)
         americanoId = (await req("POST", `/api/recetas/${A}`, { token: tokAdmin, body: { nombre: "Americano", categoria: "Bebidas", precio_venta: 100, iva_pct: 16, precio_incluye_iva: false, ingredientes: [{ producto_id: cafeId, cantidad: 2 }] } })).json.data.id;
-        await req("POST", `/api/pos-map/${A}`, { token: tokAdmin, body: { nombre_pos: "Latte", tipo: "RECETA", receta_id: latteId, factor: 1 } });
-        await req("POST", `/api/pos-map/${A}`, { token: tokAdmin, body: { nombre_pos: "Americano", tipo: "RECETA", receta_id: americanoId, factor: 1 } });
-        await req("POST", `/api/pos-map/${A}`, { token: tokAdmin, body: { nombre_pos: "Cafe suelto", tipo: "INSUMO", producto_id: cafeId, factor: 1 } });
     });
 
     after(async () => {
@@ -78,8 +76,8 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
     });
 
     it("mezcla de dos días con dos recetas: unidades, ingreso, neto y costo % ponderado (prueba 1)", async () => {
-        await req("POST", `/api/ventas/${A}/importar`, { token: tokAdmin, body: { fecha: "2026-08-01", lineas: [{ nombre_pos: "Latte", cantidad: 2 }, { nombre_pos: "Americano", cantidad: 3 }] } });
-        await req("POST", `/api/ventas/${A}/importar`, { token: tokAdmin, body: { fecha: "2026-08-02", lineas: [{ nombre_pos: "Latte", cantidad: 1 }] } });
+        await sembrarVentaCsv(pool, A, "2026-08-01", [{ receta_id: latteId, cantidad: 2, precio_unitario: 116 }, { receta_id: americanoId, cantidad: 3, precio_unitario: 100 }]);
+        await sembrarVentaCsv(pool, A, "2026-08-02", [{ receta_id: latteId, cantidad: 1, precio_unitario: 116 }]);
 
         const r = await req("GET", `/api/recetas/${A}/ventas?desde=2026-08-01&hasta=2026-08-02`, { token: tokAdmin });
         assert.equal(r.status, 200);
@@ -107,23 +105,20 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
         // Orden por unidades desc, empate -> nombre asc (Americano antes que Latte)
         assert.equal(r.json.data.recetas[0].nombre, "Americano");
         // limpiar
-        await req("DELETE", `/api/ventas/${A}/2026-08-01`, { token: tokAdmin });
-        await req("DELETE", `/api/ventas/${A}/2026-08-02`, { token: tokAdmin });
+        await borrarVentaCsv(pool, A, "2026-08-01");
+        await borrarVentaCsv(pool, A, "2026-08-02");
     });
 
     it("precio_unitario null usa precio_venta (prueba 2)", async () => {
-        await req("POST", `/api/ventas/${A}/importar`, { token: tokAdmin, body: { fecha: "2026-08-05", lineas: [{ nombre_pos: "Latte", cantidad: 2 }] } });
-        await pool.query("UPDATE venta_diaria_detalle SET precio_unitario = NULL WHERE receta_id = $1", [latteId]);
+        await sembrarVentaCsv(pool, A, "2026-08-05", [{ receta_id: latteId, cantidad: 2, precio_unitario: null }]);
         const r = await req("GET", `/api/recetas/${A}/ventas?desde=2026-08-05&hasta=2026-08-05`, { token: tokAdmin });
         const latte = r.json.data.recetas.find((x) => x.receta_id === latteId);
         assert.equal(latte.ingreso, 232);       // 2 × 116 (usa r.precio_venta)
         assert.equal(latte.ingreso_neto, 200);
-        await req("DELETE", `/api/ventas/${A}/2026-08-05`, { token: tokAdmin });
+        await borrarVentaCsv(pool, A, "2026-08-05");
     });
 
-    it("un día revertido no cuenta (prueba 3)", async () => {
-        await req("POST", `/api/ventas/${A}/importar`, { token: tokAdmin, body: { fecha: "2026-08-07", lineas: [{ nombre_pos: "Latte", cantidad: 9 }] } });
-        await req("DELETE", `/api/ventas/${A}/2026-08-07`, { token: tokAdmin });
+    it("un día sin ventas no cuenta (prueba 3)", async () => {
         const r = await req("GET", `/api/recetas/${A}/ventas?desde=2026-08-07&hasta=2026-08-07`, { token: tokAdmin });
         assert.equal(r.json.data.dias_importados, 0);
         assert.deepEqual(r.json.data.recetas, []);
@@ -144,11 +139,11 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
     });
 
     it("líneas SIN_MAPEO/INSUMO van en sin_receta, no en recetas (prueba 6)", async () => {
-        await req("POST", `/api/ventas/${A}/importar`, { token: tokAdmin, body: { fecha: "2026-08-12", lineas: [{ nombre_pos: "Cafe suelto", cantidad: 5 }, { nombre_pos: "Desconocido", cantidad: 2 }] } });
+        await sembrarVentaCsv(pool, A, "2026-08-12", [{ producto_id: cafeId, cantidad: 5 }, { nombre_pos: "Desconocido", cantidad: 2 }]);
         const r = await req("GET", `/api/recetas/${A}/ventas?desde=2026-08-12&hasta=2026-08-12`, { token: tokAdmin });
         assert.deepEqual(r.json.data.recetas, [], "ninguna receta");
         assert.equal(r.json.data.sin_receta.lineas, 2);
         assert.equal(r.json.data.sin_receta.unidades, 7);
-        await req("DELETE", `/api/ventas/${A}/2026-08-12`, { token: tokAdmin });
+        await borrarVentaCsv(pool, A, "2026-08-12");
     });
 });

@@ -13,13 +13,6 @@ export default class UsuarioController {
         res.json({ success: true, data: await this.usuarioService.getAllUsuarios(empresa_id) });
     });
 
-    listarPorId = asyncHandler(async (req, res) => {
-        const { empresa_id, id } = req.params;
-        const usuario = await this.usuarioService.getUsuarioById(empresa_id, id);
-        if (!usuario) throw ApiError.notFound("Usuario no encontrado");
-        res.json({ success: true, data: usuario });
-    });
-
     crear = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         if (!(await this.usuarioService.existsEmpresa(empresa_id)))
@@ -33,11 +26,5 @@ export default class UsuarioController {
         const actualizado = await this.usuarioService.updateUsuario(empresa_id, id, req.body, req.user);
         if (!actualizado) throw ApiError.notFound("Usuario no encontrado");
         res.json({ success: true, data: actualizado });
-    });
-
-    eliminar = asyncHandler(async (req, res) => {
-        const { empresa_id, id } = req.params;
-        await this.usuarioService.deleteUsuarios(empresa_id, id);
-        res.json({ success: true, message: "Usuario eliminado exitosamente" });
     });
 }

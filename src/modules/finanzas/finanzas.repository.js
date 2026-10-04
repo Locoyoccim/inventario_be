@@ -1,6 +1,5 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
-import { usoPosDia } from "../pos/pos.dias.js";
 
 // UNION del libro (ingresos + gastos no anulados + compras). $1 = empresa_id.
 const LIBRO_UNION = `(
@@ -188,38 +187,6 @@ export default class FinanzasRepository {
             [empresa_id, fecha, metodo_pago, monto, concepto, nota, usuario_id]
         );
         return await this.getIngresoById(empresa_id, r.rows[0].id);
-    }
-
-    async crearIngresosLote(empresa_id, fecha, lineas, usuario_id) {
-        const client = await pool.connect();
-        try {
-            await client.query("BEGIN");
-            // El corte de caja del POS ya genera los ingresos de ese día: el cierre manual los duplicaría.
-            const uso = await usoPosDia(client, empresa_id, fecha);
-            if (uso.bloquea_cierre_manual) {
-                throw ApiError.conflict(
-                    `El POS tiene caja registrada el ${fecha}: sus ingresos salen del corte de caja. Para sumar algo que no pasó por el POS captura un ingreso individual.`,
-                );
-            }
-            const ids = [];
-            for (const l of lineas) {
-                const r = await client.query(
-                    `INSERT INTO ingresos (empresa_id, fecha, metodo_pago, monto, usuario_id)
-                     VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-                    [empresa_id, fecha, l.metodo_pago, l.monto, usuario_id]
-                );
-                ids.push(r.rows[0].id);
-            }
-            await client.query("COMMIT");
-            const out = [];
-            for (const id of ids) out.push(await this.getIngresoById(empresa_id, id, client));
-            return out;
-        } catch (e) {
-            await client.query("ROLLBACK");
-            throw e;
-        } finally {
-            client.release();
-        }
     }
 
     async actualizarIngreso(empresa_id, id, data) {

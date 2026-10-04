@@ -92,7 +92,7 @@ Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email
 Cada usuario es **Admin** (`is_owner` o `is_admin` = true) u **Operativo** (lo demás).
 - **Admin**: acceso total.
 - **Operativo**: siempre puede **leer** todo (productos, inventario, recetas, reportes, categorías). Para **crear** (compras, conteos, producción, gastos, ingresos) depende de su **rol** (`usuarios.role_id` → catálogo en `GET /api/roles/:empresa_id`): cada rol trae una lista de `permisos` (claves `compras.crear`, `conteos.crear`, `produccion.crear`, `gastos.crear`, `ingresos.crear`). Sin `role_id` asignado, un Operativo se trata como el rol "Operativo completo" (todas esas claves) — compatibilidad con usuarios creados antes de que existiera este sistema. Falta de permiso para la acción → `403 "Tu rol no tiene permiso para esta acción"`.
-- Un Operativo NO puede crear/editar productos, recetas, costos, proveedores, usuarios, pos-map ni categorías, ni revertir ventas, sin importar su rol → `403`.
+- Un Operativo NO puede crear/editar productos, recetas, costos, proveedores, usuarios ni categorías, sin importar su rol → `403`.
 - Un usuario **desactivado** (`activo: false`) no puede iniciar sesión (`403`) y sus tokens vigentes dejan de servir (`401`, a más tardar en 1 minuto).
 
 Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo `email` + `password`, `is_admin`/`is_owner` en `false` y, opcionalmente, `role_id`.
@@ -114,11 +114,7 @@ El rol **Mesero** no tiene ningún permiso hoy: es un lugar reservado para cuand
 ---
 
 ## Empresas
-- `GET /api/empresas` — lista (solo la propia)
-- `GET /api/empresas/:id`
-- `POST /api/empresas` *(plataforma)* — crea un tenant nuevo; exige el header `x-platform-token: <PLATFORM_TOKEN>` (sin esa variable, el endpoint queda cerrado). `{ "nombre", "titular?", "telefono?", "email?", "domicilio?" }`
-- `PUT /api/empresas/:id` *(owner/admin)*
-- `DELETE /api/empresas/:id` *(solo dueño)* — borra la empresa (en cascada); requiere `is_owner`.
+El alta, baja y datos generales de las empresas son del usuario maestro de plataforma (`/api/platform/empresas`). Cada empresa solo consulta y ajusta su propia configuración:
 - `GET /api/empresas/:id/configuracion` — `{ iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria }` (cualquier usuario de la empresa).
 - `PUT /api/empresas/:id/configuracion` *(owner/admin)* — campos opcionales (`iva_pct`, `precios_incluyen_iva`, `food_cost_objetivo`, `zona_horaria`). La **zona horaria** (nombre IANA, por defecto `America/Mexico_City`, validada contra Postgres) decide qué día es «hoy» y a qué día pertenece cada movimiento en Finanzas, Reportes y Kardex, sin depender de la zona del servidor (migración 038). Cambiar el IVA de la empresa **no** modifica recetas existentes; solo aplica a las nuevas. Con `?aplicar_a_recetas=true` propaga el IVA a **todas** las recetas y responde `recetas_actualizadas`. (migración 018)
 
@@ -138,15 +134,14 @@ Nivel aparte de Admin/Operativo: exige `usuarios.is_platform_admin = true` (`req
 - `POST /api/platform/empresas/:id/resetear-password` — `{ "password": "min6chars" }`. Fija directamente la contraseña del dueño de esa empresa, para soporte cuando pierde acceso.
 
 ## Usuarios
-- `GET /api/usuarios/:empresa_id` · `GET /api/usuarios/:empresa_id/:id`
+- `GET /api/usuarios/:empresa_id`
 - Cada usuario trae `email`, `activo`, `role_id` y `rol`.
 - `POST /api/usuarios/:empresa_id` *(Admin)* — `{ "nombre", "codigo_ingreso", "puesto?", "role_id?", "is_admin?", "email?", "password?" }`
 - `PUT /api/usuarios/:empresa_id/:id` *(Admin)* — `nombre` y `codigo_ingreso` requeridos; el resto es opcional y **lo que no se envía se conserva**: `puesto`, `is_admin`, `role_id`, `email`, `password` (se hashea), `activo` y `forzar_cierre_sesion` (revoca las sesiones vigentes del usuario). `is_owner` no se cambia por API. Nadie puede desactivarse ni quitarse Admin a sí mismo, y al dueño no se le desactiva ni se le quita Admin (`400`).
-- `DELETE /api/usuarios/:empresa_id/:id` *(Admin)* — borrado físico; para conservar historial usa `activo: false`.
 
 ## Proveedores
 Cada proveedor trae `activo`. El borrado es **lógico** (soft-delete): nunca se elimina físicamente, para conservar el historial de compras y productos.
-- `GET /api/proveedores/:empresa_id` — solo **activos** por defecto; `?incluir_inactivos=true` incluye los desactivados. `GET /api/proveedores/:empresa_id/:id`.
+- `GET /api/proveedores/:empresa_id` — solo **activos** por defecto; `?incluir_inactivos=true` incluye los desactivados. 
 - `POST /api/proveedores/:empresa_id` — `{ "nombre", "telefono?", "email?", "domicilio?" }`
 - `PUT /api/proveedores/:empresa_id/:id` — mismos campos; acepta `"activo": true` para **reactivar** un proveedor desactivado.
 - `DELETE /api/proveedores/:empresa_id/:id` — **desactiva** (`activo=false`) y devuelve el proveedor.
@@ -201,9 +196,6 @@ Si cambia el costo **o la merma**, las recetas que usan el producto se recalcula
 ### `GET /api/productos/:empresa_id/:id/uso`
 Dónde se usa el producto, para decidir antes de desactivarlo. Respuesta: `{ recetas: [{ id, nombre }], mapeos_pos: [{ id, nombre_pos }] }` — recetas que lo incluyen como ingrediente y mapeos POS tipo `INSUMO` que apuntan a él. Producto inexistente en la empresa → `404`.
 
-## Inventario (solo lectura)
-- `GET /api/inventario/:empresa_id` · `GET /api/inventario/:empresa_id/:id`
-
 ## Movimientos de inventario
 - `GET /api/movimientos/:empresa_id` — **kardex de la empresa**, paginado. Filtros: `?producto_id=`, `?tipo=COMPRA|VENTA|MERMA|AJUSTE|DEVOLUCION|PRODUCCION`, `?desde=YYYY-MM-DD`, `?hasta=YYYY-MM-DD`, `?sentido=entrada|salida`. Cada fila trae `producto`, `unidad_medida` y `usuario`.
 - `GET /api/productos/:empresa_id/:id/movimientos` — historial paginado del producto
@@ -228,7 +220,7 @@ Campos: `nombre, categoria, precio_venta, costo_produccion?, proteccion_pct?, in
 Filtros: `?q=`, `?categoria=`, `?incluir_inactivos=true`.
 
 ### `GET /api/recetas/:empresa_id/ventas?desde=&hasta=` *(Admin)*
-Mezcla de ventas por receta y **costo % ponderado** (ingeniería de menú), agregando el CSV importado (`venta_diaria` + `venta_diaria_detalle`) **y las cuentas cobradas en el POS** (`pos_cuentas` `PAGADA` + `pos_cuenta_items` no cancelados). Un día nunca viene de las dos fuentes: la importación rechaza los días que cubre el POS. En los renglones del POS `ingreso` es lo cobrado (con descuento; la cortesía suma unidades pero no ingreso) y el IVA sigue el precio congelado del renglón. Por defecto, los últimos 30 días hasta ayer. Valida `desde <= hasta` y rango ≤ 366 días (mismos mensajes que `finanzas/resumen`; `400` con `details`). Solo cuenta líneas `tipo='RECETA'`; los días revertidos ya no existen (CASCADE). El `costo_teorico` usa el **costo vigente** de la receta (no el histórico). Por receta: `unidades`, `ingreso` (precio capturado, normalmente con IVA), `ingreso_neto` (sin IVA cuando `precio_incluye_iva`), `costo_teorico` = `unidades × costo_total`, `costo_pct` = `costo_teorico / ingreso_neto × 100` (null si neto 0) y `utilidad`. Ordenadas por `unidades` desc (incluye inactivas si se vendieron). `totales.costo_pct` es el ponderado (Σcosto_teorico / Σingreso_neto). `sin_receta: { lineas, unidades }` = líneas `SIN_MAPEO`/`INSUMO` que quedan fuera. Sin días importados → `recetas: []`, totales en 0, `costo_pct: null`, `dias_importados: 0`. `dias_importados` cuenta los días con ventas (CSV o POS); `dias_pos` cuántos de ellos se cobraron en el POS. `sin_receta` incluye también los renglones del POS que son producto (no receta).
+Mezcla de ventas por receta y **costo % ponderado** (ingeniería de menú), agregando las cuentas cobradas en el POS **y el historial de ventas ya importadas del CSV de Toteat (`venta_diaria` + `venta_diaria_detalle`, que se conserva; la importación se retiró)** (`pos_cuentas` `PAGADA` + `pos_cuenta_items` no cancelados). En los renglones del POS `ingreso` es lo cobrado (con descuento; la cortesía suma unidades pero no ingreso) y el IVA sigue el precio congelado del renglón. Por defecto, los últimos 30 días hasta ayer. Valida `desde <= hasta` y rango ≤ 366 días (mismos mensajes que `finanzas/resumen`; `400` con `details`). Solo cuenta líneas `tipo='RECETA'`; los días revertidos ya no existen (CASCADE). El `costo_teorico` usa el **costo vigente** de la receta (no el histórico). Por receta: `unidades`, `ingreso` (precio capturado, normalmente con IVA), `ingreso_neto` (sin IVA cuando `precio_incluye_iva`), `costo_teorico` = `unidades × costo_total`, `costo_pct` = `costo_teorico / ingreso_neto × 100` (null si neto 0) y `utilidad`. Ordenadas por `unidades` desc (incluye inactivas si se vendieron). `totales.costo_pct` es el ponderado (Σcosto_teorico / Σingreso_neto). `sin_receta: { lineas, unidades }` = líneas `SIN_MAPEO`/`INSUMO` que quedan fuera. Sin días importados → `recetas: []`, totales en 0, `costo_pct: null`, `dias_importados: 0`. `dias_importados` cuenta los días con ventas (CSV o POS); `dias_pos` cuántos de ellos se cobraron en el POS. `sin_receta` incluye también los renglones del POS que son producto (no receta).
 ```json
 { "periodo": { "desde": "2026-08-27", "hasta": "2026-09-25" }, "dias_importados": 24, "dias_pos": 9,
   "recetas": [ { "receta_id": 12, "nombre": "Latte", "categoria": "Bebidas", "es_preparacion": false, "activo": true,
@@ -264,16 +256,11 @@ Body: `nombre`, `categoria`, `precio_venta`, opcionales `activo`, `costo_producc
 - Una preparación no puede llevarse a sí misma como ingrediente → `400`. `es_preparacion` y `unidad` no se editan aquí.
 - **`rendimiento`** (solo en preparaciones, `es_preparacion = true`): editable. Al cambiarlo, el backend recalcula `costo_total` de esa receta (el costo por unidad del elaborado cambia porque se reparte entre más o menos unidades) y dispara la misma **cascada de costos** hacia cualquier receta que use ese elaborado como ingrediente. La respuesta agrega `recetas_actualizadas` (cuántas recetas recibieron el recosteo).
 
+### `GET /api/recetas/:receta_id/detalle`
+Ingredientes de la receta (`producto`, `unidad_medida`, `cantidad`, `costo_unitario`, `costo_final`). El guard de `:receta_id` exige que la receta sea de la empresa del token (`403` si no, `404` si no existe). Los ingredientes se editan con `PUT /api/recetas/:empresa_id/:id` (`ingredientes[]` reemplaza el escandallo completo).
+
 ### Cascada de costos
 Cuando cambia el costo o la **merma** de un insumo (compra, `PUT` de producto) o el costo de una preparación (su receta cambió), se refresca `receta_detalle.costo_unitario` (= **costo útil**) de las recetas que lo usan y se recalcula su `costo_total`; si esas recetas son preparaciones, la cascada continúa (con protección contra ciclos).
-
-## Detalle de receta (ingredientes)
-- `GET /api/recetas/:receta_id/detalle` · `GET .../detalle/:id`
-- `POST /api/recetas/:receta_id/detalle` — `{ "producto_id": 7, "cantidad": 200 }`
-- `PUT .../detalle/:id` · `DELETE .../detalle/:id`
-- Cada renglón trae `producto_id`, `producto`, `unidad_medida`, `es_elaborado`, `cantidad`, `costo_unitario` (costo del insumo al guardar el renglón) y `costo_final`.
-
----
 
 ## Producción (preparaciones)
 
@@ -351,36 +338,10 @@ Respuesta: `data.detalle` (varianza y valor por producto) + `data.resumen` (`val
 - `GET /api/conteos/:empresa_id` · `GET /api/conteos/:empresa_id/:id`
 - `POST /api/conteos/:empresa_id/:id/anular` *(Admin)* — `{ "motivo": "..." }`. Revierte cada línea con un `AJUSTE` de signo contrario a la varianza aplicada (`referencia_tipo=CONTEO_ANULADO`) y marca `anulado=true`. Mismo patrón de bloqueo de fila e idempotencia que compras/producción: reintentar sobre un conteo ya anulado → `409`.
 
-## Ventas (importación diaria del POS)
-
-### PosMap — mapea nombres del reporte a recetas/insumos
-- `GET /api/pos-map/:empresa_id`
-- `POST /api/pos-map/:empresa_id` — `{ "nombre_pos": "Chilaquiles Verdes", "tipo": "RECETA|INSUMO|IGNORAR", "receta_id?": 2, "producto_id?": null, "factor?": 1 }`
-- `POST /api/pos-map/:empresa_id/bulk` — arreglo de mapeos (devuelve los creados) · `PUT` · `DELETE`. `receta_id`/`producto_id` deben ser de la misma empresa, o `400`.
-
-### Importar ventas
-- `POST /api/ventas/:empresa_id/importar`
-```json
-{ "fecha": "2026-09-20", "lineas": [ { "nombre_pos": "Chilaquiles Verdes", "cantidad": 4 } ] }
-```
-También acepta `"csv": "<reporte Toteat crudo>"`. Explota recetas a insumos y descuenta stock. Reimportar el mismo día → `409` (revierte primero).
-
-**El POS propio tiene prioridad (sin doble conteo).** Si el POS ya cobró cuentas ese día (`fecha_negocio`) o hay una caja abierta con esa fecha, importar el CSV → `409` («El POS ya registra ventas del …»): se descontaría dos veces el inventario y se duplicarían las ventas. Para lo contrario, `GET /pos/:e/turnos/actual` y `POST /pos/:e/turnos/abrir` devuelven `csv_importado` (si ese día ya hay CSV importado) para que el POS avise; no bloquea.
-
-**Descuento en bruto (merma):** las recetas se capturan en **neto** (lo que va al plato); al descontar inventario, cada insumo con `merma_pct` se descuenta en **bruto** = `neto / (1 − merma/100)`, redondeado a 3 decimales (ej. 100 g netos con 8% → 108.696 g). Aplica a importar/preview de ventas, auto-producción y `produccion`. Los mapeos POS tipo **INSUMO** se descuentan tal cual (sin merma); compras y conteo siguen en bruto. El movimiento usa el costo **bruto**, así el valor cuadra (bruto × costo bruto = neto × costo útil).
-
-**Auto-producción de preparaciones:** si un platillo lleva una preparación (p. ej. salsa) y el stock de esa preparación no alcanza, el faltante se **auto-produce** desde sus insumos dentro de la misma transacción (recursivo, tope de 5 niveles; un ciclo entre preparaciones → `400`). Movimientos: `PRODUCCION` de salida por los insumos (permite negativo), `PRODUCCION` de entrada por el elaborado (costo = costo vigente del elaborado) y la `VENTA` normal del consumo — así la preparación queda en 0 y no negativa. Si un insumo no alcanza, queda negativo y el import **no** se detiene.
-
-La respuesta de `importar` (y de `preview`) agrega `auto_produccion: [{ producto_id, producto, receta_id, cantidad, unidad, lotes_equivalentes, insumos: [{ producto_id, producto, cantidad, stock_resultante }] }]`. En `preview`, el `consumo` lista cada producto con `{ producto_id, producto, cantidad, existencia_resultante, negativo }` (incluye los insumos crudos de la auto-producción).
-- `GET /api/ventas/:empresa_id/:fecha` (consultar) — devuelve `movimientos` y `auto_produccion` (reconstruida desde los movimientos) · `DELETE /api/ventas/:empresa_id/:fecha` (revertir) — deshace **todos** los movimientos del día (VENTA→DEVOLUCION; la auto-producción se revierte con el inverso de `PRODUCCION`, que **no** afecta `costo_ventas` ni la merma), dejando cada existencia exactamente como estaba.
-- `GET /api/ventas/:empresa_id/dias-pos?desde=&hasta=` — días que cubre el POS propio (cuentas `PAGADA` o caja abierta): `{ fecha, cuentas, total, caja_abierta }`. Alimenta el calendario de Ventas, donde esos días no se ofrecen para importar.
-- `GET /api/ventas/:empresa_id?desde=&hasta=` — días importados: `{ fecha, total_lineas, total_unidades, procesado_at, insumos_negativos }`. `insumos_negativos` cuenta los productos que quedaron en negativo al importar, tanto por `VENTA` como por la `PRODUCCION` de la auto-producción.
-- `POST /api/ventas/:empresa_id/preview` — `{ csv | lineas }` devuelve el mapeo, el consumo resultante y la auto-producción **sin guardar nada**.
-
 ## Reportes (solo lectura)
 - `GET /api/reportes/:empresa_id/estado?fecha=YYYY-MM-DD` — KPIs del día: valor de inventario, alertas, compras/consumo/mermas del día.
 - `GET /api/reportes/:empresa_id/primeros-pasos` — avance de la puesta en marcha de una empresa nueva, deducido de sus datos: `{ pasos: [{ id, hecho, cantidad, requerido, ruta }], listo }` con los pasos `categorias`, `proveedores`, `insumos`, `recetas`, `mesas`, `impresora`, `equipo` y `primera_venta`. `listo` = los pasos `requerido` (categorías, insumos, recetas con precio y mesas) ya existen. Inicio lo muestra como guía.
-- `GET /api/reportes/:empresa_id/pos?fecha=YYYY-MM-DD` — señal ligera para Inicio y el menú: `{ activo, csv_importado, turnos_sin_cerrar: [{ id, fecha_negocio, abierto_at, cajero }] }`. `csv_importado` = la empresa alguna vez importó ventas por CSV (si no, Inicio no le pide importar «las de ayer»). `activo` = la empresa ya abrió al menos una caja (el CSV de Toteat pasa a ser respaldo); `turnos_sin_cerrar` = cajas abiertas de días **anteriores** a `fecha` (default hoy): su venta aún no llega a Finanzas.
+- `GET /api/reportes/:empresa_id/pos?fecha=YYYY-MM-DD` — señal ligera para Inicio y el menú: `{ activo, turnos_sin_cerrar: [{ id, fecha_negocio, abierto_at, cajero }] }`. `activo` = la empresa ya abrió al menos una caja; `turnos_sin_cerrar` = cajas abiertas de días **anteriores** a `fecha` (default hoy): su venta aún no llega a Finanzas.
 - `GET /api/reportes/:empresa_id/inventario` — valorización por producto + totales. Los productos con `compra_al_producir = true` nunca salen como `bajo_minimo`.
 - `GET /api/reportes/:empresa_id/alertas` — bajo mínimo con acción (`comprar`/`producir`). Excluye los productos con `compra_al_producir = true`.
 - `GET /api/reportes/:empresa_id/actividad?desde=&hasta=` — movimientos por tipo + merma (default últimos 30 días).
@@ -417,11 +378,7 @@ Valida categoría activa y de la empresa, y proveedor (si viene) de la empresa y
 Se permiten varios por día (uno por método o varios conceptos).
 - `GET /api/finanzas/:e/ingresos?desde&hasta&metodo_pago&incluir_anulados&limit&offset`
 - `POST /api/finanzas/:e/ingresos` *(Admin y Operativo)* — `{ "fecha", "metodo_pago", "monto", "concepto"?, "nota"? }` (`concepto` default `"Venta del día"`).
-- `POST /api/finanzas/:e/ingresos/lote` *(Admin y Operativo)* — cierre del día en una transacción:
-```json
-{ "fecha": "2026-09-21", "lineas": [ { "metodo_pago": "EFECTIVO", "monto": 3200 }, { "metodo_pago": "TARJETA", "monto": 1850 } ] }
-```
-El cierre del día es para días **sin POS**: si el POS tiene caja (abierta o cerrada) con esa `fecha_negocio`, el lote responde **409** — sus ingresos salen del corte de caja. Para sumar algo que no pasó por el POS se usa el ingreso individual (`POST /ingresos`).
+> El cierre manual del día por lote (`/ingresos/lote`) se retiró: los ingresos del POS salen del corte de caja. Para sumar algo que no pasó por el POS se usa el ingreso individual (`POST /ingresos`).
 - `PUT /api/finanzas/:e/ingresos/:id` *(Admin)*; `POST /api/finanzas/:e/ingresos/:id/anular` *(Admin)* `{ "motivo" }`.
 
 ### Libro (vista unificada) *(Admin)*
@@ -481,7 +438,7 @@ POS propio: mesas, cuentas, comandas por área, precuenta, apertura de caja **co
 - `POST /cuentas/:id/anular` *(cobrar + autorización)* `{ motivo, autorizacion? }` — solo cuentas `PAGADA` (**409** si ya está anulada o sigue abierta). En una transacción: regresa el inventario (`DEVOLUCION` al mismo costo, también la producción automática), marca los pagos como `anulado`, registra el dinero devuelto en `pos_devoluciones` en el turno de quien lo entrega (si hubo efectivo necesita caja abierta: **409** «Abre tu caja») y, si el turno de la venta ya cerró, descuenta lo devuelto de los ingresos que generó el corte (si llegan a 0 el ingreso se anula). El corte ya cerrado conserva sus cifras; la anulación se ve en `anuladas`. Para Finanzas, el costo de ventas ya considera las `DEVOLUCION` de `POS_CUENTA`.
 - `POST /cuentas/:id/corregir-pago` *(cobrar + autorización)* `{ pagos: [{ metodo, monto, propina?, referencia? }], motivo, autorizacion? }` — corrige **cómo se pagó** una cuenta `PAGADA` (método, monto, propina o referencia) sin anularla. Los montos deben sumar exactamente el total de la cuenta (que no cambia, así que el inventario tampoco) y deben ser distintos a los actuales (**400**). **409** si la cuenta está abierta o anulada. En una transacción: reemplaza los pagos en el mismo turno, actualiza la propina de la cuenta, deja la copia del ticket con el pago correcto (`corregido: true`, sin abrir cajón), guarda cómo estaba y cómo quedó en `pos_correcciones_pago` y lo registra en `pos_autorizaciones` (`CORREGIR_PAGO`). **Si el corte del turno ya cerró**, el cierre original (`resumen`, esperado y diferencia) **no se modifica**: se ajustan los `ingresos` que mandó a Finanzas por el cambio de cada método (suben, bajan, se anulan si llegan a 0 o se crea el del método nuevo) y la corrección queda marcada `turno_cerrado`. Una anulación posterior descuenta lo ya corregido. La cuenta devuelve `correcciones` y `turno_cerrado`.
 - `POST /cuentas/:id/ticket` *(ordenar)* — vuelve a imprimir el ticket de una cuenta cobrada; sale marcado como copia y sin abrir el cajón (**404** si la cuenta no tiene ticket).
-- `GET /turnos/actual` *(ver)* · `POST /turnos/abrir` *(cobrar)* `{ fondo_inicial }` — un cajero no puede tener dos turnos abiertos (**409**). Ambos devuelven `csv_importado` (¿ya se importó el CSV de Toteat de la `fecha_negocio` del turno?) para avisar del doble conteo.
+- `GET /turnos/actual` *(ver)* · `POST /turnos/abrir` *(cobrar)* `{ fondo_inicial }` — un cajero no puede tener dos turnos abiertos (**409**).
 - `POST /cuentas/:id/descartar` *(ordenar)* — salir de una cuenta sin enviar: borra los renglones `PENDIENTE` y, si la cuenta no tiene nada más (ni enviados, ni comandas, ni autorizaciones, ni cuentas ligadas por juntar/dividir), la **elimina** y deja la mesa libre; el folio se devuelve si era el último y una reservación que se había sentado vuelve a `confirmada`. Responde `{ eliminada, cuenta }` (`cuenta` = la cuenta ya sin lo pendiente cuando no se borra). **409** si la cuenta ya no está abierta. Además, `GET /mapa` libera por su cuenta las cuentas abiertas sin ningún renglón ni comanda que llevan más de 30 minutos sin actividad (app cerrada, sin señal…).
 - `PATCH /cuentas/:id` *(ordenar)* `{ nombre_cliente?, personas? }` — nombre o referencia de la cuenta («Fam. Hernández») y número de personas; `""` quita el nombre. Solo cuentas abiertas (**409**). `POST /cuentas` también acepta `nombre_cliente` en cuentas de mesa. Las comandas, precuentas y tickets de una cuenta de mesa llevan `cliente` (ese nombre) en el payload de impresión; el agente ≥ 1.4.0 lo imprime en negrita antes de mesero y personas. `GET /mapa` y las cuentas traen `mesero_id` y `actualizada_at` (última actividad: producto, envío, descuento, nombre…; la mantienen triggers de la migración 036) junto a `abierta_at`.
 - **Reservaciones.** `POST /cuentas` acepta `reservacion_id`: abrir la cuenta de una reservación la marca `sentada` (si estaba `pendiente`/`confirmada`) en la misma transacción y la deja ligada; una reservación con cuenta no cancelada → **409** («ya tiene la cuenta folio N»). `GET /api/reservaciones/:e` devuelve `cuenta_id`, `cuenta_folio` y `cuenta_estado` de esa cuenta (o `null`).
@@ -511,5 +468,5 @@ Las comandas, precuentas y tickets se encolan en `pos_impresiones` (el ticket ll
 2. `POST /api/proveedores/:e` y `POST /api/productos/:e` (insumos).
 3. `POST /api/recetas/:e` con `es_preparacion` (salsa) → `POST /api/produccion/:e/confirmar` (producirla).
 4. `POST /api/recetas/:e` del platillo usando la preparación como ingrediente.
-5. `POST /api/pos-map/:e` y `POST /api/ventas/:e/importar` (vender).
+5. `POST /api/pos/:e/turnos/abrir`, `POST /api/pos/:e/cuentas` … `/cobrar` (vender en el POS; el corte de caja lleva los ingresos a Finanzas).
 6. `POST /api/conteos/:e` (contar) y `GET /api/reportes/:e/estado` (ver los números).

@@ -59,14 +59,13 @@ describe("Integración HTTP — empresa recién creada: primeros pasos y áreas 
         await new Promise((r) => server.close(r));
     });
 
-    it("una empresa sin datos: ningún paso hecho, no está lista y no figura como importadora de CSV", async () => {
+    it("una empresa sin datos: ningún paso hecho y no está lista", async () => {
         const p = await pasos();
         assert.equal(p.listo, false);
         assert.ok(p.pasos.every((x) => x.hecho === false));
         assert.deepEqual(p.pasos.filter((x) => x.requerido).map((x) => x.id), ["categorias", "insumos", "recetas", "mesas"]);
         const pos = (await req("GET", `/api/reportes/${E}/pos`)).json.data;
         assert.equal(pos.activo, false);
-        assert.equal(pos.csv_importado, false, "Inicio no debe pedirle importar las ventas de ayer");
     });
 
     it("las categorías de bebidas nacen asignadas a Barra (aunque las áreas aún no existieran); las demás no", async () => {

@@ -8,6 +8,8 @@ if (DB) {
     process.env.JWT_SECRET = process.env.JWT_SECRET || "test_secret_de_al_menos_32_caracteres_ok";
 }
 
+import { borrarVentaCsv, sembrarVentaCsv } from "../helpers/ventaHistorica.js";
+
 describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
     const A = 9201, B = 9202;
     let server, base, pool, signToken;
@@ -32,7 +34,6 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
         await pool.query("DELETE FROM categorias_gasto WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM venta_diaria WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM compra WHERE empresa_id = ANY($1)", e);
-        await pool.query("DELETE FROM pos_map WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM receta_detalle WHERE receta_id IN (SELECT id FROM recetas WHERE empresa_id = ANY($1))", e);
         await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM movimientosinventario WHERE producto_id IN (SELECT id FROM productos WHERE empresa_id = ANY($1))", e);
@@ -74,7 +75,6 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
         provId = (await req("POST", `/api/proveedores/${A}`, { token: tokAdminA, body: { nombre: "Prov F" } })).json.data.id;
         insumoId = (await req("POST", `/api/productos/${A}`, { token: tokAdminA, body: { producto: "Café grano", unidad_medida: "g", proveedor_id: provId, categoria: "Insumo", cantidad_presentacion: 1000, costo_presentacion: 200, stock_actual: 5000, stock_minimo: 100 } })).json.data.id;
         recetaId = (await req("POST", `/api/recetas/${A}`, { token: tokAdminA, body: { nombre: "Café", categoria: "Bebidas", precio_venta: 50, ingredientes: [{ producto_id: insumoId, cantidad: 20 }] } })).json.data.id;
-        await req("POST", `/api/pos-map/${A}`, { token: tokAdminA, body: { nombre_pos: "Cafe", tipo: "RECETA", receta_id: recetaId, factor: 1 } });
     });
 
     after(async () => {
@@ -118,12 +118,6 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
         assert.equal((await req("GET", `/api/finanzas/${A}/categorias-gasto`, { token: tokAdminB })).status, 403);
     });
 
-    it("ingresos: lote atómico crea varios en una transacción", async () => {
-        const lote = await req("POST", `/api/finanzas/${A}/ingresos/lote`, { token: tokOperA, body: { fecha: "2026-09-11", lineas: [{ metodo_pago: "EFECTIVO", monto: 300 }, { metodo_pago: "TARJETA", monto: 450 }, { metodo_pago: "TRANSFERENCIA", monto: 150 }] } });
-        assert.equal(lote.status, 201);
-        assert.equal(lote.json.data.length, 3);
-    });
-
     it("anular: excluye el gasto de los totales del resumen", async () => {
         const cat = (await req("POST", `/api/finanzas/${A}/categorias-gasto`, { token: tokAdminA, body: { nombre: "AnulCat" } })).json.data.id;
         const g = await req("POST", `/api/finanzas/${A}/gastos`, { token: tokAdminA, body: { fecha: "2026-09-10", categoria_id: cat, concepto: "a anular", monto: 500, metodo_pago: "EFECTIVO" } });
@@ -149,25 +143,23 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
         assert.equal(fila.concepto, "Compra FC-9");
     });
 
-    it("ventas: importar guarda venta_diaria_detalle y revertir lo borra (cascade)", async () => {
+    it("ventas ya importadas (historial): el esperado sale de venta_diaria_detalle y se borra en cascada con el día", async () => {
         const fecha = "2026-09-12";
-        const imp = await req("POST", `/api/ventas/${A}/importar`, { token: tokAdminA, body: { fecha, lineas: [{ nombre_pos: "Cafe", cantidad: 3 }] } });
-        assert.equal(imp.status, 201);
+        await sembrarVentaCsv(pool, A, fecha, [{ receta_id: recetaId, cantidad: 3, precio_unitario: 50 }]);
         const cnt1 = await pool.query("SELECT COUNT(*)::int c FROM venta_diaria_detalle d JOIN venta_diaria vd ON vd.id=d.venta_diaria_id WHERE vd.empresa_id=$1", [A]);
         assert.ok(cnt1.rows[0].c >= 1, "se guardó el detalle");
-        // ingreso esperado = 3 × precio_venta(50) = 150
+        // ingreso esperado = 3 × precio(50) = 150
         const resumen = await req("GET", `/api/finanzas/${A}/resumen?desde=2026-09-01&hasta=2026-09-30`, { token: tokAdminA });
         assert.equal(resumen.json.data.ingreso_esperado, 150);
-        // revertir borra el detalle por cascade
-        assert.equal((await req("DELETE", `/api/ventas/${A}/${fecha}`, { token: tokAdminA })).status, 200);
+        await borrarVentaCsv(pool, A, fecha);
         const cnt2 = await pool.query("SELECT COUNT(*)::int c FROM venta_diaria_detalle d JOIN venta_diaria vd ON vd.id=d.venta_diaria_id WHERE vd.empresa_id=$1", [A]);
-        assert.equal(cnt2.rows[0].c, 0, "el detalle se borró con la reversa");
+        assert.equal(cnt2.rows[0].c, 0, "el detalle se borró con el día");
     });
 
     it("resumen: ingresos_comparables solo cuenta fechas con detalle", async () => {
         const conDetalle = "2026-09-13";
         const sinDetalle = "2026-09-14";
-        await req("POST", `/api/ventas/${A}/importar`, { token: tokAdminA, body: { fecha: conDetalle, lineas: [{ nombre_pos: "Cafe", cantidad: 2 }] } });
+        await sembrarVentaCsv(pool, A, conDetalle, [{ receta_id: recetaId, cantidad: 2, precio_unitario: 50 }]);
         await req("POST", `/api/finanzas/${A}/ingresos`, { token: tokAdminA, body: { fecha: conDetalle, metodo_pago: "EFECTIVO", monto: 100 } });
         await req("POST", `/api/finanzas/${A}/ingresos`, { token: tokAdminA, body: { fecha: sinDetalle, metodo_pago: "EFECTIVO", monto: 999 } });
         const r = await req("GET", `/api/finanzas/${A}/resumen?desde=2026-09-01&hasta=2026-09-30`, { token: tokAdminA });
@@ -216,13 +208,10 @@ describe("Integración HTTP — Finanzas", { skip: SKIP }, () => {
         assert.equal(inactivos.json.data.find((x) => x.id === malo).activo, false);
     });
 
-    it("producto: uso devuelve recetas y mapeos POS (2.3)", async () => {
-        // Mapeo POS directo al insumo (el sembrado es RECETA, no apunta al producto)
-        await req("POST", `/api/pos-map/${A}`, { token: tokAdminA, body: { nombre_pos: "Cafe suelto", tipo: "INSUMO", producto_id: insumoId, factor: 1 } });
+    it("producto: uso devuelve las recetas que lo llevan (2.3)", async () => {
         const uso = await req("GET", `/api/productos/${A}/${insumoId}/uso`, { token: tokOperA });
         assert.equal(uso.status, 200);
         assert.ok(uso.json.data.recetas.find((r) => r.id === recetaId), "el insumo aparece en la receta");
-        assert.ok(uso.json.data.mapeos_pos.find((m) => m.nombre_pos === "cafe suelto"), "el insumo aparece en el mapeo INSUMO");
     });
 
     it("proveedor: resumen con compras, totales y último precio (2.4)", async () => {

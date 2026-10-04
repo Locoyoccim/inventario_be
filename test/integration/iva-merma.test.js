@@ -32,7 +32,8 @@ describe("Integración HTTP — IVA en precios + merma de limpieza", { skip: SKI
         await pool.query("DELETE FROM ingresos WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM categorias_gasto WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM venta_diaria WHERE empresa_id = ANY($1)", e);
-        await pool.query("DELETE FROM pos_map WHERE empresa_id = ANY($1)", e);
+        for (const t of ["pos_pagos", "pos_cuenta_items", "pos_comandas", "pos_cuentas", "pos_turnos", "pos_folios", "areas_preparacion"])
+            await pool.query(`DELETE FROM ${t} WHERE empresa_id = ANY($1)`, e);
         await pool.query("DELETE FROM receta_detalle WHERE receta_id IN (SELECT id FROM recetas WHERE empresa_id = ANY($1))", e);
         await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM movimientosinventario WHERE producto_id IN (SELECT id FROM productos WHERE empresa_id = ANY($1))", e);
@@ -134,22 +135,21 @@ describe("Integración HTTP — IVA en precios + merma de limpieza", { skip: SKI
         assert.equal(costo, 22.22);
     });
 
-    it("inventario en bruto: 100 g netos -> VENTA 108.696 y revertir exacto (prueba 5)", async () => {
+    it("inventario en bruto: 100 g netos -> VENTA 108.696 al cobrar en el POS (prueba 5)", async () => {
         const agu = await mkInsumo("Aguacate venta", { cant: 1000, costo: 200, merma: 8, stock: 5000 });
-        await req("POST", `/api/recetas/${A}`, {
+        const rec = (await req("POST", `/api/recetas/${A}`, {
             token: tok, body: { nombre: "Guac venta", categoria: "Platillos", precio_venta: 90, ingredientes: [{ producto_id: agu, cantidad: 100 }] },
-        });
-        const rec = (await pool.query("SELECT id FROM recetas WHERE empresa_id=$1 AND nombre='Guac venta'", [A])).rows[0].id;
-        await req("POST", `/api/pos-map/${A}`, { token: tok, body: { nombre_pos: "Guac venta", tipo: "RECETA", receta_id: rec, factor: 1 } });
-        const fecha = "2026-11-01";
-        const imp = await req("POST", `/api/ventas/${A}/importar`, { token: tok, body: { fecha, lineas: [{ nombre_pos: "Guac venta", cantidad: 1 }] } });
-        assert.equal(imp.status, 201);
+        })).json.data.id;
+        const pos = (path, body) => req("POST", `/api/pos/${A}${path}`, { token: tok, body });
+        assert.equal((await pos("/turnos/abrir", { fondo_inicial: 0 })).status, 201);
+        const cuenta = (await pos("/cuentas", { tipo: "LLEVAR", personas: 1 })).json.data.id;
+        assert.equal((await pos(`/cuentas/${cuenta}/items`, { lineas: [{ tipo: "RECETA", id: rec, cantidad: 1 }] })).status, 201);
+        assert.equal((await pos(`/cuentas/${cuenta}/enviar`, {})).status, 200);
+        const cobro = await pos(`/cuentas/${cuenta}/cobrar`, { pagos: [{ metodo: "EFECTIVO", monto: 90 }] });
+        assert.equal(cobro.status, 200, JSON.stringify(cobro.json));
         const mov = Number((await pool.query("SELECT cantidad FROM movimientosinventario WHERE producto_id=$1 AND tipo_movimiento='VENTA' ORDER BY id DESC LIMIT 1", [agu])).rows[0].cantidad);
         assert.equal(mov, 108.696, "descuenta bruto");
         assert.equal(await stockDe(agu), Number((5000 - 108.696).toFixed(3)));
-        // revertir devuelve exactamente lo descontado
-        assert.equal((await req("DELETE", `/api/ventas/${A}/${fecha}`, { token: tok })).status, 200);
-        assert.equal(await stockDe(agu), 5000);
     });
 
     it("producción estricta en bruto: existencia insuficiente -> error (prueba 6)", async () => {

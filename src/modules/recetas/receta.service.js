@@ -49,6 +49,10 @@ export default class RecetaService {
         return receta.ingredientes ? { ...enriched, ingredientes: receta.ingredientes } : enriched;
     }
 
+    async getDetalle(receta_id) {
+        return await this.recetaRepository.detalle(receta_id);
+    }
+
     async previewCosteo(empresa_id, data) {
         return await calcularPreview(empresa_id, data);
     }

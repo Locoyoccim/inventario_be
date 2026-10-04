@@ -76,6 +76,17 @@ export default class RecetaRepository {
         return result.rows[0];
     }
 
+    // Ingredientes de la receta con el nombre y la unidad del insumo (el guard de ruta ya validó la empresa).
+    async detalle(receta_id) {
+        const r = await pool.query(
+            `SELECT d.id, d.receta_id, d.producto_id, p.producto, p.unidad_medida, p.es_elaborado, d.cantidad, d.costo_unitario, d.costo_final
+             FROM receta_detalle d INNER JOIN productos p ON p.id = d.producto_id
+             WHERE d.receta_id = $1 ORDER BY d.id ASC`,
+            [receta_id],
+        );
+        return r.rows;
+    }
+
     async existsReceta(id) {
         const result = await pool.query(QUERIES.EXISTS_RECETA, [id]);
         return result.rowCount > 0;

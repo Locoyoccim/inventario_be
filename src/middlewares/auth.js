@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import ApiError from "../utils/ApiError.js";
 import { verifyToken } from "../utils/jwt.js";
 import { AUTH_COOKIE, CSRF_HEADER, readCookie } from "../utils/authCookie.js";
@@ -44,33 +43,8 @@ export function requireOwnerOrAdmin(req, _res, next) {
     next(ApiError.forbidden("Requiere permisos de administrador"));
 }
 
-// Exige rol de dueño (is_owner). Para acciones destructivas a nivel empresa.
-export function requireOwner(req, _res, next) {
-    if (req.user && req.user.is_owner) return next();
-    next(ApiError.forbidden("Requiere ser dueño de la empresa"));
-}
-
-// Exige el token de plataforma para operaciones de nivel plataforma (p. ej. crear empresas).
-// Sin PLATFORM_TOKEN configurado en el entorno, el endpoint queda cerrado.
-export function requirePlatformToken(req, _res, next) {
-    const expected = process.env.PLATFORM_TOKEN;
-    if (!expected || !tokenCoincide(req.headers["x-platform-token"], expected)) {
-        return next(ApiError.forbidden("Operación no permitida"));
-    }
-    next();
-}
-
-// Comparación a tiempo constante: evita que la duración de la comparación revele, byte a
-// byte, el valor esperado (timing attack sobre el token de plataforma).
-function tokenCoincide(recibido, esperado) {
-    if (typeof recibido !== "string") return false;
-    const a = Buffer.from(recibido);
-    const b = Buffer.from(esperado);
-    return a.length === b.length && timingSafeEqual(a, b);
-}
-
 // Exige el usuario maestro de plataforma (usuarios.is_platform_admin). A diferencia de
-// requirePlatformToken, se apoya en req.user.is_platform_admin, refrescado desde la BD en
+// el token de plataforma que existió antes, se apoya en req.user.is_platform_admin, refrescado desde la BD en
 // cada petición por requireActiveUser (mismo mecanismo que is_admin/is_owner) — nunca confía
 // solo en lo que diga el JWT.
 export function requirePlatformAdmin(req, _res, next) {

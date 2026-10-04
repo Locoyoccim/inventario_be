@@ -88,11 +88,7 @@ export default class ProductoRepository {
              WHERE rd.producto_id = $1 AND r.empresa_id = $2 ORDER BY r.nombre`,
             [id, empresa_id]
         )).rows;
-        const mapeos_pos = (await pool.query(
-            `SELECT id, nombre_pos FROM pos_map WHERE producto_id = $1 AND empresa_id = $2 ORDER BY nombre_pos`,
-            [id, empresa_id]
-        )).rows;
-        return { recetas, mapeos_pos };
+        return { recetas };
     }
 
     async createProducto(data, empresa_id) {

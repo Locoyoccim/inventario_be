@@ -23,7 +23,6 @@ export default class FinanzasService {
     // Ingresos
     listarIngresos(e, filtros, solo) { return this.repo.listarIngresos(e, filtros, solo); }
     crearIngreso(e, data, uid) { return this.repo.crearIngreso(e, data, uid); }
-    crearIngresosLote(e, fecha, lineas, uid) { return this.repo.crearIngresosLote(e, fecha, lineas, uid); }
     actualizarIngreso(e, id, data) { return this.repo.actualizarIngreso(e, id, data); }
     anularIngreso(e, id, uid, motivo) { return this.repo.anularIngreso(e, id, uid, motivo); }
 

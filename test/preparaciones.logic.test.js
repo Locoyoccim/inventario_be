@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolverPreparaciones } from "../src/modules/ventas/venta.repository.js";
+import { resolverPreparaciones } from "../src/utils/preparaciones.js";
 
 // Helpers para armar el Map de preparaciones de forma legible.
 const prep = (entries) => new Map(entries);

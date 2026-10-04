@@ -44,11 +44,6 @@ export const ingresoCreateSchema = z.object({
 });
 export const ingresoUpdateSchema = ingresoCreateSchema;
 
-export const ingresoLoteSchema = z.object({
-    fecha: fechaSchema,
-    lineas: z.array(z.object({ metodo_pago: metodoSchema, monto: montoSchema })).min(1, "envía al menos una línea"),
-});
-
 export const anularSchema = z.object({
     motivo: z.string().trim().min(1, "motivo es requerido"),
 });

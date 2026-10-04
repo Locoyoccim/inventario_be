@@ -1,20 +1,13 @@
 import { validate } from "../middlewares/validate.js";
 import { requireAdmin } from "../middlewares/auth.js";
-import { recetaController, recetaDetalleController } from "../container.js";
+import { recetaController } from "../container.js";
 import { recetaCreateSchema, recetaUpdateSchema, recetaPreviewSchema } from "../modules/recetas/receta.schema.js";
-import { recetaDetalleSchema } from "../modules/recetaDetalle/recetaDetalle.schema.js";
 
 export default function registerRecetas(router) {
-    // ORDEN: las rutas de /detalle (segmentos literales) van ANTES que las genéricas
-    // /recetas/:empresa_id/:id para que Express no las capture como :id.
-    router.get("/recetas/:receta_id/detalle", recetaDetalleController.listar);
-    router.get("/recetas/:receta_id/detalle/:id", recetaDetalleController.listarPorId);
-    router.post("/recetas/:receta_id/detalle", requireAdmin, validate(recetaDetalleSchema), recetaDetalleController.crear);
-    router.put("/recetas/:receta_id/detalle/:id", requireAdmin, validate(recetaDetalleSchema), recetaDetalleController.actualizar);
-    router.delete("/recetas/:receta_id/detalle/:id", requireAdmin, recetaDetalleController.eliminar);
-
+    // Ingredientes de una receta (lo usan el detalle y la edición). Va ANTES de /recetas/:empresa_id/:id para que
+    // Express no capture "detalle" como :id. El guard de :receta_id valida que la receta sea de la empresa del token.
+    router.get("/recetas/:receta_id/detalle", recetaController.detalle);
     router.post("/recetas/:empresa_id/preview", validate(recetaPreviewSchema), recetaController.preview);
-    // ANTES de /recetas/:empresa_id/:id para que "ventas" no se capture como :id.
     router.get("/recetas/:empresa_id/ventas", requireAdmin, recetaController.ventasPorReceta);
     router.get("/recetas/:empresa_id", recetaController.listar);
     router.get("/recetas/:empresa_id/:id", recetaController.listarPorId);

@@ -4,7 +4,6 @@ import { hoyEmpresa } from "../../utils/zonaHoraria.js";
 import { aplicarConsumo, cargarContextoConsumo } from "../movimientos/aplicarConsumo.js";
 import { exigirAutorizador, registrarAutorizacion } from "./pos.autorizacion.js";
 import { agruparPorArea, calcularTotales, normalizarPagos, payloadComanda, payloadPrecuenta, payloadTicket } from "./pos.logic.js";
-import { diaImportadoCsv } from "./pos.dias.js";
 
 const CUENTA_COLS = `c.id, c.empresa_id, c.folio, c.tipo, c.mesa_id, m.nombre AS mesa, c.reservacion_id, c.nombre_cliente,
     c.personas, c.mesero_id, u.nombre AS mesero, c.turno_id, c.estado, c.unida_a, c.dividida_de, c.fecha_negocio,
@@ -535,7 +534,7 @@ export default class PosCuentasRepository {
                  RETURNING id, empresa_id, usuario_id, fecha_negocio, fondo_inicial, abierto_at, estado`,
                 [empresa_id, usuario_id, await hoyEmpresa(empresa_id), fondo_inicial],
             );
-            return { ...r.rows[0], csv_importado: await diaImportadoCsv(pool, empresa_id, r.rows[0].fecha_negocio) };
+            return r.rows[0];
         } catch (error) {
             if (error.code === "23505") throw ApiError.conflict("Ya tienes una caja abierta");
             throw error;
@@ -548,8 +547,6 @@ export default class PosCuentasRepository {
              WHERE empresa_id = $1 AND usuario_id = $2 AND estado = 'ABIERTO'`,
             [empresa_id, usuario_id],
         );
-        const turno = r.rows[0];
-        // El POS avisa si ese día ya se importó el CSV (las ventas se contarían dos veces).
-        return turno ? { ...turno, csv_importado: await diaImportadoCsv(pool, empresa_id, turno.fecha_negocio) } : null;
+        return r.rows[0] ?? null;
     }
 }

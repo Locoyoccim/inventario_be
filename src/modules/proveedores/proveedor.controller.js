@@ -15,13 +15,6 @@ export default class ProveedorController {
         res.json({ success: true, data });
     });
 
-    listarPorId = asyncHandler(async (req, res) => {
-        const { empresa_id, id } = req.params;
-        const proveedor = await this.proveedorService.getProveedorById(empresa_id, id);
-        if (!proveedor) throw ApiError.notFound("Proveedor no encontrado");
-        res.json({ success: true, data: proveedor });
-    });
-
     crear = asyncHandler(async (req, res) => {
         const { empresa_id } = req.params;
         if (!(await this.proveedorService.existsEmpresa(empresa_id)))

@@ -67,7 +67,6 @@ const QUERIES = {
         FROM updated u
         LEFT JOIN roles r ON u.role_id = r.id
     `,
-    DELETE: `DELETE FROM usuarios WHERE empresa_id = $1 AND id = $2 RETURNING id`,
     BUMP_TOKEN: `UPDATE usuarios SET token_version = token_version + 1 WHERE id = $1 AND empresa_id = $2 RETURNING token_version`,
 };
 
@@ -111,12 +110,6 @@ export default class UsuarioRepository {
             nombre, codigo_ingreso, puesto ?? null, is_admin ?? null, role_id ?? null, empresa_id, id,
             email ?? null, activo ?? null, password_hash ?? null,
         ]);
-        return result.rows[0];
-    }
-
-    async remove(empresa_id, id) {
-        if (!id) throw ApiError.badRequest("ID es requerido");
-        const result = await pool.query(QUERIES.DELETE, [empresa_id, id]);
         return result.rows[0];
     }
 
