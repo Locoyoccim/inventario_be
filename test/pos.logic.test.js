@@ -56,7 +56,8 @@ test("pos: la comanda lleva mesa, mesero, número y notas, sin precios", () => {
     });
     assert.equal(p.mesa, "Mesa 4");
     assert.equal(p.comanda, 2);
-    assert.deepEqual(p.items, [{ cantidad: 2, nombre: "Latte", notas: "sin azúcar" }]);
+    assert.deepEqual(p.items, [{ cantidad: 2, nombre: "Latte", notas: "sin azúcar", opciones: [], comensal: null }]);
+    assert.equal(p.tiempo, 1);
     assert.equal("precio" in p.items[0], false);
 });
 

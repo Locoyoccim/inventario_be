@@ -246,7 +246,8 @@ export function agruparPorArea(items, areasPorId) {
     const sinComanda = [];
     for (const item of items) {
         const area = areasPorId.get(item.area_id);
-        if (!area || !area.imprime) {
+        // Hay comanda si el área imprime o muestra pantalla (la pantalla solo cuenta si la empresa la tiene activada).
+        if (!area || !(area.imprime || area.pantalla)) {
             sinComanda.push(item);
             continue;
         }
@@ -256,9 +257,10 @@ export function agruparPorArea(items, areasPorId) {
     return { comandas: [...imprimen.values()], sinComanda };
 }
 
-const lineaItem = (i) => ({ cantidad: Number(i.cantidad), nombre: i.nombre, notas: i.notas ?? null });
+// Cada renglón impreso lleva sus opciones elegidas («Medio», «Extra queso»); en la comanda también el comensal al que se le sirve.
+const lineaItem = (i) => ({ cantidad: Number(i.cantidad), nombre: i.nombre, notas: i.notas ?? null, opciones: (i.opciones ?? []).map((o) => o.nombre) });
 
-export function payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, items, ahora = new Date() }) {
+export function payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, items, tiempo = 1, ahora = new Date() }) {
     return {
         tipo: "COMANDA",
         negocio,
@@ -272,7 +274,9 @@ export function payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, it
         personas: cuenta.personas,
         mesero: mesero ?? null,
         fecha: ahora.toISOString(),
-        items: items.map(lineaItem),
+        // 1 = sale ahora; 2.º y siguientes se disparan después (la comanda lo anuncia en grande).
+        tiempo,
+        items: items.map((i) => ({ ...lineaItem(i), comensal: i.comensal ?? null })),
     };
 }
 

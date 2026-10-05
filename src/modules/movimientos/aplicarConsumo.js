@@ -2,6 +2,7 @@
 // (referencia VENTA_DIARIA) y el POS (referencia POS_CUENTA). Todas las funciones reciben un
 // client con la transacción YA abierta; no hacen BEGIN/COMMIT.
 import { explotarRenglones } from "../../utils/consumo.js";
+import { netoABruto } from "../../utils/costeo.js";
 import { armarPreparaciones, resolverPreparaciones } from "../../utils/preparaciones.js";
 
 const LOCK_INV = `SELECT producto_id FROM inventario WHERE producto_id = ANY($1::int[]) ORDER BY producto_id FOR UPDATE`;
@@ -138,7 +139,8 @@ export async function revertirPorReferencia(client, movimientoRepository, empres
 // Contexto de consumo acotado a lo vendido (para un ticket, no un día completo): escandallo de
 // las recetas vendidas + todas las preparaciones (pueden anidarse) y stock solo de elaborados.
 // renglones: [{ receta_id | producto_id, cantidad }]
-export async function cargarContextoConsumo(db, empresa_id, renglones) {
+// consumoExtra: Map producto_id -> cantidad que consumen las opciones elegidas (se suma, con la merma del insumo, al de las recetas).
+export async function cargarContextoConsumo(db, empresa_id, renglones, consumoExtra = new Map()) {
     const recetaIds = [...new Set(renglones.filter((r) => r.receta_id != null).map((r) => Number(r.receta_id)))];
     const [detalleRes, prodRes, prepRes] = await Promise.all([
         db.query(
@@ -159,6 +161,7 @@ export async function cargarContextoConsumo(db, empresa_id, renglones) {
     const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
     const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
     const { consumo, recetas_sin_escandallo } = explotarRenglones(renglones, detalleRes.rows, mermaPorId);
+    for (const [pid, cantidad] of consumoExtra) consumo.set(pid, Number(((consumo.get(pid) ?? 0) + netoABruto(cantidad, mermaPorId.get(pid))).toFixed(3)));
 
     const preparaciones = armarPreparaciones(prepRes.rows, detalleRes.rows);
     const elaborados = [...preparaciones.keys()];

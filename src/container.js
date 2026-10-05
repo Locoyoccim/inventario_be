@@ -52,6 +52,9 @@ import ReservacionRepository from "./modules/reservaciones/reservaciones.reposit
 import PosConfigController from "./modules/pos/posConfig.controller.js";
 import PosConfigService from "./modules/pos/posConfig.service.js";
 import PosConfigRepository from "./modules/pos/posConfig.repository.js";
+import PosComandasRepository from "./modules/pos/pos.comandas.repository.js";
+import PosOpcionesController from "./modules/pos/pos.opciones.controller.js";
+import PosOpcionesRepository from "./modules/pos/pos.opciones.repository.js";
 import PosController from "./modules/pos/pos.controller.js";
 import PosCuentasRepository from "./modules/pos/pos.cuentas.repository.js";
 import PosImpresionRepository from "./modules/pos/pos.impresion.repository.js";
@@ -82,5 +85,7 @@ export const rolController = new RolController(new RolService(new RolRepository(
 export const reservacionController = new ReservacionController(new ReservacionService(new ReservacionRepository()));
 const posConfigRepo = new PosConfigRepository();
 export const posConfigController = new PosConfigController(new PosConfigService(posConfigRepo));
-const posCuentasRepo = new PosCuentasRepository(posConfigRepo, movimientoRepo);
-export const posController = new PosController(posCuentasRepo, new PosImpresionRepository(), new PosTurnosRepository(), new PosAjustesRepository(posCuentasRepo, movimientoRepo));
+export const posOpcionesRepo = new PosOpcionesRepository();
+export const posOpcionesController = new PosOpcionesController(posOpcionesRepo);
+const posCuentasRepo = new PosCuentasRepository(posConfigRepo, movimientoRepo, posOpcionesRepo);
+export const posController = new PosController(posCuentasRepo, new PosImpresionRepository(), new PosTurnosRepository(), new PosAjustesRepository(posCuentasRepo, movimientoRepo), new PosComandasRepository());

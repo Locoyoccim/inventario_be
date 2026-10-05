@@ -1,13 +1,15 @@
 import rateLimit from "express-rate-limit";
 import { validate } from "../middlewares/validate.js";
+import { conIdempotencia } from "../utils/idempotencia.js";
+import { eventosSSE } from "../realtime/eventosPos.sse.js";
 import { requireAdmin, requirePermiso } from "../middlewares/auth.js";
-import { posConfigController, posController } from "../container.js";
+import { posConfigController, posController, posOpcionesController } from "../container.js";
 import {
     areaCreateSchema, areaUpdateSchema, mesaCreateSchema, mesaUpdateSchema, asignarAreaSchema,
 } from "../modules/pos/posConfig.schema.js";
 import {
     cuentaCreateSchema, cuentaUpdateSchema, itemsCreateSchema, itemUpdateSchema, motivoSchema, cancelarCuentaSchema, cambiarMesaSchema, juntarSchema, dividirSchema, cobroSchema, corregirPagoSchema, descuentoSchema, anularSchema,
-    turnoAbrirSchema, turnoCerrarSchema, impresoraCreateSchema, impresoraUpdateSchema, agenteCreateSchema, agenteUpdateSchema,
+    turnoAbrirSchema, turnoCerrarSchema, estadoComandaSchema, enviarSchema, grupoOpcionesSchema, impresoraCreateSchema, impresoraUpdateSchema, agenteCreateSchema, agenteUpdateSchema,
 } from "../modules/pos/pos.schema.js";
 
 export default function registerPos(router) {
@@ -37,13 +39,19 @@ export default function registerPos(router) {
     router.put(`${b}/asignacion-areas/:tipo/:id`, requireAdmin, validate(asignarAreaSchema), posConfigController.asignarAreaArticulo);
     router.get(`${b}/menu`, ver, posConfigController.menu);
 
+    // Opciones por producto (grupos, opciones y a qué artículos se ofrecen)
+    router.get(`${b}/opciones`, requireAdmin, posOpcionesController.listar);
+    router.post(`${b}/opciones`, requireAdmin, validate(grupoOpcionesSchema), posOpcionesController.crear);
+    router.put(`${b}/opciones/:id`, requireAdmin, validate(grupoOpcionesSchema), posOpcionesController.actualizar);
+    router.delete(`${b}/opciones/:id`, requireAdmin, posOpcionesController.desactivar);
+
     // Operación de mesas y cuentas
     router.get(`${b}/mapa`, ver, posController.mapa);
-    router.post(`${b}/cuentas`, ordenar, validate(cuentaCreateSchema), posController.abrir);
+    router.post(`${b}/cuentas`, ordenar, validate(cuentaCreateSchema), ...conIdempotencia(posController.abrir));
     router.get(`${b}/cuentas/:id`, ver, posController.obtener);
     router.post(`${b}/cuentas/:id/descartar`, ordenar, posController.descartarCuenta);
     router.patch(`${b}/cuentas/:id`, ordenar, validate(cuentaUpdateSchema), posController.actualizarCuenta);
-    router.post(`${b}/cuentas/:id/items`, ordenar, validate(itemsCreateSchema), posController.agregarItems);
+    router.post(`${b}/cuentas/:id/items`, ordenar, validate(itemsCreateSchema), ...conIdempotencia(posController.agregarItems));
     router.put(`${b}/cuentas/:id/items/:itemId`, ordenar, validate(itemUpdateSchema), posController.actualizarItem);
     router.delete(`${b}/cuentas/:id/items/:itemId`, ordenar, posController.eliminarItem);
     router.post(`${b}/cuentas/:id/items/:itemId/cancelar`, ordenar, validate(motivoSchema), intentos, posController.cancelarItem);
@@ -51,14 +59,21 @@ export default function registerPos(router) {
     router.post(`${b}/cuentas/:id/descuento`, ordenar, validate(descuentoSchema), intentos, posController.descuentoCuenta);
     router.post(`${b}/cuentas/:id/corregir-pago`, cobrar, validate(corregirPagoSchema), intentos, posController.corregirPago);
     router.post(`${b}/cuentas/:id/anular`, cobrar, validate(anularSchema), intentos, posController.anular);
-    router.post(`${b}/cuentas/:id/enviar`, ordenar, posController.enviar);
+    router.post(`${b}/cuentas/:id/enviar`, ordenar, validate(enviarSchema), ...conIdempotencia(posController.enviar));
     router.post(`${b}/cuentas/:id/cambiar-mesa`, ordenar, validate(cambiarMesaSchema), posController.cambiarMesa);
     router.post(`${b}/cuentas/:id/juntar`, ordenar, validate(juntarSchema), posController.juntar);
     router.post(`${b}/cuentas/:id/dividir`, ordenar, validate(dividirSchema), posController.dividir);
     router.post(`${b}/cuentas/:id/precuenta`, ordenar, posController.precuenta);
-    router.post(`${b}/cuentas/:id/cobrar`, cobrar, validate(cobroSchema), posController.cobrar);
+    router.post(`${b}/cuentas/:id/cobrar`, cobrar, validate(cobroSchema), ...conIdempotencia(posController.cobrar));
     router.post(`${b}/cuentas/:id/ticket`, ordenar, posController.reimprimirTicket);
     router.post(`${b}/cuentas/:id/cancelar`, ordenar, validate(cancelarCuentaSchema), intentos, posController.cancelarCuenta);
+
+    // Avisos en tiempo real (SSE): el front vuelve a pedir lo que cambió; el polling queda como respaldo.
+    router.get(`${b}/eventos`, ver, eventosSSE);
+
+    // Pantalla de cocina (opcional)
+    router.get(`${b}/comandas/activas`, requirePermiso("pos.preparar"), posController.comandasActivas);
+    router.post(`${b}/comandas/:id/estado`, ver, validate(estadoComandaSchema), posController.estadoComanda);
 
     // Caja
     router.get(`${b}/turnos/actual`, ver, posController.turnoActual);

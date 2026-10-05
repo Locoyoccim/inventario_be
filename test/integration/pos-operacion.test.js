@@ -197,7 +197,8 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         assert.equal(job.mesa, "Mesa 1");
         assert.equal(job.comanda, 1);
         assert.ok(job.mesero);
-        assert.deepEqual(job.items, [{ cantidad: 3, nombre: "Latte", notas: null }]);
+        assert.deepEqual(job.items, [{ cantidad: 3, nombre: "Latte", notas: null, opciones: [], comensal: null }]);
+        assert.equal(job.tiempo, 1);
     });
 
     it("renglón enviado: no se edita; cancelarlo exige autorización y motivo", async () => {

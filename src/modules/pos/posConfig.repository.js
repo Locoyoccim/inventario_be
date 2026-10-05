@@ -2,7 +2,7 @@ import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
 import { asegurarAreas } from "./pos.areas.js";
 
-const AREA_COLS = "id, empresa_id, nombre, imprime, es_default, activo";
+const AREA_COLS = "id, empresa_id, nombre, imprime, pantalla, tiempo_objetivo_min, es_default, activo";
 const MESA_COLS = "id, empresa_id, nombre, zona, capacidad, orden, activo";
 
 const QUERIES = {
@@ -58,15 +58,22 @@ export default class PosConfigRepository {
         if (r.rowCount > 0) throw ApiError.conflict("Ya existe un área con ese nombre");
     }
 
-    async crearArea(empresa_id, { nombre, imprime = true, es_default = false }) {
+    // Una área solo puede usar pantalla si la empresa activó la pantalla de cocina (es opcional y se decide por negocio).
+    async #exigirPantallaActiva(db, empresa_id) {
+        const r = await db.query("SELECT usa_pantalla_cocina FROM empresas WHERE id = $1", [empresa_id]);
+        if (!r.rows[0]?.usa_pantalla_cocina) throw ApiError.conflict("Activa primero la pantalla de cocina en la configuración del POS");
+    }
+
+    async crearArea(empresa_id, { nombre, imprime = true, pantalla = false, tiempo_objetivo_min = 15, es_default = false }) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
             await this.#validarNombreArea(client, empresa_id, nombre);
+            if (pantalla) await this.#exigirPantallaActiva(client, empresa_id);
             if (es_default) await client.query(QUERIES.UNSET_DEFAULT, [empresa_id]);
             const r = await client.query(
-                `INSERT INTO areas_preparacion (empresa_id, nombre, imprime, es_default) VALUES ($1, $2, $3, $4) RETURNING ${AREA_COLS}`,
-                [empresa_id, nombre, imprime, es_default],
+                `INSERT INTO areas_preparacion (empresa_id, nombre, imprime, pantalla, tiempo_objetivo_min, es_default) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${AREA_COLS}`,
+                [empresa_id, nombre, imprime, pantalla, tiempo_objetivo_min, es_default],
             );
             await client.query("COMMIT");
             return r.rows[0];
@@ -78,13 +85,14 @@ export default class PosConfigRepository {
         }
     }
 
-    async actualizarArea(empresa_id, id, { nombre, imprime, es_default, activo }) {
+    async actualizarArea(empresa_id, id, { nombre, imprime, pantalla, tiempo_objetivo_min, es_default, activo }) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
             const actual = (await client.query(`${QUERIES.GET_AREA} FOR UPDATE`, [id, empresa_id])).rows[0];
             if (!actual) throw ApiError.notFound("Área no encontrada");
             if (nombre !== undefined) await this.#validarNombreArea(client, empresa_id, nombre, id);
+            if (pantalla === true && !actual.pantalla) await this.#exigirPantallaActiva(client, empresa_id);
             const quedaDefault = es_default === true || actual.es_default;
             const quedaActiva = activo ?? actual.activo;
             if (quedaDefault && !quedaActiva) throw ApiError.badRequest("El área por defecto no puede desactivarse; elige otra como predeterminada primero");
@@ -92,9 +100,10 @@ export default class PosConfigRepository {
             const r = await client.query(
                 `UPDATE areas_preparacion
                  SET nombre = COALESCE($3, nombre), imprime = COALESCE($4, imprime),
-                     es_default = COALESCE($5, es_default), activo = COALESCE($6, activo)
+                     es_default = COALESCE($5, es_default), activo = COALESCE($6, activo),
+                     pantalla = COALESCE($7, pantalla), tiempo_objetivo_min = COALESCE($8, tiempo_objetivo_min)
                  WHERE id = $1 AND empresa_id = $2 RETURNING ${AREA_COLS}`,
-                [id, empresa_id, nombre ?? null, imprime ?? null, es_default ?? null, activo ?? null],
+                [id, empresa_id, nombre ?? null, imprime ?? null, es_default ?? null, activo ?? null, pantalla ?? null, tiempo_objetivo_min ?? null],
             );
             await client.query("COMMIT");
             return r.rows[0];
@@ -206,6 +215,25 @@ export default class PosConfigRepository {
             this.articulosVendibles(pool, empresa_id),
             pool.query(QUERIES.RECETAS_SIN_PRECIO, [empresa_id]),
         ]);
-        return { articulos, recetas_sin_precio: sinPrecio.rows[0].n };
+        // Opciones por producto: grupos activos con sus opciones, y a qué artículos se ofrecen (para pedirlas al tomar la orden).
+        const grupos = (await pool.query("SELECT id, nombre, minimo, maximo FROM modificador_grupos WHERE empresa_id = $1 AND activo ORDER BY id", [empresa_id])).rows;
+        let conGrupos = articulos;
+        let gruposMenu = [];
+        if (grupos.length > 0) {
+            const ids = grupos.map((g) => g.id);
+            const [mods, asig] = await Promise.all([
+                pool.query("SELECT id, grupo_id, nombre, precio_extra FROM modificadores WHERE grupo_id = ANY($1::int[]) AND activo ORDER BY orden, id", [ids]),
+                pool.query("SELECT grupo_id, receta_id, producto_id FROM articulo_modificadores WHERE grupo_id = ANY($1::int[])", [ids]),
+            ]);
+            gruposMenu = grupos.map((g) => ({ ...g, modificadores: mods.rows.filter((m) => m.grupo_id === g.id).map((m) => ({ id: m.id, nombre: m.nombre, precio_extra: Number(m.precio_extra) })) }));
+            const porArticulo = new Map();
+            for (const a of asig.rows) {
+                const clave = a.receta_id ? `RECETA-${a.receta_id}` : `PRODUCTO-${a.producto_id}`;
+                if (!porArticulo.has(clave)) porArticulo.set(clave, []);
+                porArticulo.get(clave).push(a.grupo_id);
+            }
+            conGrupos = articulos.map((a) => ({ ...a, grupos: porArticulo.get(`${a.tipo}-${a.id}`) ?? [] }));
+        }
+        return { articulos: conGrupos, recetas_sin_precio: sinPrecio.rows[0].n, grupos: gruposMenu };
     }
 }

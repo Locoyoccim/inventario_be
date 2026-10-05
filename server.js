@@ -4,6 +4,7 @@ import "dotenv/config";
 import { validateEnv } from "./src/config/env.js";
 import app from "./src/app.js";
 import pool from "./src/config/db.js";
+import { cerrarEventos } from "./src/realtime/eventosPos.js";
 
 // Aborta el arranque si la configuración crítica no es válida.
 validateEnv();
@@ -26,6 +27,8 @@ async function shutdown(signal) {
         process.exit(1);
     }, 10000);
     forzar.unref();
+    // Los flujos SSE no terminan solos: se cierran para que server.close() no espere.
+    await cerrarEventos();
     server.close(async () => {
         try {
             await pool.end();

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { notificar } from "../../realtime/eventosPos.js";
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
 import { payloadPrueba } from "./pos.logic.js";
@@ -116,7 +117,7 @@ export default class PosImpresionRepository {
 
     // ---- Cola ----
     async estado(empresa_id) {
-        const [agentes, cola] = await Promise.all([
+        const [agentes, cola, empresa] = await Promise.all([
             pool.query(
                 "SELECT COUNT(*)::int AS n FROM agentes_impresion WHERE empresa_id = $1 AND activo AND ultimo_contacto > now() - make_interval(secs => $2)",
                 [empresa_id, CONECTADO_SEG],
@@ -128,8 +129,9 @@ export default class PosImpresionRepository {
                  FROM pos_impresiones WHERE empresa_id = $1`,
                 [empresa_id],
             ),
+            pool.query("SELECT usa_pantalla_cocina FROM empresas WHERE id = $1", [empresa_id]),
         ]);
-        return { agentes_conectados: agentes.rows[0].n, ...cola.rows[0] };
+        return { agentes_conectados: agentes.rows[0].n, ...cola.rows[0], pantalla_cocina: empresa.rows[0]?.usa_pantalla_cocina === true };
     }
 
     async cola(empresa_id, { estado = null, limit = 50 } = {}) {
@@ -238,6 +240,8 @@ export default class PosImpresionRepository {
                     bloqueado_hasta = CASE WHEN $2::varchar = 'PENDIENTE' THEN now() + make_interval(secs => $5) END WHERE id = $1`,
             [id, agotado ? "ERROR" : "PENDIENTE", intentos, String(error ?? "Error de impresión").slice(0, 300), intentos * 10],
         );
+        // Cuando una comanda se rinde (agotó los reintentos) nadie la va a ver sola: se avisa para que el mesero la reimprima o la lleve.
+        if (agotado) await notificar(pool, { tipo: "impresion.error", empresa_id, impresion_id: id });
         return { id, estado: agotado ? "ERROR" : "PENDIENTE" };
     }
 }

@@ -35,6 +35,10 @@ export const itemsCreateSchema = z.object({
                 id,
                 cantidad: z.coerce.number().int().min(1).max(99),
                 notas: texto(200).optional(),
+                // Opciones elegidas (ids de modificadores), a quién se le sirve y en qué tiempo sale.
+                opciones: z.array(id).max(30).optional(),
+                comensal: z.coerce.number().int().min(1).max(99).optional(),
+                tiempo: z.coerce.number().int().min(1).max(6).optional(),
             }),
         )
         .min(1, "Agrega al menos un producto")
@@ -42,8 +46,32 @@ export const itemsCreateSchema = z.object({
 });
 
 export const itemUpdateSchema = z
-    .object({ cantidad: z.coerce.number().int().min(1).max(99).optional(), notas: texto(200).optional() })
+    .object({
+        cantidad: z.coerce.number().int().min(1).max(99).optional(),
+        notas: texto(200).optional(),
+        comensal: z.coerce.number().int().min(1).max(99).nullable().optional(),
+        tiempo: z.coerce.number().int().min(1).max(6).optional(),
+    })
     .refine((d) => Object.keys(d).length > 0, algunCampo);
+
+// «Enviar» manda lo pendiente de un tiempo (por defecto el primero); el siguiente tiempo se dispara aparte.
+export const enviarSchema = z.object({ tiempo: z.coerce.number().int().min(1).max(6).optional() });
+
+const modificadorSchema = z.object({
+    id: id.optional(),
+    nombre: texto(60).min(1, "La opción necesita nombre"),
+    precio_extra: z.coerce.number().min(0).max(100000).optional(),
+    producto_id: id.nullable().optional(),
+    cantidad: z.coerce.number().gt(0).max(1000000).nullable().optional(),
+}).refine((m) => !m.producto_id || m.cantidad, { message: "Indica cuánto insumo consume la opción", path: ["cantidad"] });
+
+export const grupoOpcionesSchema = z.object({
+    nombre: texto(60).min(1, "El grupo necesita nombre"),
+    minimo: z.coerce.number().int().min(0).max(20).default(0),
+    maximo: z.coerce.number().int().min(1).max(20).default(1),
+    modificadores: z.array(modificadorSchema).min(1, "Agrega al menos una opción").max(40),
+    articulos: z.array(z.object({ tipo: z.enum(["RECETA", "PRODUCTO"]), id })).max(500).default([]),
+});
 
 // Credenciales de un supervisor que autoriza en el equipo de quien no tiene permiso (las mismas del login).
 const autorizacion = z.object({ email: texto(120).min(1, "Captura el correo del supervisor"), password: z.string().min(1, "Captura la contraseña del supervisor").max(200) }).optional();
@@ -125,3 +153,5 @@ export const agenteUpdateSchema = z
     .refine((d) => Object.keys(d).length > 0, algunCampo);
 
 export const resultadoImpresionSchema = z.object({ ok: z.boolean(), error: texto(300).optional() });
+
+export const estadoComandaSchema = z.object({ estado: z.enum(["EN_PREPARACION", "LISTA", "ENTREGADA"]) });

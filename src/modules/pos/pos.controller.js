@@ -11,8 +11,9 @@ const usuarioTurno = (req) => ({ id: req.user.id, puedeAutorizar: puedeAutorizar
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
 
 export default class PosController {
-    constructor(cuentas, impresion, turnos, ajustes) {
+    constructor(cuentas, impresion, turnos, ajustes, comandas) {
         this.cuentas = cuentas;
+        this.comandas = comandas;
         this.impresion = impresion;
         this.turnos = turnos;
         this.ajustes = ajustes;
@@ -45,7 +46,7 @@ export default class PosController {
         ok(res, await this.ajustes.anular(req.params.empresa_id, req.params.id, req.body, exigir(await this.#autorizacion(req)))));
     corregirPago = asyncHandler(async (req, res) =>
         ok(res, await this.ajustes.corregirPago(req.params.empresa_id, req.params.id, req.body, exigir(await this.#autorizacion(req)))));
-    enviar = asyncHandler(async (req, res) => ok(res, await this.cuentas.enviar(req.params.empresa_id, req.params.id, req.user.id)));
+    enviar = asyncHandler(async (req, res) => ok(res, await this.cuentas.enviar(req.params.empresa_id, req.params.id, req.user.id, req.body?.tiempo ?? 1)));
     descartarCuenta = asyncHandler(async (req, res) => ok(res, await this.cuentas.descartar(req.params.empresa_id, req.params.id)));
     actualizarCuenta = asyncHandler(async (req, res) => ok(res, await this.cuentas.actualizar(req.params.empresa_id, req.params.id, req.body)));
     cambiarMesa = asyncHandler(async (req, res) => ok(res, await this.cuentas.cambiarMesa(req.params.empresa_id, req.params.id, req.body.mesa_id)));
@@ -59,6 +60,16 @@ export default class PosController {
     reimprimirTicket = asyncHandler(async (req, res) => {
         const trabajo = await this.cuentas.ultimoTicket(req.params.empresa_id, req.params.id);
         ok(res, await this.impresion.reimprimir(req.params.empresa_id, trabajo.id));
+    });
+
+    // ---- Pantalla de cocina (opcional) ----
+    comandasActivas = asyncHandler(async (req, res) => ok(res, await this.comandas.activas(req.params.empresa_id, req.query.area_id ? Number(req.query.area_id) : null)));
+    // Preparar y dejar lista es de cocina (`pos.preparar`); marcarla entregada también la hace el mesero (`pos.ordenar`).
+    estadoComanda = asyncHandler(async (req, res) => {
+        const tiene = (clave) => req.user.is_owner || req.user.is_admin || req.user.permisos?.includes(clave);
+        const { estado } = req.body;
+        if (estado === "ENTREGADA" ? !(tiene("pos.preparar") || tiene("pos.ordenar")) : !tiene("pos.preparar")) throw ApiError.forbidden("Tu rol no tiene permiso para esta acción");
+        ok(res, await this.comandas.cambiarEstado(req.params.empresa_id, req.params.id, estado));
     });
 
     // ---- Caja ----
