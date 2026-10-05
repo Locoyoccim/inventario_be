@@ -9,7 +9,7 @@ import {
 } from "../modules/pos/posConfig.schema.js";
 import {
     cuentaCreateSchema, cuentaUpdateSchema, itemsCreateSchema, itemUpdateSchema, motivoSchema, cancelarCuentaSchema, cambiarMesaSchema, juntarSchema, dividirSchema, cobroSchema, corregirPagoSchema, descuentoSchema, anularSchema,
-    turnoAbrirSchema, turnoCerrarSchema, estadoComandaSchema, enviarSchema, grupoOpcionesSchema, impresoraCreateSchema, impresoraUpdateSchema, agenteCreateSchema, agenteUpdateSchema,
+    turnoAbrirSchema, turnoCerrarSchema, estadoComandaSchema, descartarImpresionesSchema, enviarSchema, grupoOpcionesSchema, impresoraCreateSchema, impresoraUpdateSchema, agenteCreateSchema, agenteUpdateSchema,
 } from "../modules/pos/pos.schema.js";
 
 export default function registerPos(router) {
@@ -86,6 +86,8 @@ export default function registerPos(router) {
     // Impresión
     router.get(`${b}/impresion/estado`, ver, posController.estadoImpresion);
     router.get(`${b}/impresiones`, autorizar, posController.cola);
+    router.post(`${b}/impresiones/descartar`, autorizar, validate(descartarImpresionesSchema), posController.descartarImpresiones);
+    router.post(`${b}/impresiones/:id/descartar`, autorizar, posController.descartarImpresion);
     router.post(`${b}/impresiones/:id/reimprimir`, ordenar, posController.reimprimir);
     router.get(`${b}/impresiones/:id`, ordenar, posController.impresion_);
     router.post(`${b}/impresiones/:id/impreso-navegador`, ordenar, posController.impresoNavegador);
@@ -96,5 +98,8 @@ export default function registerPos(router) {
     router.get(`${b}/agentes`, requireAdmin, posController.agentes);
     router.post(`${b}/agentes`, requireAdmin, validate(agenteCreateSchema), posController.crearAgente);
     router.put(`${b}/agentes/:id`, requireAdmin, validate(agenteUpdateSchema), posController.actualizarAgente);
+    router.delete(`${b}/agentes/:id`, requireAdmin, posController.eliminarAgente);
     router.post(`${b}/agentes/:id/rotar-token`, requireAdmin, posController.rotarToken);
+    router.post(`${b}/agentes/:id/codigo`, requireAdmin, posController.codigoAgente);
+    router.get(`${b}/agentes-info`, requireAdmin, posController.agentesInfo);
 }

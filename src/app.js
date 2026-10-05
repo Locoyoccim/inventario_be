@@ -63,6 +63,11 @@ if (process.env.NODE_ENV !== "test") {
     app.use("/api/auth/login", authLimiter);
     app.use("/api/auth/setup", authLimiter);
     app.use("/api/auth/invitacion", authLimiter);
+    // El código de un equipo se adivina con 40 bits y vence en 15 min: tope estricto. El PIN lleva además su propio enfriamiento
+    // por usuario, equipo e IP en la base; este tope es más amplio porque todo el personal de un local comparte la misma IP.
+    app.use("/api/auth/dispositivo/registrar", authLimiter);
+    app.use("/api/auth/pin", limiter(40, "Demasiados intentos de acceso. Espera un minuto."));
+    app.use("/api/agente/emparejar", authLimiter);
     app.use("/api", apiLimiter);
 }
 

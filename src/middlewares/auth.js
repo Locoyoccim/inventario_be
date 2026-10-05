@@ -37,10 +37,13 @@ export function empresaGuard(req, _res, next, val) {
     next();
 }
 
+// Una sesión de PIN (equipo registrado) nunca actúa como administrador, aunque la persona lo sea: lo de Admin exige correo y contraseña.
+const esAdmin = (user) => Boolean(user && !user.pin && (user.is_owner || user.is_admin));
+
 // Helper opcional para exigir rol elevado (dueño/admin).
 export function requireOwnerOrAdmin(req, _res, next) {
-    if (req.user && (req.user.is_owner || req.user.is_admin)) return next();
-    next(ApiError.forbidden("Requiere permisos de administrador"));
+    if (esAdmin(req.user)) return next();
+    next(ApiError.forbidden(req.user?.pin ? "Esta acción requiere entrar con correo y contraseña" : "Requiere permisos de administrador"));
 }
 
 // Exige el usuario maestro de plataforma (usuarios.is_platform_admin). A diferencia de
@@ -48,7 +51,7 @@ export function requireOwnerOrAdmin(req, _res, next) {
 // cada petición por requireActiveUser (mismo mecanismo que is_admin/is_owner) — nunca confía
 // solo en lo que diga el JWT.
 export function requirePlatformAdmin(req, _res, next) {
-    if (req.user && req.user.is_platform_admin) return next();
+    if (req.user && !req.user.pin && req.user.is_platform_admin) return next();
     next(ApiError.forbidden("Requiere ser administrador de la plataforma"));
 }
 
@@ -59,7 +62,7 @@ export const requireAdmin = requireOwnerOrAdmin;
 // requireActiveUser). Admin/dueño siempre pasan: los permisos solo acotan a "Operativo".
 export function requirePermiso(clave) {
     return (req, _res, next) => {
-        if (req.user?.is_owner || req.user?.is_admin) return next();
+        if (esAdmin(req.user)) return next();
         if (req.user?.permisos?.includes(clave)) return next();
         next(ApiError.forbidden("Tu rol no tiene permiso para esta acción"));
     };

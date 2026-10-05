@@ -88,6 +88,30 @@ Requiere sesión. Sube la `token_version` del usuario → **revoca todas** sus s
 ### `GET /api/auth/me`
 Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email, empresa_id, is_admin, is_owner }` (mismo formato que `user` en login). Pasa por `requireActiveUser`: `401` si el usuario ya no existe, está desactivado o su sesión fue revocada (`logout-all`).
 
+### Ingreso con PIN en equipos registrados
+El personal operativo (mesero, cajero, cocina) entra con un **PIN de 4 a 6 dígitos** desde un **equipo registrado** (el celular o la tablet del local). El PIN solo sirve ahí: sin la cookie del equipo no hay ingreso con PIN. **No aplica a dueño ni administradores**, que siguen con correo y contraseña.
+
+Flujo: un Admin registra el equipo y obtiene un **código de un solo uso** (`XXXX-XXXX`, vale 15 min, sin 0/O/1/I; solo se guarda su hash) → se escribe en el equipo → el servidor entrega la cookie `gh_device` (httpOnly, `Path=/api/auth`, 400 días; solo se guarda el hash del token) → en ese equipo el personal toca su nombre y teclea su PIN.
+
+- `POST /api/auth/dispositivo/registrar` — público (con límite de intentos y header `X-Requested-With`). `{ "codigo": "ABCD-2345" }` → `{ "nombre" }` + `Set-Cookie: gh_device`. El código se consume al usarse (`400` si no existe, ya se usó o venció).
+- `GET /api/auth/dispositivo/personal` — con la cookie del equipo: `{ dispositivo: { id, nombre }, personal: [{ id, nombre, puesto }] }` (solo activos con PIN y que no son administradores). `401` si el equipo no está registrado o fue revocado (y borra la cookie).
+- `POST /api/auth/pin` — con la cookie del equipo y `X-Requested-With`. `{ "usuario_id", "pin" }` → `{ user }` + `Set-Cookie: gh_session` **de turno** (`PIN_SESSION_EXPIRES`, 12 h por defecto; el token no viaja en el body). Un PIN incorrecto, una persona sin PIN, un administrador o alguien de otra empresa responden igual: `401 PIN incorrecto`.
+
+**Bloqueos** (contadores en `pin_fallos`): 5 fallos del mismo usuario en el mismo equipo (ventana de 15 min), 15 del equipo o 30 de la IP → `429` con `details.espera_seg` (5 min desde el último intento, aunque el PIN sea el bueno). 10 fallos de un usuario en una hora (en cualquier equipo) lo **bloquean** (`pin_bloqueado`): solo un Admin lo quita.
+
+**Límites de una sesión de PIN:** el JWT lleva `pin: true` y el equipo (`disp`). No es Admin aunque la persona lo sea (`requireAdmin`, `requirePermiso` y plataforma la rechazan con `403`); **no autoriza** descuentos/cancelaciones por sí misma (el supervisor lo confirma con correo y contraseña en el cuerpo); y deja de valer al revocar el equipo, quitar el PIN, desactivar a la persona o ascenderla a Admin (`401`, hasta 1 min por la caché).
+
+Administración *(Admin; nunca desde una sesión de PIN)*:
+- `GET /api/dispositivos/:empresa_id` — equipos con `estado` (`PENDIENTE`, `CODIGO_VENCIDO`, `ACTIVO`, `ACTIVO_CON_CODIGO`, `REVOCADO`), `ultimo_uso`. Nunca salen hashes.
+- `POST /api/dispositivos/:empresa_id` — `{ "nombre" }` → `{ dispositivo, codigo, vigencia_min }` (el código solo se ve aquí). `PUT .../:id` renombra.
+- `POST /api/dispositivos/:empresa_id/:id/codigo` — código nuevo para re-registrar el equipo (cambio de teléfono); al canjearlo, el token anterior deja de valer.
+- `POST /api/dispositivos/:empresa_id/:id/revocar` — no borra: queda como `REVOCADO` y sus sesiones de PIN dejan de valer.
+- `PUT /api/usuarios/:empresa_id/:id/pin` — `{ "pin" }` (4–6 dígitos; se rechazan `0000` y secuencias como `1234`). `400` para administradores. Se guarda `bcrypt(HMAC(pimienta, id:pin))`; la pimienta es `PIN_PEPPER` (o `JWT_SECRET`). Limpia el bloqueo.
+- `DELETE /api/usuarios/:empresa_id/:id/pin` — quita el PIN y **cierra las sesiones** de esa persona. `POST .../pin/desbloquear` quita el bloqueo y los contadores.
+- `GET /api/usuarios/:empresa_id` agrega `tiene_pin` y `pin_bloqueado` (nunca el hash).
+
+En despliegue con el front en otro dominio, la cookie del equipo usa las mismas opciones que la de sesión (`COOKIE_SAMESITE=none` + HTTPS).
+
 ### Roles: Admin vs Operativo (+ permisos granulares)
 Cada usuario es **Admin** (`is_owner` o `is_admin` = true) u **Operativo** (lo demás).
 - **Admin**: acceso total.
@@ -466,8 +490,11 @@ POS propio: mesas, cuentas, comandas por área, precuenta, apertura de caja **co
 ### Impresión
 Las comandas, precuentas y tickets se encolan en `pos_impresiones` (el ticket lleva `abrir_cajon: true` si hubo efectivo); el **agente de impresión** (carpeta `print-agent/`) las toma y las imprime en cada impresora (red o USB).
 - `GET|POST /impresoras` · `PUT /impresoras/:id` · `POST /impresoras/:id/prueba` *(Admin)* — `{ nombre, conexion: "RED"|"USB", ip?, puerto?, nombre_usb?, ancho: 58|80, area_id?, es_ticket? }`; una impresora atiende un área o es la de tickets.
-- `GET|POST /agentes` · `PUT /agentes/:id` · `POST /agentes/:id/rotar-token` *(Admin)* — el token (`gh_agt_...`) se devuelve **una sola vez**; en la base solo queda su hash.
+- `GET|POST /agentes` · `PUT /agentes/:id` · `DELETE /agentes/:id` · `POST /agentes/:id/rotar-token` *(Admin)* (`DELETE` borra el agente: su token y su código dejan de servir; `404` si no existe en la empresa) — el token (`gh_agt_...`) se devuelve **una sola vez**; en la base solo queda su hash. El listado trae `equipo`, `emparejado_at`, `codigo_pendiente` y `desactualizado` (versión del agente < la publicada).
+- **Emparejamiento por código** *(migración 048)*: `POST /agentes` devuelve además `codigo` (`XXXX-XXXX`, vale 15 min, un solo uso; solo se guarda su hash) y `POST /agentes/:id/codigo` *(Admin)* genera otro (el anterior sin usar deja de servir). El instalador lo canjea en `POST /api/agente/emparejar` (público, con límite de intentos) `{ codigo, equipo? }` → `{ servidor, token, zona_horaria, agente: { id, nombre } }`: el token es **nuevo** (reemplaza al anterior) y `servidor` sale de `PUBLIC_API_URL` o del host de la petición. `400` si el código no existe, ya se usó, venció o el agente está desactivado. `GET /agentes-info` *(Admin)* → `{ manifiesto, ultimo_error }` (versión publicada, enlace al instalador y último fallo de impresión).
+- **Actualización automática del agente**: `GET /api/agente/version` (con el token del agente) → `{ manifiesto }` con `{ version, minima, url, sha256, instalador }` o `null`. Sale de las variables `AGENTE_ULTIMA_VERSION`, `AGENTE_URL_DESCARGA` (https), `AGENTE_SHA256`, `AGENTE_VERSION_MINIMA` y `AGENTE_INSTALADOR_URL`; sin URL https y hash válido no se publica la descarga. El agente descarga, verifica el hash, se reemplaza y reinicia; si la versión nueva no se mantiene viva, regresa a la anterior (ver `print-agent/instalador/LEEME.md`).
 - `GET /impresion/estado` *(ver)* — `{ agentes_conectados, pendientes, errores, sin_impresora }` (conectado = contacto en los últimos 30 s; `sin_impresora` = trabajos del último día que no tenían impresora configurada).
+- `POST /impresiones/:id/descartar` *(autorizar)* saca de la cola un trabajo que ya no hace falta (solo `PENDIENTE`, `ERROR` o `SIN_IMPRESORA`; `409` si ya se imprimió, lo está imprimiendo el agente o ya estaba descartado) y `POST /impresiones/descartar` `{ estados?: ["PENDIENTE"|"ERROR"|"SIN_IMPRESORA"] }` limpia varios de una vez → `{ descartados }`. **No borra la fila** (estado **`DESCARTADA`**, con `descartada_at`/`descartada_por`; migración 049): sale de la lista normal y de las alertas de «comanda sin salida», se consulta con `?estado=DESCARTADA` y se recupera con `reimprimir` (así un ticket descartado sigue pudiéndose reimprimir desde la cuenta).
 - `GET /impresiones?estado=` *(autorizar)* · `POST /impresiones/:id/reimprimir` *(ordenar)*. Estados: `PENDIENTE`, `IMPRIMIENDO`, `IMPRESO`, `ERROR` (falló el agente) y **`SIN_IMPRESORA`** (la empresa no tiene impresora/agente para ese trabajo; no es una falla). Migración 040.
 - **Impresión desde el navegador** (respaldo sin impresora): `GET /impresiones/:id` *(ordenar; un corte exige `pos.cobrar`)* → `{ id, tipo, estado, payload }` para dibujarlo en el cliente, y `POST /impresiones/:id/impreso-navegador` lo cierra como `IMPRESO` (solo desde `SIN_IMPRESORA` o `ERROR`; `409` si ya salió o está en la cola del agente).
 - **Áreas de categorías nuevas**: al crear una categoría de bebidas («Bebidas», «Café», «Cervezas»…) queda asignada al área `Barra` (se siembran Cocina/Barra/Sin comanda si la empresa aún no las tiene); el resto va al área por defecto. Se puede cambiar en la asignación de áreas.

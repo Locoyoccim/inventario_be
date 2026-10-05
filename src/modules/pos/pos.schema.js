@@ -147,7 +147,10 @@ export const impresoraUpdateSchema = impresoraBase
     .extend({ activo: z.boolean().optional() })
     .refine((d) => Object.keys(d).length > 0, algunCampo);
 
+export const descartarImpresionesSchema = z.object({ estados: z.array(z.enum(["PENDIENTE", "ERROR", "SIN_IMPRESORA"])).min(1).optional() });
 export const agenteCreateSchema = z.object({ nombre: nombreImpresora });
+// El instalador canjea el código (sin sesión ni token): solo trae el código y el nombre del equipo donde se instala.
+export const emparejarAgenteSchema = z.object({ codigo: z.string().trim().min(8, "Escribe el código completo").max(20), equipo: z.string().trim().max(80).optional() });
 export const agenteUpdateSchema = z
     .object({ nombre: nombreImpresora.optional(), activo: z.boolean().optional() })
     .refine((d) => Object.keys(d).length > 0, algunCampo);

@@ -9,7 +9,8 @@ import { permisosEfectivos } from "../../middlewares/activeUser.js";
 // Se compara siempre contra un hash (aunque el correo no exista) para que el tiempo no delate qué correos existen.
 const HASH_DUMMY = bcrypt.hashSync("sin-usuario", 10);
 
-export const puedeAutorizarUsuario = (u) => Boolean(u?.is_admin || u?.is_owner || u?.permisos?.includes("pos.autorizar"));
+// Una sesión de PIN no autoriza por sí misma: el supervisor la confirma con su correo y contraseña (credenciales en el cuerpo).
+export const puedeAutorizarUsuario = (u) => Boolean(u && !u.pin && (u.is_admin || u.is_owner || u.permisos?.includes("pos.autorizar")));
 
 // Devuelve el id de quien autoriza o null si nadie autoriza (sin sesión con permiso ni credenciales).
 export async function resolverAutorizador(empresa_id, actor, credenciales) {

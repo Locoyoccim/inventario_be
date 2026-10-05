@@ -3,6 +3,7 @@ import { empresaGuard } from "../middlewares/auth.js";
 import { recetaEmpresaGuard } from "../middlewares/scopeGuards.js";
 
 import registerUsuarios from "./usuarios.routes.js";
+import registerDispositivos from "./dispositivos.routes.js";
 import registerEmpresas from "./empresas.routes.js";
 import registerProductos from "./productos.routes.js";
 import registerProveedores from "./proveedores.routes.js";
@@ -29,6 +30,7 @@ router.param("receta_id", recetaEmpresaGuard);
 // Cada módulo registra sus rutas en el router compartido.
 [
     registerUsuarios,
+    registerDispositivos,
     registerEmpresas,
     registerProductos,
     registerProveedores,

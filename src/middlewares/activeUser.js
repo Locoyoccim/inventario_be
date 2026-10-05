@@ -13,6 +13,21 @@ export function invalidarUsuarioActivo(id) {
     cache.delete(Number(id));
 }
 
+// Equipos registrados (sesiones de PIN): un equipo revocado deja sin acceso a sus sesiones aunque el JWT no haya vencido.
+const cacheEquipos = new Map(); // id -> { activo, at }
+export function invalidarDispositivo(id) {
+    cacheEquipos.delete(Number(id));
+}
+async function equipoActivo(id, query) {
+    const key = Number(id);
+    const hit = cacheEquipos.get(key);
+    if (hit && Date.now() - hit.at < TTL_MS) return hit.activo;
+    const r = await query("SELECT 1 FROM dispositivos d JOIN empresas e ON e.id = d.empresa_id WHERE d.id = $1 AND d.activo AND e.activo", [key]);
+    const activo = r.rowCount > 0;
+    cacheEquipos.set(key, { activo, at: Date.now() });
+    return activo;
+}
+
 // Operativo sin role_id asignado (usuarios creados antes de este sistema de permisos, o
 // simplemente sin rol elegido): conserva el acceso que siempre tuvo, igual al rol "completo".
 const PERMISOS_SIN_ROL = ["compras.crear", "conteos.crear", "produccion.crear", "gastos.crear", "ingresos.crear"];
@@ -74,6 +89,16 @@ export async function requireActiveUser(req, _res, next) {
         // Revocación: si la versión del token no coincide con la de la BD, la sesión fue cerrada.
         if (Number(req.user.tv ?? 0) !== estado.tv) {
             return next(ApiError.unauthorized("Sesión finalizada. Vuelve a iniciar sesión."));
+        }
+        // Sesión de PIN: solo vale mientras el equipo siga autorizado y la persona no sea administradora (si la ascendieron,
+        // vuelve a entrar con correo y contraseña; una sesión de PIN nunca hereda poderes de Admin).
+        if (req.user.pin) {
+            if (estado.is_admin || estado.is_owner || estado.is_platform_admin) {
+                return next(ApiError.unauthorized("Esta sesión ya no es válida. Entra con tu correo y contraseña."));
+            }
+            if (!(await equipoActivo(req.user.disp, (sql, params) => pool.query(sql, params)))) {
+                return next(ApiError.unauthorized("Este equipo ya no está autorizado. Pide a un administrador que lo registre de nuevo."));
+            }
         }
         // Rol fresco desde BD: un token viejo de un admin degradado ya no manda.
         req.user.is_admin = estado.is_admin;

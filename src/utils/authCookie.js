@@ -15,7 +15,7 @@ export function expiresToMs(value = "7d") {
     return match[2] ? n * DURACIONES[match[2]] : n * 1000;
 }
 
-export function authCookieOptions(env = process.env) {
+export function authCookieOptions(env = process.env, expires = env.JWT_EXPIRES || "7d") {
     const production = env.NODE_ENV === "production";
     const sameSite = (env.COOKIE_SAMESITE || "lax").toLowerCase();
     const options = {
@@ -24,10 +24,23 @@ export function authCookieOptions(env = process.env) {
         secure: env.COOKIE_SECURE ? env.COOKIE_SECURE === "true" : production || sameSite === "none",
         sameSite,
         path: "/",
-        maxAge: expiresToMs(env.JWT_EXPIRES || "7d"),
+        maxAge: expiresToMs(expires),
     };
     if (env.COOKIE_DOMAIN) options.domain = env.COOKIE_DOMAIN;
     return options;
+}
+
+// Cookie del equipo registrado (ingreso con PIN). Solo viaja a /api/auth y dura más que la sesión: es el equipo, no la persona.
+export const DEVICE_COOKIE = "gh_device";
+const DISPOSITIVO_MS = 400 * DURACIONES.d; // tope que aceptan los navegadores
+
+export function deviceCookieOptions(env = process.env) {
+    return { ...authCookieOptions(env), path: "/api/auth", maxAge: DISPOSITIVO_MS };
+}
+
+export function clearDeviceCookieOptions(env = process.env) {
+    const { maxAge: _maxAge, ...rest } = deviceCookieOptions(env);
+    return rest;
 }
 
 // Mismas opciones sin maxAge (clearCookie debe coincidir en path/domain/sameSite/secure).

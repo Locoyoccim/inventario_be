@@ -13,4 +13,5 @@ export default class ApiError extends Error {
     static forbidden(msg = "Sin permisos") { return new ApiError(403, msg); }
     static notFound(msg = "Recurso no encontrado") { return new ApiError(404, msg); }
     static conflict(msg, details = null) { return new ApiError(409, msg, details); }
+    static tooMany(msg, details = null) { return new ApiError(429, msg, details); }
 }

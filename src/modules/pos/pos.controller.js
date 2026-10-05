@@ -89,12 +89,29 @@ export default class PosController {
     agentes = asyncHandler(async (req, res) => ok(res, await this.impresion.listarAgentes(req.params.empresa_id)));
     crearAgente = asyncHandler(async (req, res) => ok(res, await this.impresion.crearAgente(req.params.empresa_id, req.body.nombre), 201));
     actualizarAgente = asyncHandler(async (req, res) => ok(res, await this.impresion.actualizarAgente(req.params.empresa_id, req.params.id, req.body)));
+    eliminarAgente = asyncHandler(async (req, res) => ok(res, await this.impresion.eliminarAgente(req.params.empresa_id, req.params.id)));
     rotarToken = asyncHandler(async (req, res) => ok(res, await this.impresion.rotarToken(req.params.empresa_id, req.params.id)));
+    codigoAgente = asyncHandler(async (req, res) => ok(res, await this.impresion.nuevoCodigo(req.params.empresa_id, req.params.id)));
+    // Versión publicada del agente y dónde bajar el instalador, más el último fallo de impresión (diagnóstico).
+    agentesInfo = asyncHandler(async (req, res) => ok(res, { manifiesto: this.impresion.manifiesto(), ultimo_error: await this.impresion.ultimoError(req.params.empresa_id) }));
+
+    // Público (lo usa el instalador): canjea el código de emparejamiento por un token nuevo. `servidor` es la dirección a la que
+    // el agente debe llamar; PUBLIC_API_URL la fija cuando el servidor está detrás de otro dominio.
+    emparejarAgente = asyncHandler(async (req, res) => {
+        const r = await this.impresion.emparejar(req.body.codigo, req.body.equipo);
+        const servidor = (process.env.PUBLIC_API_URL || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
+        ok(res, { servidor, token: r.token, zona_horaria: r.zona_horaria, agente: r.agente });
+    });
+
+    // Lado del agente (con su token): manifiesto de versión para actualizarse solo.
+    agenteVersion = asyncHandler(async (_req, res) => ok(res, { manifiesto: this.impresion.manifiesto() }));
     estadoImpresion = asyncHandler(async (req, res) => ok(res, await this.impresion.estado(req.params.empresa_id)));
     cola = asyncHandler(async (req, res) => {
-        const estado = ["PENDIENTE", "IMPRIMIENDO", "IMPRESO", "ERROR", "SIN_IMPRESORA"].includes(req.query.estado) ? req.query.estado : null;
+        const estado = ["PENDIENTE", "IMPRIMIENDO", "IMPRESO", "ERROR", "SIN_IMPRESORA", "DESCARTADA"].includes(req.query.estado) ? req.query.estado : null;
         ok(res, await this.impresion.cola(req.params.empresa_id, { estado }));
     });
+    descartarImpresion = asyncHandler(async (req, res) => ok(res, await this.impresion.descartar(req.params.empresa_id, Number(req.params.id), req.user.id)));
+    descartarImpresiones = asyncHandler(async (req, res) => ok(res, await this.impresion.descartarVarios(req.params.empresa_id, req.user.id, req.body.estados)));
     reimprimir = asyncHandler(async (req, res) => ok(res, await this.impresion.reimprimir(req.params.empresa_id, req.params.id)));
     // El corte lleva cifras de caja: solo quien puede cobrar lo ve o lo imprime desde el navegador.
     async #jobPermitido(req) {

@@ -3,10 +3,13 @@ import { notificar } from "../../realtime/eventosPos.js";
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
 import { payloadPrueba } from "./pos.logic.js";
+import { generarCodigo, hashCodigo } from "../auth/pin.logic.js";
+import { estaDesactualizado, leerManifiesto } from "./agente.manifiesto.js";
 
 const IMPRESORA_COLS = "id, empresa_id, nombre, conexion, ip, puerto, nombre_usb, ancho, area_id, es_ticket, activo";
 const CONECTADO_SEG = 30;
 const MAX_INTENTOS = 5;
+const VIGENCIA_CODIGO_MIN = 15;
 
 export const hashToken = (token) => createHash("sha256").update(token).digest("hex");
 
@@ -74,12 +77,29 @@ export default class PosImpresionRepository {
 
     // ---- Agentes ----
     async listarAgentes(empresa_id) {
-        return (await pool.query(
-            `SELECT id, nombre, version, activo, ultimo_contacto, created_at,
+        const manifiesto = leerManifiesto();
+        const filas = (await pool.query(
+            `SELECT id, nombre, version, activo, ultimo_contacto, created_at, equipo, emparejado_at,
+                    (codigo_hash IS NOT NULL AND codigo_expira_at > now()) AS codigo_pendiente,
                     (ultimo_contacto IS NOT NULL AND ultimo_contacto > now() - make_interval(secs => $2)) AS conectado
              FROM agentes_impresion WHERE empresa_id = $1 ORDER BY id`,
             [empresa_id, CONECTADO_SEG],
         )).rows;
+        return filas.map((a) => ({ ...a, desactualizado: estaDesactualizado(a.version, manifiesto) }));
+    }
+
+    // Último fallo de impresión de la empresa (diagnóstico básico en la pantalla de Agentes).
+    async ultimoError(empresa_id) {
+        const r = await pool.query(
+            "SELECT error, tipo, created_at FROM pos_impresiones WHERE empresa_id = $1 AND estado = 'ERROR' AND error IS NOT NULL ORDER BY id DESC LIMIT 1",
+            [empresa_id],
+        );
+        return r.rows[0] ?? null;
+    }
+
+    // Datos para la pantalla: qué versión hay publicada y dónde bajar el instalador.
+    manifiesto() {
+        return leerManifiesto();
     }
 
     // El token solo se muestra al crearlo/rotarlo: en la BD queda su hash.
@@ -89,7 +109,35 @@ export default class PosImpresionRepository {
             "INSERT INTO agentes_impresion (empresa_id, nombre, token_hash) VALUES ($1,$2,$3) RETURNING id, nombre, activo, created_at",
             [empresa_id, nombre, hashToken(token)],
         );
-        return { agente: r.rows[0], token };
+        // Además del token (instalación manual), un código para el instalador: al canjearlo el token se renueva.
+        const { codigo, vigencia_min } = await this.nuevoCodigo(empresa_id, r.rows[0].id);
+        return { agente: r.rows[0], token, codigo, vigencia_min };
+    }
+
+    // Código de un solo uso para el instalador. Solo se guarda su hash; un código anterior sin usar deja de servir.
+    async nuevoCodigo(empresa_id, id) {
+        const codigo = generarCodigo();
+        const r = await pool.query(
+            `UPDATE agentes_impresion SET codigo_hash = $3, codigo_expira_at = now() + make_interval(mins => $4)
+             WHERE id = $1 AND empresa_id = $2 AND activo RETURNING id, nombre`,
+            [id, empresa_id, hashCodigo(codigo), VIGENCIA_CODIGO_MIN],
+        );
+        if (r.rowCount === 0) throw ApiError.notFound("Agente no encontrado o desactivado");
+        return { agente: r.rows[0], codigo, vigencia_min: VIGENCIA_CODIGO_MIN };
+    }
+
+    // Canje atómico (un solo uso): el instalador entrega el código y recibe un token nuevo; el hash del anterior se reemplaza.
+    async emparejar(codigo, equipo) {
+        const token = `gh_agt_${randomBytes(24).toString("hex")}`;
+        const r = await pool.query(
+            `UPDATE agentes_impresion a SET token_hash = $2, codigo_hash = NULL, codigo_expira_at = NULL, equipo = $3, emparejado_at = now()
+             FROM empresas e
+             WHERE a.codigo_hash = $1 AND a.codigo_expira_at > now() AND a.activo AND e.id = a.empresa_id AND e.activo
+             RETURNING a.id, a.nombre, e.zona_horaria`,
+            [hashCodigo(codigo), hashToken(token), equipo ?? null],
+        );
+        if (r.rowCount === 0) throw ApiError.badRequest("El código no es válido o ya venció. Genera uno nuevo en Impresoras → Agentes.");
+        return { agente: { id: r.rows[0].id, nombre: r.rows[0].nombre }, token, zona_horaria: r.rows[0].zona_horaria };
     }
 
     async actualizarAgente(empresa_id, id, { nombre, activo }) {
@@ -97,6 +145,13 @@ export default class PosImpresionRepository {
             "UPDATE agentes_impresion SET nombre = COALESCE($3, nombre), activo = COALESCE($4, activo) WHERE id = $1 AND empresa_id = $2 RETURNING id, nombre, activo",
             [id, empresa_id, nombre ?? null, activo ?? null],
         );
+        if (r.rowCount === 0) throw ApiError.notFound("Agente no encontrado");
+        return r.rows[0];
+    }
+
+    // Borra el agente (y con él su token y su código). Ninguna otra tabla depende de él; la PC que lo usaba deja de imprimir.
+    async eliminarAgente(empresa_id, id) {
+        const r = await pool.query("DELETE FROM agentes_impresion WHERE id = $1 AND empresa_id = $2 RETURNING id, nombre", [id, empresa_id]);
         if (r.rowCount === 0) throw ApiError.notFound("Agente no encontrado");
         return r.rows[0];
     }
@@ -139,7 +194,7 @@ export default class PosImpresionRepository {
             `SELECT p.id, p.tipo, p.referencia_id, p.estado, p.intentos, p.error, p.created_at, p.impreso_at,
                     p.payload->>'mesa' AS mesa, p.payload->>'area' AS area, p.payload->>'folio' AS folio, i.nombre AS impresora
              FROM pos_impresiones p LEFT JOIN impresoras i ON i.id = p.impresora_id
-             WHERE p.empresa_id = $1 AND ($2::text IS NULL OR p.estado = $2) ORDER BY p.id DESC LIMIT $3`,
+             WHERE p.empresa_id = $1 AND (($2::text IS NULL AND p.estado <> 'DESCARTADA') OR p.estado = $2) ORDER BY p.id DESC LIMIT $3`,
             [empresa_id, estado, limit],
         )).rows;
     }
@@ -164,6 +219,38 @@ export default class PosImpresionRepository {
     }
 
     // Vuelve a encolar un trabajo (p. ej. tras configurar la impresora que faltaba).
+    // Saca de la cola lo que no va a salir (y de las alertas de «comanda sin salida»). Solo lo que aún no se imprimió ni está en
+    // manos del agente; la fila se conserva y se puede recuperar con «Reimprimir».
+    async descartar(empresa_id, id, usuario_id) {
+        const r = await pool.query(
+            `UPDATE pos_impresiones SET estado = 'DESCARTADA', descartada_at = now(), descartada_por = $3, bloqueado_hasta = NULL
+             WHERE id = $1 AND empresa_id = $2 AND estado IN ('PENDIENTE', 'ERROR', 'SIN_IMPRESORA') RETURNING id, tipo, estado`,
+            [id, empresa_id, usuario_id],
+        );
+        if (r.rowCount === 0) {
+            const actual = (await pool.query("SELECT estado FROM pos_impresiones WHERE id = $1 AND empresa_id = $2", [id, empresa_id])).rows[0];
+            if (!actual) throw ApiError.notFound("Trabajo de impresión no encontrado");
+            throw ApiError.conflict(
+                actual.estado === "IMPRIMIENDO" ? "El agente lo está imprimiendo ahora; espera unos segundos."
+                    : actual.estado === "DESCARTADA" ? "Ya estaba descartado."
+                        : "Ya se imprimió: no hay nada que descartar.",
+            );
+        }
+        await notificar(pool, { tipo: "impresion.error", empresa_id, impresion_id: id });
+        return r.rows[0];
+    }
+
+    // Limpia de una vez lo pendiente, con error o sin impresora (según `estados`). Devuelve cuántos descartó.
+    async descartarVarios(empresa_id, usuario_id, estados = ["PENDIENTE", "ERROR", "SIN_IMPRESORA"]) {
+        const r = await pool.query(
+            `UPDATE pos_impresiones SET estado = 'DESCARTADA', descartada_at = now(), descartada_por = $2, bloqueado_hasta = NULL
+             WHERE empresa_id = $1 AND estado = ANY($3::text[]) AND estado IN ('PENDIENTE', 'ERROR', 'SIN_IMPRESORA')`,
+            [empresa_id, usuario_id, estados],
+        );
+        if (r.rowCount > 0) await notificar(pool, { tipo: "impresion.error", empresa_id });
+        return { descartados: r.rowCount };
+    }
+
     async reimprimir(empresa_id, id) {
         const job = (await pool.query("SELECT id, tipo, payload, referencia_id FROM pos_impresiones WHERE id = $1 AND empresa_id = $2", [id, empresa_id])).rows[0];
         if (!job) throw ApiError.notFound("Trabajo de impresión no encontrado");
@@ -179,8 +266,8 @@ export default class PosImpresionRepository {
             if (!impresora) throw ApiError.badRequest("No hay una impresora de tickets activa. Configúrala en Impresoras.");
         }
         const r = await pool.query(
-            `UPDATE pos_impresiones SET estado = 'PENDIENTE', impresora_id = $3, intentos = 0, error = NULL, bloqueado_hasta = NULL, impreso_at = NULL,
-                    reimpresiones = reimpresiones + CASE WHEN estado IN ('ERROR', 'SIN_IMPRESORA') AND impreso_at IS NULL THEN 0 ELSE 1 END
+            `UPDATE pos_impresiones SET estado = 'PENDIENTE', impresora_id = $3, intentos = 0, error = NULL, bloqueado_hasta = NULL, impreso_at = NULL, descartada_at = NULL, descartada_por = NULL,
+                    reimpresiones = reimpresiones + CASE WHEN estado IN ('ERROR', 'SIN_IMPRESORA', 'DESCARTADA') AND impreso_at IS NULL THEN 0 ELSE 1 END
              WHERE id = $1 AND empresa_id = $2 RETURNING id, estado`,
             [id, empresa_id, impresora.id],
         );

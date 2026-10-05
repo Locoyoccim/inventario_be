@@ -4,6 +4,9 @@
 import UsuarioRepository from "./modules/usuarios/usuario.repository.js";
 import UsuarioService from "./modules/usuarios/usuario.service.js";
 import UsuarioController from "./modules/usuarios/usuarios.controller.js";
+import DispositivoRepository from "./modules/dispositivos/dispositivo.repository.js";
+import PinService from "./modules/auth/pin.service.js";
+import PinController from "./modules/auth/pin.controller.js";
 import EmpresaRepository from "./modules/empresas/empresa.repository.js";
 import EmpresaService from "./modules/empresas/empresa.service.js";
 import EmpresaController from "./modules/empresas/empresa.controller.js";
@@ -68,7 +71,10 @@ const recetaRepo = new RecetaRepository();
 
 // Controllers (lo que consumen las rutas)
 export const empresaController = new EmpresaController(new EmpresaService(empresaRepo));
-export const usuarioController = new UsuarioController(new UsuarioService(new UsuarioRepository(), empresaRepo));
+const usuarioRepo = new UsuarioRepository();
+export const usuarioController = new UsuarioController(new UsuarioService(usuarioRepo, empresaRepo));
+const dispositivoRepo = new DispositivoRepository();
+export const pinController = new PinController(new PinService(dispositivoRepo, usuarioRepo), dispositivoRepo);
 export const productoController = new ProductosController(new ProductosService(new ProductosRepository()));
 export const proveedorController = new ProveedorController(new ProveedorService(new ProveedorRepository(), empresaRepo));
 export const recetaController = new RecetaController(new RecetaService(recetaRepo, empresaRepo));

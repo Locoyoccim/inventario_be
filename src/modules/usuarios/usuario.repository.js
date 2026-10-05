@@ -4,7 +4,8 @@ import ApiError from "../../utils/ApiError.js";
 const QUERIES = {
     SELECT_ALL: `
         SELECT u.id, u.nombre, u.codigo_ingreso, u.puesto, u.is_admin, u.is_owner, u.empresa_id,
-               u.email, u.activo, u.role_id, r.nombre AS rol
+               u.email, u.activo, u.role_id, r.nombre AS rol,
+               (u.pin_hash IS NOT NULL) AS tiene_pin, (u.pin_bloqueado_at IS NOT NULL) AS pin_bloqueado
         FROM usuarios u
         LEFT JOIN roles r ON u.role_id = r.id
         WHERE u.empresa_id = $1
@@ -12,7 +13,8 @@ const QUERIES = {
     `,
     SELECT_BY_ID: `
         SELECT u.id, u.nombre, u.codigo_ingreso, u.puesto, u.is_admin, u.is_owner, u.empresa_id,
-               u.email, u.activo, u.role_id, r.nombre AS rol
+               u.email, u.activo, u.role_id, r.nombre AS rol,
+               (u.pin_hash IS NOT NULL) AS tiene_pin, (u.pin_bloqueado_at IS NOT NULL) AS pin_bloqueado
         FROM usuarios u
         LEFT JOIN roles r ON u.role_id = r.id
         WHERE u.empresa_id = $1 AND u.id = $2
@@ -46,7 +48,7 @@ const QUERIES = {
     INSERT: `
         INSERT INTO usuarios (nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email, password_hash)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING id, nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email, activo
+        RETURNING id, nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email, activo, false AS tiene_pin, false AS pin_bloqueado
     `,
     // Campos opcionales con COALESCE: lo que no se envia conserva su valor.
     UPDATE: `
@@ -63,7 +65,8 @@ const QUERIES = {
             RETURNING *
         )
         SELECT u.id, u.nombre, u.codigo_ingreso, u.puesto, u.is_admin, u.is_owner,
-               u.role_id, u.empresa_id, u.email, u.activo, r.nombre AS rol
+               u.role_id, u.empresa_id, u.email, u.activo, r.nombre AS rol,
+               (u.pin_hash IS NOT NULL) AS tiene_pin, (u.pin_bloqueado_at IS NOT NULL) AS pin_bloqueado
         FROM updated u
         LEFT JOIN roles r ON u.role_id = r.id
     `,
