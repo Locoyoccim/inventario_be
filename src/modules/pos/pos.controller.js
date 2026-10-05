@@ -74,6 +74,7 @@ export default class PosController {
 
     // ---- Caja ----
     abrirTurno = asyncHandler(async (req, res) => ok(res, await this.cuentas.abrirTurno(req.params.empresa_id, req.user.id, req.body.fondo_inicial), 201));
+    turnoAbierto = asyncHandler(async (req, res) => ok(res, await this.cuentas.turnoAbierto(req.params.empresa_id, req.user.id)));
     turnoActual = asyncHandler(async (req, res) => ok(res, await this.cuentas.turnoActual(req.params.empresa_id, req.user.id)));
 
     listarTurnos = asyncHandler(async (req, res) => ok(res, await this.turnos.listar(req.params.empresa_id, usuarioTurno(req))));

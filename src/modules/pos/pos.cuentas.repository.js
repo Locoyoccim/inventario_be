@@ -561,7 +561,15 @@ export default class PosCuentasRepository {
         const resultado = await this.#tx(async (client) => {
             const cuenta = await this.#bloquear(client, empresa_id, cuenta_id);
             const turno = (await client.query(Q.TURNO_ABIERTO, [empresa_id, usuario_id])).rows[0];
-            if (!turno) throw ApiError.conflict("Abre tu caja para poder cobrar");
+            if (!turno) {
+                // Con una sola caja por negocio, cobrar sin la propia suele significar que la tiene abierta otra persona.
+                const ajena = (await client.query("SELECT u.nombre FROM pos_turnos t JOIN usuarios u ON u.id = t.usuario_id WHERE t.empresa_id = $1 AND t.estado = 'ABIERTO'", [empresa_id])).rows[0];
+                throw ApiError.conflict(
+                    ajena
+                        ? `La caja la tiene abierta ${ajena.nombre}. Solo se cobra desde la caja abierta: pídele que la cierre (o que lo haga un supervisor) y abre la tuya.`
+                        : "Abre tu caja para poder cobrar",
+                );
+            }
 
             const items = (await client.query(
                 `SELECT ${ITEM_COLS} FROM pos_cuenta_items i LEFT JOIN areas_preparacion a ON a.id = i.area_id
@@ -654,9 +662,28 @@ export default class PosCuentasRepository {
             );
             return r.rows[0];
         } catch (error) {
-            if (error.code === "23505") throw ApiError.conflict("Ya tienes una caja abierta");
-            throw error;
+            if (error.code !== "23505") throw error;
+            // Solo puede haber una caja abierta por empresa: se dice de quién es para saber a quién pedirle que la cierre.
+            const abierta = await this.turnoAbierto(empresa_id, usuario_id);
+            if (abierta?.es_mia) throw ApiError.conflict("Ya tienes una caja abierta", { turno_id: abierta.id });
+            throw ApiError.conflict(
+                abierta
+                    ? `Ya hay una caja abierta por ${abierta.cajero}. Solo puede haber una por negocio: hay que cerrarla (un supervisor también puede) antes de abrir otra.`
+                    : "Ya hay una caja abierta en este negocio.",
+                abierta ? { turno_id: abierta.id, cajero: abierta.cajero } : null,
+            );
         }
+    }
+
+    // La caja abierta del negocio (sea de quien sea), para explicar quién la tiene.
+    async turnoAbierto(empresa_id, usuario_id) {
+        const r = await pool.query(
+            `SELECT t.id, t.usuario_id, u.nombre AS cajero, t.fecha_negocio, t.fondo_inicial, t.abierto_at, (t.usuario_id = $2) AS es_mia
+             FROM pos_turnos t JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.empresa_id = $1 AND t.estado = 'ABIERTO'`,
+            [empresa_id, usuario_id],
+        );
+        return r.rows[0] ?? null;
     }
 
     async turnoActual(empresa_id, usuario_id) {

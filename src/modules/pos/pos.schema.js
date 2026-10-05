@@ -122,7 +122,6 @@ export const turnoCerrarSchema = z.object({
     efectivo_contado: dineroMax2,
     propinas_entregadas: dineroMax2.default(0),
     nota: texto(200).optional(),
-    forzar: z.boolean().default(false),
 });
 export const turnoAbrirSchema = z.object({ fondo_inicial: dineroMax2.default(0) });
 

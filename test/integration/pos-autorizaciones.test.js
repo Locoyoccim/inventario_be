@@ -280,14 +280,14 @@ describe("Integración HTTP — POS: autorizaciones, descuentos y anulaciones", 
         // Mesas libres (las pruebas anteriores dejaron cuentas abiertas) y turno nuevo: se cierra el actual del cajero.
         await pool.query("UPDATE pos_cuentas SET estado = 'CANCELADA' WHERE empresa_id = $1 AND estado = 'ABIERTA'", [A]);
         const t0 = await turnoDe(tokCajero);
-        assert.equal((await req("POST", api(`/turnos/${t0.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 0, forzar: true } })).status, 200);
+        assert.equal((await req("POST", api(`/turnos/${t0.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 0 } })).status, 200);
         assert.equal((await abrirCaja(tokCajero, 100)).status, 201);
         const t1 = await turnoDe(tokCajero);
         const s1 = await cuentaLista([linea(latte), linea(baguette)]);
         await cobrar(s1, [{ metodo: "EFECTIVO", monto: 100 }, { metodo: "TARJETA", monto: 75 }]);
         const s2 = await cuentaLista([linea(latte)]);
         await cobrar(s2, [{ metodo: "EFECTIVO", monto: 55 }]);
-        const cierre = await req("POST", api(`/turnos/${t1.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 255, forzar: true } });
+        const cierre = await req("POST", api(`/turnos/${t1.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 255 } });
         assert.equal(cierre.status, 200, JSON.stringify(cierre.json));
         const cerradoAntes = (await req("GET", api(`/turnos/${t1.id}/corte`), { token: tokCajero })).json.data.corte;
         assert.equal(cerradoAntes.ventas, 230);

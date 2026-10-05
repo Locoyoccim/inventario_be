@@ -77,6 +77,7 @@ export default function registerPos(router) {
 
     // Caja
     router.get(`${b}/turnos/actual`, ver, posController.turnoActual);
+    router.get(`${b}/turnos/abierto`, ver, posController.turnoAbierto);
     router.post(`${b}/turnos/abrir`, cobrar, validate(turnoAbrirSchema), posController.abrirTurno);
     router.get(`${b}/turnos`, cobrar, posController.listarTurnos);
     router.get(`${b}/turnos/:id/corte`, cobrar, posController.corte);
