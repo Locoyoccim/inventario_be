@@ -16,6 +16,7 @@
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",
         "migrate:mark": "node db/migrate.js mark",
+        "empaquetar": "node scripts/empaquetar.js",
         "backup": "node scripts/respaldo.js respaldar",
         "backup:verify": "node scripts/respaldo.js verificar",
         "backup:restore": "node scripts/respaldo.js restaurar",

@@ -64,11 +64,13 @@ DATABASE_URL=postgresql://usuario:pass@host:5432/inventario_db
 # DB_PASSWORD=tu_password
 # DB_PORT=5432
 
-JWT_SECRET=un_secreto_de_al_menos_32_caracteres_aqui
+# Genera cada secreto con: node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+JWT_SECRET=<genera-uno>
 PORT=4000
 # Producción: obligatorios
 # CORS_ORIGINS=https://app.tu-dominio.mx
-# SETUP_TOKEN=...          # exige header x-setup-token en /setup
+# SETUP_TOKEN=...          # exige header x-setup-token en /setup (24+ caracteres)
+# PIN_PEPPER=...           # pimienta del hash de los PIN (32+), distinta de JWT_SECRET
 # PLATFORM_TOKEN=...       # exige header x-platform-token en POST /empresas
 ```
 
@@ -79,7 +81,9 @@ npm run migrate      # crea/actualiza el esquema
 npm run dev          # o: npm start
 ```
 
-La configuración crítica se valida al arrancar (`src/config/env.js`): si falta `JWT_SECRET` (32+), la BD, o `CORS_ORIGINS`/`SETUP_TOKEN` en producción, el proceso aborta con un mensaje claro.
+La configuración crítica se valida al arrancar (`src/config/env.js`): si falta `JWT_SECRET` (32+), la BD, o `CORS_ORIGINS`/`SETUP_TOKEN`/`PIN_PEPPER` en producción, el proceso aborta con un mensaje claro. En producción además rechaza secretos de ejemplo (los del repositorio y variantes), repetitivos, cortos o iguales entre sí; los mensajes nunca imprimen el valor.
+
+**Empaquetar el código:** `npm run empaquetar` genera `dist/<proyecto>-<commit>.zip` con `git archive`. Exige árbol limpio (no hace commits por ti), comprueba que ningún valor del `.env` local esté en lo versionado y revisa el ZIP (sin `.env`, claves, volcados ni respaldos). No entregues un ZIP hecho a mano de la carpeta.
 
 ### Primer usuario
 
@@ -95,7 +99,8 @@ Con la BD migrada, crea el dueño con `POST /api/auth/setup` (solo funciona si n
 | `JWT_EXPIRES` | No | `7d` | Vigencia del token |
 | `PORT` | No | `4000` | Puerto del servidor |
 | `CORS_ORIGINS` | Prod | — | Lista separada por comas |
-| `SETUP_TOKEN` | Prod | — | Protege `/auth/setup` |
+| `SETUP_TOKEN` | Prod | — | Protege `/auth/setup` (24+ caracteres) |
+| `PIN_PEPPER` | Prod | `JWT_SECRET` (solo desarrollo) | Pimienta del hash de los PIN; distinta de `JWT_SECRET` (32+) |
 | `PLATFORM_TOKEN` | Prod | — | Protege `POST /empresas` |
 | `DB_SSL` | No | — | `require` para SSL sin verificar cert |
 

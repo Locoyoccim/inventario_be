@@ -1,13 +1,11 @@
 // Cargar .env ANTES que cualquier otro módulo: varios leen process.env al importarse
 // (app.js: CORS_ORIGINS/NODE_ENV). Los imports ESM se evalúan en orden.
 import "dotenv/config";
-import { validateEnv } from "./src/config/env.js";
+// Valida la configuración (secretos incluidos) antes de cargar la app y la base; aborta el arranque si es insegura.
+import "./src/config/validar-env.js";
 import app from "./src/app.js";
 import pool from "./src/config/db.js";
 import { cerrarEventos } from "./src/realtime/eventosPos.js";
-
-// Aborta el arranque si la configuración crítica no es válida.
-validateEnv();
 
 const PORT = process.env.PORT || 4000;
 
