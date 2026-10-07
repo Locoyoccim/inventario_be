@@ -104,6 +104,10 @@ try {
             if (r.status === 500) info("Error interno: el detalle está en la consola del backend (ej. JWT_SECRET no cargado). ¿Reiniciaste el backend tras actualizar?");
         } else {
             ok("POST /api/auth/login -> 200");
+            // La sesión web viaja solo en la cookie httpOnly; si el body aún trae el JWT, el backend en ejecución es una versión anterior.
+            body.data?.token !== undefined
+                ? fail("El body del login todavía incluye `token`: el backend en ejecución es una versión anterior. Reinícialo.")
+                : ok("El body del login no incluye el token (la sesión va solo en la cookie)");
             const cookie = r.headers.get("set-cookie");
             if (!cookie?.includes("gh_session=")) {
                 fail("El login no devolvió la cookie gh_session: el backend en ejecución es una versión anterior. Reinícialo.");

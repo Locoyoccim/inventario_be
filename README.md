@@ -132,7 +132,7 @@ inventario_BE/
 
 ## 5. Autenticación y roles
 
-- El token va en cookie httpOnly `gh_session` (front web) o en `Authorization: Bearer <token>` (Postman/integraciones). Con cookie, toda escritura exige además el header `X-Requested-With` (anti-CSRF).
+- La sesión va en la cookie httpOnly `gh_session`; **el login no devuelve el token en el body**. El middleware también acepta `Authorization: Bearer <jwt>` (pruebas y Postman; no hay API tokens para integraciones todavía). Con cookie, toda escritura exige además el header `X-Requested-With` (anti-CSRF). Detalle en `docs/architecture/AUTH_STRATEGY.md`.
 - **Admin** (`is_admin` o `is_owner`): todo. **Operativo**: siempre puede leer; para **crear** (compras, conteos, producción, gastos, ingresos) depende de su **rol** (`usuarios.role_id` → `roles.permisos`, catálogo fijo sembrado por `027_roles_permisos.sql`): Operativo completo (todo lo anterior), Compras y almacén, Producción, Finanzas, o Mesero (sin permisos hoy — reservado para un futuro POS con operación de piso). Un Operativo sin `role_id` asignado se trata como "Operativo completo" (compatibilidad con usuarios creados antes de este sistema). Nunca crea/edita catálogos (productos, recetas, proveedores, usuarios, pos-map, categorías) → `403`.
 - El middleware `requirePermiso(clave)` (`src/middlewares/auth.js`) exige la clave de permiso correspondiente (`compras.crear`, `conteos.crear`, `produccion.crear`, `gastos.crear`, `ingresos.crear`); Admin/dueño siempre pasan.
 - El rol y los permisos se **revalidan desde la BD** en cada request (caché 60s): un usuario degradado, desactivado o con el rol cambiado pierde/gana permisos sin esperar a que expire el token.

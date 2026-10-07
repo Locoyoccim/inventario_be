@@ -25,17 +25,17 @@ export default class AuthController {
                 throw ApiError.forbidden("SETUP_TOKEN inválido");
             }
         }
-        const data = await this.authService.setup(req.body);
-        res.cookie(AUTH_COOKIE, data.token, authCookieOptions());
+        const { token, ...data } = await this.authService.setup(req.body);
+        res.cookie(AUTH_COOKIE, token, authCookieOptions());
         res.status(201).json({ success: true, data });
     });
 
-    // El token se entrega en cookie httpOnly (front web) y también en el body
-    // (Postman/integraciones que usan Authorization: Bearer).
+    // La sesión web viaja SOLO en la cookie httpOnly: el JWT no se devuelve en el body (así un XSS o un log de respuestas no lo ve).
+    // El middleware sigue aceptando Authorization: Bearer para integraciones futuras (ver docs/architecture/AUTH_STRATEGY.md).
     login = asyncHandler(async (req, res) => {
         const { email, password } = req.body;
-        const data = await this.authService.login(email, password);
-        res.cookie(AUTH_COOKIE, data.token, authCookieOptions());
+        const { token, ...data } = await this.authService.login(email, password);
+        res.cookie(AUTH_COOKIE, token, authCookieOptions());
         res.json({ success: true, data });
     });
 

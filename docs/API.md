@@ -9,7 +9,7 @@ API REST multiempresa (Node/Express + PostgreSQL) para café-restaurante: produc
 | URL base (local) | `http://localhost:4000` |
 | Prefijo | `/api` |
 | Formato | JSON (`Content-Type: application/json` en todo POST/PUT) |
-| Autenticación | **JWT** (7 días) en todo `/api/*` salvo `login`, `setup` y `logout`. Dos vías: header `Authorization: Bearer <token>` (Postman/integraciones) o cookie httpOnly `gh_session` (front web). Con cookie, POST/PUT/DELETE exigen el header `X-Requested-With` (anti-CSRF) o responden `403` |
+| Autenticación | **JWT** (7 días) en todo `/api/*` salvo `login`, `setup` y `logout`. Sesión web: cookie httpOnly `gh_session` (**el JWT nunca viaja en el body**). El middleware también acepta `Authorization: Bearer <jwt>` (pruebas, Postman; no hay API tokens para terceros todavía). Con cookie, POST/PUT/DELETE exigen el header `X-Requested-With` (anti-CSRF) o responden `403`. Ver `docs/architecture/AUTH_STRATEGY.md` |
 | Multiempresa | cada recurso cuelga de `:empresa_id`; el token debe corresponder a esa empresa o responde `403` |
 
 ### Seguridad de borde
@@ -66,7 +66,7 @@ Crea el **primer** usuario (owner/admin). Solo funciona si no existe ningún usu
 ```json
 { "empresa_id": 4, "nombre": "Carlos", "email": "carlos@aroma.mx", "password": "min6chars", "codigo_ingreso": "0001", "puesto": "Dueño", "role_id": 1 }
 ```
-Respuesta: `{ "token": "...", "user": { } }`.
+Respuesta: `{ "user": { } }` y `Set-Cookie: gh_session=<jwt>; HttpOnly` (sin `token` en el body).
 
 ### `GET /api/auth/invitacion/:token` · `POST /api/auth/invitacion`
 Activación de cuenta por **enlace de invitación** (públicas; las autoriza el token de un solo uso). `GET` valida el enlace y devuelve `{ nombre, email, empresa }` (`404` si ya se usó, venció o no existe). `POST { "token": "...", "password": "mín. 8 caracteres" }` define la contraseña, consume el enlace en la misma operación atómica, revoca sesiones anteriores y deja `must_change_password = false`; después se inicia sesión con `POST /auth/login`. Con el mismo límite de intentos que el login.
@@ -75,7 +75,7 @@ Activación de cuenta por **enlace de invitación** (públicas; las autoriza el 
 ```json
 { "email": "carlos@aroma.mx", "password": "..." }
 ```
-Respuesta: `{ "token": "...", "user": { } }` y además `Set-Cookie: gh_session=<token>; HttpOnly; SameSite=Lax`. El token dura **7 días** (config `JWT_EXPIRES`). El front web ignora el `token` del body y usa la cookie (enviar peticiones con `credentials: include` / `withCredentials`).
+Respuesta: `{ "user": { …, "permisos": [ ] } }` y `Set-Cookie: gh_session=<jwt>; HttpOnly; SameSite=Lax`. **El body no incluye el token** (cambio de la Fase 2: antes lo devolvía además de la cookie; nadie lo usaba salvo Postman). La sesión dura **7 días** (config `JWT_EXPIRES`). Enviar peticiones con `credentials: include` / `withCredentials`. Para probar con Postman: la colección guarda el JWT leído de `Set-Cookie` (ver `AUTH_STRATEGY.md` §8).
 
 El correo se compara sin distinguir mayúsculas ni espacios (`lower(trim(email))`), y se guarda en minúsculas al crear usuarios. Si un usuario no puede entrar: `LOGIN_PASSWORD='clave' npm run diagnosticar:login -- correo@dominio.com`.
 
@@ -504,7 +504,7 @@ Las comandas, precuentas y tickets se encolan en `pos_impresiones` (el ticket ll
 
 ## Flujo end-to-end recomendado
 
-1. `POST /api/auth/login` → token (o `/setup` la primera vez para el primer usuario de toda la base; luego, nuevas empresas se crean con `POST /api/platform/empresas`, que exige `is_platform_admin`).
+1. `POST /api/auth/login` → sesión en la cookie `gh_session` (o `/setup` la primera vez para el primer usuario de toda la base; luego, nuevas empresas se crean con `POST /api/platform/empresas`, que exige `is_platform_admin`).
 2. `POST /api/proveedores/:e` y `POST /api/productos/:e` (insumos).
 3. `POST /api/recetas/:e` con `es_preparacion` (salsa) → `POST /api/produccion/:e/confirmar` (producirla).
 4. `POST /api/recetas/:e` del platillo usando la preparación como ingrediente.
