@@ -1,6 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -54,9 +55,7 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Cat A')", [A]);
         // 028 exige que la categoría exista en el catálogo de la empresa.
@@ -166,11 +165,54 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
         assert.ok(!nombresR.includes("SoloProdX"));
     });
 
-    it("crear una preparación asegura la categoría \"Preparación\" (tipo PRODUCTO)", async () => {
-        await req("POST", `/api/recetas/${A}`, {
-            token: tok,
-            body: { nombre: "Salsa base", categoria: "Salsas", precio_venta: 0, es_preparacion: true, rendimiento: 1000, unidad: "ml", stock_minimo: 100, ingredientes: [{ producto_id: ingId, cantidad: 50 }] },
-        });
+    const crearPreparacion = (token, empresa, nombre, ingrediente) => req("POST", `/api/recetas/${empresa}`, {
+        token,
+        body: { nombre, categoria: "Salsas", precio_venta: 0, es_preparacion: true, rendimiento: 1000, unidad: "ml", stock_minimo: 100, ingredientes: [{ producto_id: ingrediente, cantidad: 50 }] },
+    });
+
+    it("crear una preparación asegura la categoría \"Preparación\" (tipo PRODUCTO) aunque la empresa no la tenga", async () => {
+        // Regresión: la categoría debe crearse ANTES del producto elaborado (el trigger 028 la exige). Esta empresa NO la trae sembrada.
+        assert.equal(await countCat("Preparación"), 0, "precondición: la empresa no tiene la categoría");
+        const r = await crearPreparacion(tok, A, "Salsa base", ingId);
+        assert.equal(r.status, 201, JSON.stringify(r.json));
         assert.equal(await tipoDe("Preparación"), "PRODUCTO", "la categoría Preparación existe y es de producto");
+        assert.equal(await catText("productos", r.json.data.producto_elaborado.id), "Preparación");
+    });
+
+    it("la segunda preparación reutiliza la categoría, no la duplica", async () => {
+        const r = await crearPreparacion(tok, A, "Salsa dos", ingId);
+        assert.equal(r.status, 201, JSON.stringify(r.json));
+        assert.equal(await countCat("Preparación"), 1);
+    });
+
+    it("si la empresa ya tenía la categoría con otra mayúscula, la preparación usa ese nombre", async () => {
+        const B = 9502;
+        try {
+            await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Cat B')", [B]);
+            await pool.query("INSERT INTO categorias (empresa_id, nombre) VALUES ($1,'Insumo'), ($1,'Salsas'), ($1,'preparación')", [B]);
+            const adminB = (await pool.query(
+                "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ('AdmB','CB-adm',true,true,$1) RETURNING id", [B])).rows[0].id;
+            const tokB = signToken({ id: adminB, empresa_id: B, is_admin: true, is_owner: true, tv: 0 });
+            const prov = (await req("POST", `/api/proveedores/${B}`, { token: tokB, body: { nombre: "ProvB" } })).json.data.id;
+            const ing = (await req("POST", `/api/productos/${B}`, {
+                token: tokB, body: { producto: "Base B", unidad_medida: "g", proveedor_id: prov, categoria: "Insumo", cantidad_presentacion: 1000, costo_presentacion: 10, stock_actual: 100, stock_minimo: 10 },
+            })).json.data.id;
+            const r = await crearPreparacion(tokB, B, "Salsa B", ing);
+            assert.equal(r.status, 201, JSON.stringify(r.json));
+            assert.equal(await catText("productos", r.json.data.producto_elaborado.id), "preparación");
+            const n = (await pool.query("SELECT COUNT(*)::int c FROM categorias WHERE empresa_id=$1 AND lower(nombre)='preparación'", [B])).rows[0].c;
+            assert.equal(n, 1);
+        } finally {
+            const e = [[B]];
+            await pool.query("DELETE FROM receta_detalle WHERE receta_id IN (SELECT id FROM recetas WHERE empresa_id = ANY($1))", e);
+            await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", e);
+            await pool.query("DELETE FROM movimientosinventario WHERE producto_id IN (SELECT id FROM productos WHERE empresa_id = ANY($1))", e);
+            await pool.query("DELETE FROM inventario WHERE empresa_id = ANY($1)", e);
+            await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", e);
+            await pool.query("DELETE FROM proveedores WHERE empresa_id = ANY($1)", e);
+            await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", e);
+            await pool.query("DELETE FROM usuarios WHERE empresa_id = ANY($1)", e);
+            await pool.query("DELETE FROM empresas WHERE id = ANY($1)", e);
+        }
     });
 });

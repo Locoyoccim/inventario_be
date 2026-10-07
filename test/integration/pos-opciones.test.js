@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Opciones por producto, comensal y tiempos: catálogo, validación al tomar la orden, cobro con consumo de insumos y envío por tiempos.
 
@@ -65,9 +66,7 @@ describe("Integración HTTP — opciones por producto, comensal y tiempos", { sk
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Opciones'), ($2,'Otra')", [A, B]);

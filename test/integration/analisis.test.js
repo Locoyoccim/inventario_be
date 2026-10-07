@@ -1,6 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Análisis del negocio: ingeniería de menú, costo teórico contra real y control de fugas, sobre ventas reales del POS.
 
@@ -75,9 +76,7 @@ describe("Integración HTTP — análisis del negocio", { skip: SKIP }, () => {
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
         const { hoyISO } = await import("../../src/utils/fecha.js");
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Análisis'), ($2,'Otra')", [A, B]);

@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Correcciones de la auditoría de octubre de 2026: ingresos del corte protegidos, fechas por zona de la empresa,
 // conteo con base, merma al cancelar lo ya enviado, comandas al juntar cuentas, costo al anular compras y roles.
@@ -87,9 +88,7 @@ describe("Integración HTTP — auditoría 2026-10", { skip: SKIP }, () => {
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
         ({ hoyISO } = await import("../../src/utils/fecha.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre,zona_horaria) VALUES ($1,'Auditoría',$2)", [A, ZONA]);

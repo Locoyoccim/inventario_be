@@ -36,7 +36,8 @@ jobs:
         run: npm run migrate
       - name: Lint
         run: npm run lint
+      # Modo estricto: exige la base de pruebas (REQUIRE_DB=1) y falla ante cualquier prueba omitida o suite que no corra.
       - name: Pruebas (unit + integración)
-        run: npm test
+        run: npm run test:ci
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventarios

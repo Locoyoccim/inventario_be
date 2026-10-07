@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Avisos en tiempo real del POS: Postgres NOTIFY -> SSE. Los eventos son avisos con ids; salen al confirmar, no en rollback.
 
@@ -105,9 +106,7 @@ describe("Integración HTTP — avisos en tiempo real (SSE)", { skip: SKIP }, ()
         ({ signToken } = await import("../../src/utils/jwt.js"));
         ({ cerrarEventos, reiniciarEventos } = await import("../../src/realtime/eventosPos.js"));
         reiniciarEventos();
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Eventos'), ($2,'Otra')", [A, B]);
@@ -231,7 +230,7 @@ describe("Integración HTTP — avisos en tiempo real (SSE)", { skip: SKIP }, ()
     it("si la escucha de la base se cae, se reconecta sola y manda «resync» para que todos refresquen; los avisos siguen llegando", async () => {
         const f = await flujo(tokMesero);
         await esperar(f, (e) => e.tipo === "conectado");
-        const matados = await pool.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query ILIKE 'LISTEN pos_eventos%' AND pid <> pg_backend_pid()");
+        const matados = await pool.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query ILIKE 'LISTEN pos_eventos%' AND pid <> pg_backend_pid()");
         assert.ok(matados.rowCount >= 1, "había una escucha abierta");
         assert.ok(await esperar(f, (e) => e.tipo === "resync", 8000), "tras reconectar, todos refrescan");
         const c = await abrir();

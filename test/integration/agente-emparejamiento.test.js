@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Emparejamiento del agente de impresión por código (en lugar de copiar el token) y manifiesto de versión.
 
@@ -47,9 +48,7 @@ describe("Integración HTTP — emparejamiento del agente de impresión", { skip
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Con agente'), ($2,'Otra')", [A, B]);
         tokAdmin = await mkUsuario(A, "AG-adm", true);

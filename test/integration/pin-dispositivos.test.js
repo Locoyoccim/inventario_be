@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Ingreso con PIN en equipos registrados: registro del equipo con código de un solo uso, PIN, bloqueos y límites de Admin.
 
@@ -58,9 +59,7 @@ describe("Integración HTTP — PIN y equipos registrados", { skip: SKIP }, () =
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken, verifyToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Con PIN'), ($2,'Otra')", [A, B]);

@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Pruebas de integración HTTP: requieren una BD de prueba migrada en TEST_DATABASE_URL.
 // Sin esa variable se saltan (el `npm test` unitario no toca BD). Los tokens se firman
@@ -52,9 +53,7 @@ describe("Integración HTTP", { skip: SKIP }, () => {
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Emp A'),($2,'Emp B')", [A, B]);

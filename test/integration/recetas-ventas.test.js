@@ -9,6 +9,7 @@ if (DB) {
 }
 
 import { borrarVentaCsv, sembrarVentaCsv } from "../helpers/ventaHistorica.js";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % ponderado)", { skip: SKIP }, () => {
     const A = 9701, B = 9702;
@@ -43,9 +44,7 @@ describe("Integración HTTP — Recetas: ventas por receta (mezcla + costo % pon
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Ventas A'),($2,'Ventas B')", [A, B]);
         // 028 exige que la categoría exista en el catálogo de la empresa.

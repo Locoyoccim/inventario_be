@@ -2,6 +2,8 @@ import pool from "../../config/db.js";
 import { recalcularCostoTotal, costoUtil } from "../../utils/costeo.js";
 import ApiError from "../../utils/ApiError.js";
 
+const CATEGORIA_PREPARACION = "Preparación";
+
 const QUERIES = {
     SELECT_ALL: `
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
@@ -360,23 +362,29 @@ export default class RecetaRepository {
             // Alta del producto elaborado (subreceta) y enlace
             let productoElaborado = null;
             if (es_preparacion) {
+                // La categoría debe existir ANTES de insertar el producto: el trigger de la migración 028 la exige.
+                // Si la empresa ya la tiene (con cualquier mayúscula) se reutiliza su nombre exacto; si no, se crea (tipo PRODUCTO).
+                const cat = await client.query(
+                    `WITH ya AS (
+                         SELECT nombre FROM categorias WHERE empresa_id = $1 AND lower(nombre) = lower($2) LIMIT 1
+                     ), nueva AS (
+                         INSERT INTO categorias (empresa_id, nombre, tipo)
+                         SELECT $1, $2, 'PRODUCTO' WHERE NOT EXISTS (SELECT 1 FROM ya)
+                         RETURNING nombre
+                     )
+                     SELECT nombre FROM ya UNION ALL SELECT nombre FROM nueva`,
+                    [empresa_id, CATEGORIA_PREPARACION]
+                );
+
                 const prodElab = await client.query(QUERIES.INSERT_PRODUCTO_ELAB, [
                     nombre,
                     unidad,
-                    "Preparación",
+                    cat.rows[0].nombre,
                     empresa_id,
                     rendimiento,                    // cantidad_presentacion = rendimiento
                     Number(recetaFinal.costo_total), // costo_presentacion = costo_total
                 ]);
                 productoElaborado = prodElab.rows[0];
-
-                // Asegura que la categoría "Preparación" (tipo PRODUCTO) exista en la lista compartida.
-                await client.query(
-                    `INSERT INTO categorias (empresa_id, nombre, tipo)
-                     SELECT $1, 'Preparación', 'PRODUCTO'
-                     WHERE NOT EXISTS (SELECT 1 FROM categorias WHERE empresa_id = $1 AND lower(nombre) = lower('Preparación'))`,
-                    [empresa_id]
-                );
 
                 const inv = await client.query(QUERIES.INSERT_INVENTARIO_ELAB, [
                     productoElaborado.id,
