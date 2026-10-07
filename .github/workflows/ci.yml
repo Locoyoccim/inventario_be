@@ -6,6 +6,22 @@ on:
   pull_request:
 
 jobs:
+  # Compuerta de dependencias: bloquea ante vulnerabilidades HIGH/CRITICAL en PRODUCCIÓN. El árbol completo (herramientas de
+  # desarrollo) se muestra como aviso y no bloquea. Solo necesita package.json y el lockfile (no instala nada).
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: "Dependencias de producción (bloqueante: HIGH/CRITICAL)"
+        run: npm audit --omit=dev --audit-level=high
+      - name: "Árbol completo (informativo, no bloquea)"
+        if: always()
+        run: |
+          npm audit --audit-level=high || echo "::warning title=npm audit informativo::El arbol completo tiene vulnerabilidades HIGH o CRITICAL (herramientas de desarrollo). No bloquea; revisa el log."
+
   test:
     runs-on: ubuntu-latest
     services:
