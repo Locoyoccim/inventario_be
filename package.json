@@ -9,10 +9,12 @@
     },
     "scripts": {
         "test": "NODE_ENV=test node --test",
+        "test:local": "bash -c 'set -a && . ./.env.test && set +a && npm run test:ci'",
         "test:ci": "export REQUIRE_DB=1 && node scripts/ci/exigir-db.js && NODE_ENV=test node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/ci/guardia-ci.js --test-reporter-destination=stderr",
         "start": "node server.js",
         "diagnosticar:login": "node scripts/diagnosticar_login.js",
         "dev": "NODE_ENV=development nodemon server.js",
+        "db:roles": "node scripts/db_roles.js",
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",
         "migrate:mark": "node db/migrate.js mark",

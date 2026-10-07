@@ -22,7 +22,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventarios
       JWT_SECRET: ci-secret-no-usar-en-produccion
       NODE_ENV: test
     steps:
@@ -32,12 +31,28 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - name: Migrar esquema
+      # Roles de la base (ADR-006): el MIGRADOR es dueño de los objetos y corre las migraciones; la APP solo lee/escribe datos.
+      # El administrador (postgres) se usa ÚNICAMENTE en este paso. Contraseñas aleatorias por corrida, enmascaradas en el log.
+      - name: Roles de la base (migrador y app)
+        env:
+          ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventarios
+        run: |
+          GH_APP_PASSWORD="$(openssl rand -hex 16)"
+          GH_MIGRADOR_PASSWORD="$(openssl rand -hex 16)"
+          echo "::add-mask::$GH_APP_PASSWORD"
+          echo "::add-mask::$GH_MIGRADOR_PASSWORD"
+          export GH_APP_PASSWORD GH_MIGRADOR_PASSWORD
+          npm run db:roles
+          {
+            echo "MIGRATE_DATABASE_URL=postgres://gh_migrador:${GH_MIGRADOR_PASSWORD}@localhost:5432/inventarios"
+            echo "TEST_MIGRATOR_URL=postgres://gh_migrador:${GH_MIGRADOR_PASSWORD}@localhost:5432/inventarios"
+            echo "TEST_DATABASE_URL=postgres://gh_app:${GH_APP_PASSWORD}@localhost:5432/inventarios"
+          } >> "$GITHUB_ENV"
+      - name: Migrar esquema (como migrador)
         run: npm run migrate
       - name: Lint
         run: npm run lint
-      # Modo estricto: exige la base de pruebas (REQUIRE_DB=1) y falla ante cualquier prueba omitida o suite que no corra.
-      - name: Pruebas (unit + integración)
+      # Modo estricto: exige las dos URLs (REQUIRE_DB=1), corre la suite como rol de privilegios mínimos y falla ante cualquier
+      # prueba omitida o suite que no corra.
+      - name: Pruebas (unit + integración, como rol de la app)
         run: npm run test:ci
-        env:
-          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventarios

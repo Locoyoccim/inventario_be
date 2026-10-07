@@ -6,6 +6,10 @@ import "./src/config/validar-env.js";
 import app from "./src/app.js";
 import pool from "./src/config/db.js";
 import { cerrarEventos } from "./src/realtime/eventosPos.js";
+import { verificarRolDeAplicacion } from "./src/config/rolDb.js";
+
+// La app no debe conectarse como superusuario ni como dueña de las tablas (aborta en producción; avisa en desarrollo).
+await verificarRolDeAplicacion(pool);
 
 const PORT = process.env.PORT || 4000;
 

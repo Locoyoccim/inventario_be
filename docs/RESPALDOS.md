@@ -11,7 +11,7 @@ Un respaldo es lo único que permite recuperarse de un borrado, una migración f
 | `npm run backup:verify [archivo]` | **Prueba de recuperación**: restaura el respaldo (el último por defecto) en una base temporal, compara los conteos de las tablas clave con la base actual y borra la temporal. |
 | `npm run backup:restore -- <archivo> <base_nueva>` | Restaura en una base **nueva**. Nunca sobrescribe la base en uso. |
 
-Usan las mismas variables de conexión que el servidor (`DATABASE_URL` + `DB_SSL=require` en Railway, o `DB_*` en local) y
+Usan las mismas variables de conexión que el servidor (con el rol **`gh_app`**: **respaldar solo lee**, no necesita más). Para `backup:verify` y `backup:restore` (crean bases) hace falta un administrador: `ADMIN_DATABASE_URL` (ver [DB_ROLES.md](DB_ROLES.md)); una base restaurada necesita `npm run db:roles -- --base <base> --adoptar` antes de usarla con la app. Las variables de conexión son las del servidor (`DATABASE_URL` + `DB_SSL=require` en Railway, o `DB_*` en local) y
 necesitan las herramientas cliente de PostgreSQL (`pg_dump`, `pg_restore`) en el equipo que las ejecute. La contraseña viaja
 por `PGPASSWORD`, no por la línea de comandos. Los archivos se crean con permisos `600` y `backups/` está en `.gitignore`:
 **contienen datos reales; no se suben a git ni se comparten.**

@@ -2,6 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { iniciarServidor } from "../helpers/servidor.js";
+import { crearPoolMigrador } from "../helpers/migrador.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -136,17 +137,22 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
         await mkRecipe("Receta ambas", "AmbasUse");
 
         const sql = readFileSync("db/migrations/017_categorias_tipo.sql", "utf8");
-        await pool.query(sql); // re-ejecuta la migración real
-        assert.equal(await tipoDe("MigProd"), "PRODUCTO");
-        assert.equal(await tipoDe("MigRec"), "RECETA");
-        assert.equal(await tipoDe("AmbasUse"), "AMBAS", "usada por producto y receta");
-        assert.equal(await countCat("MigProd"), 1);
+        const migrador = crearPoolMigrador(); // la migración hace DDL: la app (rol de privilegios mínimos) no puede
+        try {
+            await migrador.query(sql); // re-ejecuta la migración real
+            assert.equal(await tipoDe("MigProd"), "PRODUCTO");
+            assert.equal(await tipoDe("MigRec"), "RECETA");
+            assert.equal(await tipoDe("AmbasUse"), "AMBAS", "usada por producto y receta");
+            assert.equal(await countCat("MigProd"), 1);
 
-        // Idempotente: correrla de nuevo no duplica ni cambia conteos.
-        await pool.query(sql);
-        assert.equal(await countCat("MigProd"), 1);
-        assert.equal(await countCat("MigRec"), 1);
-        assert.equal(await tipoDe("AmbasUse"), "AMBAS");
+            // Idempotente: correrla de nuevo no duplica ni cambia conteos.
+            await migrador.query(sql);
+            assert.equal(await countCat("MigProd"), 1);
+            assert.equal(await countCat("MigRec"), 1);
+            assert.equal(await tipoDe("AmbasUse"), "AMBAS");
+        } finally {
+            await migrador.end();
+        }
     });
 
     it("GET ?tipo=PRODUCTO devuelve PRODUCTO + AMBAS, no RECETA", async () => {

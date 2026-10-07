@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import bcrypt from "bcryptjs";
 import { iniciarServidor } from "../helpers/servidor.js";
 
-// Estrategia de autenticación web (ver docs/architecture/AUTH_STRATEGY.md): JWT en cookie httpOnly, nunca en el body;
+// Estrategia de autenticación web (ver docs/AUTH_STRATEGY.md): JWT en cookie httpOnly, nunca en el body;
 // Authorization: Bearer sigue aceptado por el middleware (integraciones futuras) pero ningún endpoint lo entrega.
 
 const DB = process.env.TEST_DATABASE_URL;

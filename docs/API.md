@@ -9,7 +9,7 @@ API REST multiempresa (Node/Express + PostgreSQL) para café-restaurante: produc
 | URL base (local) | `http://localhost:4000` |
 | Prefijo | `/api` |
 | Formato | JSON (`Content-Type: application/json` en todo POST/PUT) |
-| Autenticación | **JWT** (7 días) en todo `/api/*` salvo `login`, `setup` y `logout`. Sesión web: cookie httpOnly `gh_session` (**el JWT nunca viaja en el body**). El middleware también acepta `Authorization: Bearer <jwt>` (pruebas, Postman; no hay API tokens para terceros todavía). Con cookie, POST/PUT/DELETE exigen el header `X-Requested-With` (anti-CSRF) o responden `403`. Ver `docs/architecture/AUTH_STRATEGY.md` |
+| Autenticación | **JWT** (7 días) en todo `/api/*` salvo `login`, `setup` y `logout`. Sesión web: cookie httpOnly `gh_session` (**el JWT nunca viaja en el body**). El middleware también acepta `Authorization: Bearer <jwt>` (pruebas, Postman; no hay API tokens para terceros todavía). Con cookie, POST/PUT/DELETE exigen el header `X-Requested-With` (anti-CSRF) o responden `403`. Ver `docs/AUTH_STRATEGY.md` |
 | Multiempresa | cada recurso cuelga de `:empresa_id`; el token debe corresponder a esa empresa o responde `403` |
 
 ### Seguridad de borde

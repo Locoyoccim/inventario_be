@@ -95,6 +95,7 @@ Con la BD migrada, crea el dueño con `POST /api/auth/setup` (solo funciona si n
 | --- | --- | --- | --- |
 | `DATABASE_URL` | Sí* | — | Cadena de conexión (o usa `DB_*`) |
 | `DB_USER/DB_HOST/DB_NAME/DB_PASSWORD/DB_PORT` | Sí* | — | Alternativa a `DATABASE_URL` |
+| `MIGRATE_DATABASE_URL` | Para migrar | — | Rol **migrador** (`gh_migrador`, dueño de las tablas). `DATABASE_URL`/`DB_*` deben ser el rol **`gh_app`** (privilegios mínimos); en producción la app aborta si es superusuario o dueño. Ver [docs/DB_ROLES.md](docs/DB_ROLES.md) |
 | `JWT_SECRET` | Sí | — | 32+ caracteres |
 | `JWT_EXPIRES` | No | `7d` | Vigencia del token |
 | `PORT` | No | `4000` | Puerto del servidor |
@@ -132,7 +133,7 @@ inventario_BE/
 
 ## 5. Autenticación y roles
 
-- La sesión va en la cookie httpOnly `gh_session`; **el login no devuelve el token en el body**. El middleware también acepta `Authorization: Bearer <jwt>` (pruebas y Postman; no hay API tokens para integraciones todavía). Con cookie, toda escritura exige además el header `X-Requested-With` (anti-CSRF). Detalle en `docs/architecture/AUTH_STRATEGY.md`.
+- La sesión va en la cookie httpOnly `gh_session`; **el login no devuelve el token en el body**. El middleware también acepta `Authorization: Bearer <jwt>` (pruebas y Postman; no hay API tokens para integraciones todavía). Con cookie, toda escritura exige además el header `X-Requested-With` (anti-CSRF). Detalle en `docs/AUTH_STRATEGY.md`.
 - **Admin** (`is_admin` o `is_owner`): todo. **Operativo**: siempre puede leer; para **crear** (compras, conteos, producción, gastos, ingresos) depende de su **rol** (`usuarios.role_id` → `roles.permisos`, catálogo fijo sembrado por `027_roles_permisos.sql`): Operativo completo (todo lo anterior), Compras y almacén, Producción, Finanzas, o Mesero (sin permisos hoy — reservado para un futuro POS con operación de piso). Un Operativo sin `role_id` asignado se trata como "Operativo completo" (compatibilidad con usuarios creados antes de este sistema). Nunca crea/edita catálogos (productos, recetas, proveedores, usuarios, pos-map, categorías) → `403`.
 - El middleware `requirePermiso(clave)` (`src/middlewares/auth.js`) exige la clave de permiso correspondiente (`compras.crear`, `conteos.crear`, `produccion.crear`, `gastos.crear`, `ingresos.crear`); Admin/dueño siempre pasan.
 - El rol y los permisos se **revalidan desde la BD** en cada request (caché 60s): un usuario degradado, desactivado o con el rol cambiado pierde/gana permisos sin esperar a que expire el token.
@@ -175,12 +176,14 @@ Versionadas en `db/migrations/NNN_*.sql`, aplicadas en orden por `npm run migrat
 ## 9. Pruebas
 
 ```bash
-npm test                    # unitarias (node:test), no tocan la BD
-# Integración HTTP (requiere una BD de prueba migrada):
-TEST_DATABASE_URL=postgres://... npm test
+npm test                    # unitarias (node:test); la integración se omite sin base de pruebas
+npm run test:local          # TODO como en CI: lee .env.test (ver .env.test.example) y corre test:ci
+npm run test:ci             # modo estricto (REQUIRE_DB=1): exige las dos URLs y falla ante cualquier prueba omitida
 ```
 
-La suite de integración (`test/integration/http.test.js`) levanta la app en un puerto efímero y ejerce los flujos reales (compras con cascada y 4 decimales, ventas import/409/revert, producción, conteos, guardado atómico de recetas, soft-delete de proveedores) y la matriz de permisos (Admin vs Operativo vs otra empresa). Sin `TEST_DATABASE_URL` se salta.
+La suite corre con **dos roles** (ver [docs/DB_ROLES.md](docs/DB_ROLES.md)): `TEST_DATABASE_URL` = `gh_app` (privilegios mínimos, con el que corre todo) y `TEST_MIGRATOR_URL` = `gh_migrador` (dueño de las tablas; solo para fixtures con DDL). Una prueba (`rol-aplicacion.test.js`) falla si `TEST_DATABASE_URL` es un superusuario o el dueño. Preparar la base de pruebas: `ADMIN_DATABASE_URL=… GH_APP_PASSWORD=… GH_MIGRADOR_PASSWORD=… npm run db:roles -- --adoptar` y luego `MIGRATE_DATABASE_URL=… npm run migrate`.
+
+La suite de integración (`test/integration/http.test.js`) levanta la app en un puerto efímero y ejerce los flujos reales (compras con cascada y 4 decimales, ventas import/409/revert, producción, conteos, guardado atómico de recetas, soft-delete de proveedores) y la matriz de permisos (Admin vs Operativo vs otra empresa). Sin `TEST_DATABASE_URL` se salta (en CI nunca: `test:ci` lo exige).
 
 ---
 

@@ -8,6 +8,10 @@
 // Variables (además de las de conexión de .env): BACKUP_DIR (def. ./backups), BACKUP_KEEP (def. 14 copias),
 // BACKUP_UPLOAD_CMD (opcional, comando que sube la copia a otro lugar; {file} se sustituye por la ruta).
 // La contraseña viaja por PGPASSWORD, no por la línea de comandos.
+//
+// Roles: respaldar solo LEE, así que basta el rol de la app (DATABASE_URL / DB_*). Crear bases (restaurar, verificar) exige un
+// administrador: ADMIN_DATABASE_URL (si no se define, se usa la conexión normal, que solo sirve sin roles separados). La base
+// restaurada queda a nombre del administrador: antes de apuntar la app a ella, correr `npm run db:roles -- --base <base> --adoptar`.
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -24,24 +28,35 @@ const KEEP = Math.max(1, Number(process.env.BACKUP_KEEP) || 14);
 // Tablas cuyo conteo debe coincidir entre la base y su respaldo restaurado.
 const TABLAS_CLAVE = ["empresas", "usuarios", "productos", "recetas", "movimientosinventario", "ingresos", "pos_cuentas", "pos_pagos"];
 
-function conexion() {
-    if (process.env.DATABASE_URL) {
-        const u = new URL(process.env.DATABASE_URL);
-        return {
-            host: u.hostname, port: u.port || "5432", user: decodeURIComponent(u.username), password: decodeURIComponent(u.password),
-            database: u.pathname.replace(/^\//, ""), ssl: process.env.DB_SSL === "require",
-        };
-    }
+function desdeUrl(url) {
+    const u = new URL(url);
     return {
-        host: process.env.DB_HOST || "127.0.0.1", port: process.env.DB_PORT || "5432", user: process.env.DB_USER,
-        password: process.env.DB_PASSWORD || "", database: process.env.DB_NAME, ssl: process.env.DB_SSL === "require",
+        host: u.hostname, port: u.port || "5432", user: decodeURIComponent(u.username),
+        // Sin contraseña en la URL queda undefined: libpq/pg usan entonces ~/.pgpass.
+        password: u.password ? decodeURIComponent(u.password) : undefined,
+        database: u.pathname.replace(/^\//, ""), ssl: process.env.DB_SSL === "require",
     };
 }
 
-const envPg = (c, database = c.database) => ({
-    ...process.env, PGHOST: c.host, PGPORT: String(c.port), PGUSER: c.user, PGPASSWORD: c.password, PGDATABASE: database,
-    ...(c.ssl ? { PGSSLMODE: "require" } : {}),
-});
+function conexion() {
+    if (process.env.DATABASE_URL) return desdeUrl(process.env.DATABASE_URL);
+    return {
+        host: process.env.DB_HOST || "127.0.0.1", port: process.env.DB_PORT || "5432", user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD || undefined, database: process.env.DB_NAME, ssl: process.env.DB_SSL === "require",
+    };
+}
+
+// Administrador para crear/borrar bases (restaurar, verificar). Sin ADMIN_DATABASE_URL se usa la conexión normal.
+function conexionAdmin() {
+    return process.env.ADMIN_DATABASE_URL ? desdeUrl(process.env.ADMIN_DATABASE_URL) : conexion();
+}
+
+const envPg = (c, database = c.database) => {
+    const env = { ...process.env, PGHOST: c.host, PGPORT: String(c.port), PGUSER: c.user, PGDATABASE: database, ...(c.ssl ? { PGSSLMODE: "require" } : {}) };
+    if (c.password !== undefined) env.PGPASSWORD = c.password;
+    else delete env.PGPASSWORD;
+    return env;
+};
 
 function ejecutar(cmd, args, env) {
     return new Promise((resolve, reject) => {
@@ -113,6 +128,7 @@ const ident = (nombre) => {
 };
 
 async function restaurarEn(c, archivo, base) {
+    c = conexionAdmin(); // crear la base y restaurar exigen administrador (el rol de la app no puede)
     await conAdmin(c, async (cli) => {
         const existe = await cli.query("SELECT 1 FROM pg_database WHERE datname = $1", [base]);
         if (existe.rowCount > 0) throw new Error(`La base «${base}» ya existe. Elige otro nombre: este comando nunca sobrescribe.`);
@@ -150,7 +166,7 @@ async function verificar(archivo) {
     console.log(`Verificando ${path.basename(archivo)} en la base temporal «${temporal}»...`);
     try {
         await restaurarEn(c, archivo, temporal);
-        const [origen, copia] = [await conteos(c, c.database), await conteos(c, temporal)];
+        const [origen, copia] = [await conteos(c, c.database), await conteos(conexionAdmin(), temporal)];
         let difiere = false;
         for (const [tabla, n] of Object.entries(origen)) {
             // Una diferencia pequeña es normal si la base siguió operando después del respaldo; se muestra siempre.
@@ -160,7 +176,7 @@ async function verificar(archivo) {
         }
         console.log(difiere ? "OK: el respaldo se restauró. Hay diferencias de conteo (¿la base siguió operando después del respaldo?)." : "OK: el respaldo se restauró y coincide con la base actual.");
     } finally {
-        await conAdmin(c, (cli) => cli.query(`DROP DATABASE IF EXISTS ${ident(temporal)}`)).catch(() => console.warn(`No se pudo borrar la base temporal ${temporal}; elimínala a mano.`));
+        await conAdmin(conexionAdmin(), (cli) => cli.query(`DROP DATABASE IF EXISTS ${ident(temporal)}`)).catch(() => console.warn(`No se pudo borrar la base temporal ${temporal}; elimínala a mano.`));
     }
 }
 
@@ -170,7 +186,7 @@ async function restaurar(archivo, base) {
     if (base === c.database) throw new Error("Por seguridad no se restaura sobre la base en uso. Elige un nombre nuevo y apunta DB_NAME/DATABASE_URL a ella cuando la hayas revisado.");
     console.log(`Restaurando ${path.basename(archivo)} en la base nueva «${base}»...`);
     await restaurarEn(c, path.resolve(archivo), base);
-    console.log(`OK. Revisa la base «${base}»; para usarla cambia DB_NAME (o DATABASE_URL) y reinicia el servidor.`);
+    console.log(`OK. Revisa la base «${base}». Para usarla con la app: 1) ADMIN_DATABASE_URL=... npm run db:roles -- --base ${base} --adoptar  2) cambia DB_NAME (o DATABASE_URL) y reinicia el servidor.`);
 }
 
 const [accion = "respaldar", a, b] = process.argv.slice(2);
@@ -181,5 +197,8 @@ try {
     else throw new Error(`Acción desconocida «${accion}». Usa: respaldar | verificar | restaurar`);
 } catch (error) {
     console.error(`Error: ${error.message}`);
+    if (/permission denied to create database|must be owner|permission denied/i.test(error.message)) {
+        console.error("Pista: crear bases (restaurar/verificar) exige un administrador. Define ADMIN_DATABASE_URL (ver docs/DB_ROLES.md); el rol de la app solo puede respaldar.");
+    }
     process.exit(1);
 }

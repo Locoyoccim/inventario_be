@@ -71,3 +71,25 @@ describe("guardia de CI: de punta a punta con el runner real", () => {
         assert.equal(r.stderr.trim(), "");
     });
 });
+
+describe("modo estricto: exigir-db exige las dos URLs de la base de pruebas", () => {
+    const exigir = (env) => spawnSync(process.execPath, [resolve("scripts/ci/exigir-db.js")], { encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
+
+    it("REQUIRE_DB=1 sin ninguna URL falla y nombra las dos", () => {
+        const r = exigir({ REQUIRE_DB: "1" });
+        assert.equal(r.status, 1);
+        assert.match(r.stderr, /TEST_DATABASE_URL y TEST_MIGRATOR_URL/);
+    });
+
+    it("REQUIRE_DB=1 con solo la URL de la app falla pidiendo la del migrador", () => {
+        const r = exigir({ REQUIRE_DB: "1", TEST_DATABASE_URL: "postgres://app@h/db" });
+        assert.equal(r.status, 1);
+        assert.match(r.stderr, /falta TEST_MIGRATOR_URL/);
+        assert.doesNotMatch(r.stderr, /falta TEST_DATABASE_URL/);
+    });
+
+    it("REQUIRE_DB=1 con ambas URLs pasa; sin REQUIRE_DB no exige nada", () => {
+        assert.equal(exigir({ REQUIRE_DB: "1", TEST_DATABASE_URL: "postgres://a@h/db", TEST_MIGRATOR_URL: "postgres://m@h/db" }).status, 0);
+        assert.equal(exigir({}).status, 0);
+    });
+});

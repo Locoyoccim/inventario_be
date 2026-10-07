@@ -32,3 +32,6 @@ coverage
 
 # Respaldos de la base de datos (contienen datos reales)
 backups/
+
+# Credenciales locales de las pruebas (roles de la base; ver .env.test.example)
+.env.test

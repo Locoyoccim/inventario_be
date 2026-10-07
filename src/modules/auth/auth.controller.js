@@ -31,7 +31,7 @@ export default class AuthController {
     });
 
     // La sesión web viaja SOLO en la cookie httpOnly: el JWT no se devuelve en el body (así un XSS o un log de respuestas no lo ve).
-    // El middleware sigue aceptando Authorization: Bearer para integraciones futuras (ver docs/architecture/AUTH_STRATEGY.md).
+    // El middleware sigue aceptando Authorization: Bearer para integraciones futuras (ver docs/AUTH_STRATEGY.md).
     login = asyncHandler(async (req, res) => {
         const { email, password } = req.body;
         const { token, ...data } = await this.authService.login(email, password);
