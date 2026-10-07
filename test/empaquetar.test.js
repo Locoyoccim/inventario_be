@@ -10,8 +10,8 @@ const script = resolve("scripts/empaquetar.js");
 
 describe("empaquetar: rutas prohibidas", () => {
     it("detecta .env, claves, volcados, respaldos y dependencias; permite .env.example y las migraciones .sql", () => {
-        const malas = [".env", "api/.env.local", ".env.production", "cert/servidor.pem", "ssh/id_rsa", "backup.dump", "datos.sqlite3", "x.bak", "scripts/limpiar.sql", "backups/2026.sql", "node_modules/a/b.js", "build.zip"];
-        const buenas = [".env.example", ".env.sample", "db/migrations/001_init.sql", "src/app.js", "docs/ENV.md", "ssh/id_rsa.pub.txt", "src/env.js"];
+        const malas = [".env", "api/.env.local", ".env.production", ".env.test", ".env.example.bak", ".env.test.local", "cert/servidor.pem", "ssh/id_rsa", "backup.dump", "datos.sqlite3", "x.bak", "scripts/limpiar.sql", "backups/2026.sql", "node_modules/a/b.js", "build.zip"];
+        const buenas = [".env.example", ".env.sample", ".env.test.example", "api/.env.production.template", "db/migrations/001_init.sql", "src/app.js", "docs/ENV.md", "ssh/id_rsa.pub.txt", "src/env.js"];
         const r = rutasProhibidas([...malas, ...buenas]).map((x) => x.ruta);
         assert.deepEqual(r.sort(), [...malas].sort());
     });

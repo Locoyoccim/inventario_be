@@ -16,7 +16,7 @@ const SECRETOS_DEL_ENV = ["JWT_SECRET", "PIN_PEPPER", "SETUP_TOKEN", "DB_PASSWOR
 const LARGO_MINIMO_PATRON = 8; // valores más cortos darían falsos positivos con cualquier texto
 
 const PROHIBIDOS = [
-    [/(^|\/)\.env(\..+)?$/, "archivo .env (solo se permite .env.example/.sample/.template)", /(^|\/)\.env\.(example|sample|template)$/],
+    [/(^|\/)\.env(\..+)?$/, "archivo .env (solo se permiten las plantillas .example/.sample/.template, p. ej. .env.example y .env.test.example)", /(^|\/)\.env(\.[a-z]+)*\.(example|sample|template)$/],
     [/\.(pem|key|p12|pfx|jks|keystore)$/i, "clave o certificado"],
     [/(^|\/)id_(rsa|dsa|ecdsa|ed25519)$/, "clave SSH privada"],
     [/\.(dump|bak|sqlite3?|db)$/i, "volcado, respaldo o base de datos"],
