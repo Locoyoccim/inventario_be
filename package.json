@@ -24,8 +24,8 @@
         "backup:restore": "node scripts/respaldo.js restaurar",
         "test:watch": "NODE_ENV=test node --test --watch",
         "lint": "eslint .",
-        "format": "prettier --write .",
-        "format:check": "prettier --check ."
+        "format": "node scripts/formato_modificados.js --write",
+        "format:check": "node scripts/formato_modificados.js"
     },
     "keywords": [],
     "author": "",

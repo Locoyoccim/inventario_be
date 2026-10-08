@@ -1,0 +1,3 @@
+# Trinquete de formato (Prettier). El formato solo se exige a lo modificado DESPUÉS de este commit (npm run format:check).
+# No se reformatea el historial. Si este commit deja de existir (squash merge), se ignora y se compara contra la rama base.
+ef38112fa867be336c443d656d9350f4ff3fed63

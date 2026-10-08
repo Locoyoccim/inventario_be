@@ -22,6 +22,25 @@ jobs:
         run: |
           npm audit --audit-level=high || echo "::warning title=npm audit informativo::El arbol completo tiene vulnerabilidades HIGH o CRITICAL (herramientas de desarrollo). No bloquea; revisa el log."
 
+  # Trinquete de formato: en cada pull request, Prettier solo se exige a los archivos que ese PR modifica (nunca al repositorio
+  # entero) y solo a lo posterior al commit de .prettier-ratchet. Ver scripts/formato_modificados.js.
+  formato:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Formato de los archivos modificados
+        env:
+          FORMATO_BASE: ${{ github.event.pull_request.base.sha }}
+        run: npm run format:check
+
   test:
     runs-on: ubuntu-latest
     services:
