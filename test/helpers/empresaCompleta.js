@@ -8,7 +8,9 @@
 import assert from "node:assert/strict";
 
 let secuencia = 0;
-const unico = () => `${Date.now().toString(36)}${(secuencia++).toString(36)}`;
+// Único aunque dos procesos de prueba arranquen en el mismo milisegundo: los códigos de ingreso y los correos son únicos GLOBALES.
+const unico = () =>
+    `${Date.now().toString(36)}${process.pid.toString(36)}${Math.random().toString(36).slice(2, 6)}${(secuencia++).toString(36)}`;
 
 /** Fecha YYYY-MM-DD desplazada `dias` respecto de hoy (UTC; basta para «ni futura ni lejana»). */
 export const fechaRelativa = (dias) =>
@@ -74,7 +76,7 @@ export class EmpresaPrueba {
                 "INSERT INTO usuarios (nombre,codigo_ingreso,email,is_admin,is_owner,empresa_id) VALUES ($1,$1,$2,true,true,$3) RETURNING id",
                 [
                     `${this.marca}-admin`,
-                    `admin-${this.etiqueta.toLowerCase()}@aislamiento.test`,
+                    `admin-${this.etiqueta.toLowerCase()}-${this.id}@aislamiento.test`,
                     this.id,
                 ],
             )

@@ -14,7 +14,8 @@
  * E = empresa que pide, D = empresa dueña de `aj`.
  */
 let n = 0;
-const u = () => `${Date.now().toString(36)}${(n++).toString(36)}`;
+const u = () =>
+    `${Date.now().toString(36)}${process.pid.toString(36)}${Math.random().toString(36).slice(2, 6)}${(n++).toString(36)}`;
 const MOTIVO = { motivo: "prueba de aislamiento" };
 const FECHA = (dias) => new Date(Date.now() + dias * 86400000).toISOString().slice(0, 10);
 

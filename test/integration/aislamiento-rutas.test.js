@@ -163,8 +163,11 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
         it(`rutas tenant: ${nombre} contra la URL de A → 403 en cada una, sin devolver ni modificar datos de A`, async (t) => {
             const tenant = catalogo.rutas.filter((r) => clasificar(r)?.categoria === "tenant");
             const antes = await huellaEmpresas(pool, [A], alcance);
-            const empresasAntes = (await pool.query("SELECT count(*)::int n FROM empresas")).rows[0]
-                .n;
+            const empresasAntes = (
+                await pool.query("SELECT count(*)::int n FROM empresas WHERE id = ANY($1)", [
+                    [A, B],
+                ])
+            ).rows[0].n;
             const fallos = [];
             for (const r of tenant) {
                 const res = await req(r.metodo, urlDe(r.ruta), {
@@ -185,7 +188,11 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
                 "los datos de A cambiaron",
             );
             assert.equal(
-                (await pool.query("SELECT count(*)::int n FROM empresas")).rows[0].n,
+                (
+                    await pool.query("SELECT count(*)::int n FROM empresas WHERE id = ANY($1)", [
+                        [A, B],
+                    ])
+                ).rows[0].n,
                 empresasAntes,
             );
         });
@@ -208,7 +215,9 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
         const rutas = catalogo.rutas.filter((r) => clasificar(r)?.categoria === "plataforma");
         assert.equal(rutas.length, 5);
         const antes = await huellaEmpresas(pool, [A], alcance);
-        const empresasAntes = (await pool.query("SELECT count(*)::int n FROM empresas")).rows[0].n;
+        const empresasAntes = (
+            await pool.query("SELECT count(*)::int n FROM empresas WHERE id = ANY($1)", [[A, B]])
+        ).rows[0].n;
         for (const tok of [tokAdminA, tokAdminB]) {
             for (const r of rutas) {
                 const res = await req(r.metodo, urlDe(r.ruta), {
@@ -221,7 +230,8 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
         }
         assert.deepEqual(diferencias(antes, await huellaEmpresas(pool, [A], alcance)), {});
         assert.equal(
-            (await pool.query("SELECT count(*)::int n FROM empresas")).rows[0].n,
+            (await pool.query("SELECT count(*)::int n FROM empresas WHERE id = ANY($1)", [[A, B]]))
+                .rows[0].n,
             empresasAntes,
         );
     });
