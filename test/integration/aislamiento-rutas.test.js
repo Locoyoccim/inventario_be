@@ -9,6 +9,7 @@ import {
     diferencias,
     limpiarEmpresas,
 } from "../helpers/alcance.js";
+import { tomarCompartido } from "../helpers/exclusion.js";
 
 // Fase 5 · prueba A — catálogo de rutas del router REAL.
 //   1. Las 172 rutas (+ los 2 endpoints de salud) están clasificadas; una ruta nueva sin clasificar o un router desconocido falla.
@@ -77,7 +78,10 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
         });
     };
 
+    let candado;
     before(async () => {
+        // Antes de leer el esquema: otro archivo puede estar ejecutando algo global (ver test/helpers/exclusion.js).
+        candado = await tomarCompartido();
         const real = await catalogoReal();
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
@@ -138,6 +142,7 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
         await limpiarEmpresas(pool, [A, B], alcance);
         await pool.end();
         server.close();
+        await candado?.liberar();
     });
 
     it("todas las rutas del router real están clasificadas, con sus guardias puestas (172 + salud)", (t) => {

@@ -2,6 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { iniciarServidor } from "../helpers/servidor.js";
+import { tomarExclusivo } from "../helpers/exclusion.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -164,9 +165,14 @@ describe("Integración HTTP — Normalización de unidades de medida", { skip: S
         // Simula un dato legacy sin normalizar (salta la validación de la API).
         await pool.query("UPDATE productos SET unidad_medida='Gramos' WHERE id=$1", [id]);
         const sql = readFileSync("db/migrations/019_normalizar_unidades.sql", "utf8");
-        await pool.query(sql);
-        assert.equal(await unidadDe(id), "g");
-        await pool.query(sql); // idempotente
-        assert.equal(await unidadDe(id), "g");
+        const exclusivo = await tomarExclusivo(); // GLOBAL: exclusivo para no cambiar la huella que miden las pruebas de aislamiento (test/helpers/exclusion.js).
+        try {
+            await pool.query(sql);
+            assert.equal(await unidadDe(id), "g");
+            await pool.query(sql); // idempotente
+            assert.equal(await unidadDe(id), "g");
+        } finally {
+            await exclusivo.liberar();
+        }
     });
 });

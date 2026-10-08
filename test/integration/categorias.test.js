@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { iniciarServidor } from "../helpers/servidor.js";
 import { crearPoolMigrador } from "../helpers/migrador.js";
+import { tomarExclusivo } from "../helpers/exclusion.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -228,6 +229,7 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
         await mkRecipe("Receta ambas", "AmbasUse");
 
         const sql = readFileSync("db/migrations/017_categorias_tipo.sql", "utf8");
+        const exclusivo = await tomarExclusivo(); // GLOBAL: recorre las filas de todas las empresas; exclusivo para no cambiar la huella que miden las pruebas de aislamiento (test/helpers/exclusion.js).
         const migrador = crearPoolMigrador(); // la migración hace DDL: la app (rol de privilegios mínimos) no puede
         try {
             await migrador.query(sql); // re-ejecuta la migración real
@@ -243,6 +245,7 @@ describe("Integración HTTP — Categorías: cascada, reasignación y tipo", { s
             assert.equal(await tipoDe("AmbasUse"), "AMBAS");
         } finally {
             await migrador.end();
+            await exclusivo.liberar();
         }
     });
 

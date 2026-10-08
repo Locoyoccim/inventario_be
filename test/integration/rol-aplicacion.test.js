@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { crearPoolMigrador } from "../helpers/migrador.js";
+import { tomarExclusivo } from "../helpers/exclusion.js";
 import { evaluarRolDeAplicacion, SQL_ROL_ACTUAL } from "../../src/config/rolDb.js";
 
 // ADR-006 / VCA-015: la suite corre con el rol de la APP (TEST_DATABASE_URL), de privilegios mínimos, y las migraciones/DDL con el
@@ -22,7 +23,7 @@ describe(
     { skip: SKIP },
     () => {
         const SONDA = "x_rol_sonda";
-        let pool, migrador, app, dueno;
+        let pool, migrador, app, dueno, exclusivo;
 
         // Ejecuta una sentencia como la app dentro de una transacción que SIEMPRE se revierte; devuelve el error (o null si se permitió).
         const intentar = async (sql) => {
@@ -40,6 +41,9 @@ describe(
         };
 
         before(async () => {
+            // La tabla de sonda (sin empresa_id) existe mientras dura este archivo: las pruebas de aislamiento no deben leer el
+            // esquema en ese lapso. GLOBAL: exclusivo (test/helpers/exclusion.js).
+            exclusivo = await tomarExclusivo();
             ({ default: pool } = await import("../../src/config/db.js"));
             migrador = crearPoolMigrador();
             app = (await pool.query("SELECT current_user AS u")).rows[0].u;
@@ -54,6 +58,7 @@ describe(
             } finally {
                 await migrador.end();
                 await pool.end();
+                await exclusivo?.liberar();
             }
         });
 

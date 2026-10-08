@@ -7,6 +7,7 @@ import {
     diferencias,
     limpiarEmpresas,
 } from "../helpers/alcance.js";
+import { tomarCompartido } from "../helpers/exclusion.js";
 import { EmpresaPrueba } from "../helpers/empresaCompleta.js";
 
 // Fase 5 · caminos que NO pasan por empresaGuard con un JWT de usuario: nadie debe asumir que la guardia por parámetro los cubre.
@@ -52,7 +53,10 @@ describe("Aislamiento multiempresa — caminos sin JWT de usuario", { skip: SKIP
     };
     const huellaA = () => huellaEmpresas(pool, [A.id], alcance);
 
+    let candado;
     before(async () => {
+        // Antes de leer el esquema: otro archivo puede estar ejecutando algo global (ver test/helpers/exclusion.js).
+        candado = await tomarCompartido();
         const { default: app } = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         const { signToken } = await import("../../src/utils/jwt.js");
@@ -72,6 +76,7 @@ describe("Aislamiento multiempresa — caminos sin JWT de usuario", { skip: SKIP
         await cerrarEventos();
         await pool.end();
         await new Promise((r) => server.close(r));
+        await candado?.liberar();
     });
 
     // ───────────────────────────── Agente de impresión ─────────────────────────────

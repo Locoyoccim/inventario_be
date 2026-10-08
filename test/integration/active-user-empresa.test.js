@@ -7,6 +7,7 @@ import {
     diferencias,
     limpiarEmpresas,
 } from "../helpers/alcance.js";
+import { tomarCompartido } from "../helpers/exclusion.js";
 import { EmpresaPrueba } from "../helpers/empresaCompleta.js";
 
 // Fase 5 · endurecimiento de requireActiveUser: la empresa del JWT debe ser la de la fila del usuario en la base.
@@ -26,7 +27,10 @@ describe("requireActiveUser — la empresa del token debe ser la del usuario", {
     let server, pool, alcance, A, B, signToken, invalidarUsuarioActivo;
     const MARCA_B = () => B.marca;
 
+    let candado;
     before(async () => {
+        // Antes de leer el esquema: otro archivo puede estar ejecutando algo global (ver test/helpers/exclusion.js).
+        candado = await tomarCompartido();
         const { default: app } = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
@@ -43,6 +47,7 @@ describe("requireActiveUser — la empresa del token debe ser la del usuario", {
         await limpiarEmpresas(pool, IDS, alcance);
         await pool.end();
         await new Promise((r) => server.close(r));
+        await candado?.liberar();
     });
 
     /** Token con la identidad (id) de un usuario de A pero declarando que es de la empresa `empresa`. */

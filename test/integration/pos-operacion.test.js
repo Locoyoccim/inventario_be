@@ -2,6 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { iniciarServidor } from "../helpers/servidor.js";
 import { crearPoolMigrador } from "../helpers/migrador.js";
+import { tomarExclusivo } from "../helpers/exclusion.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -1089,6 +1090,7 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         await agregar(conProducto.id, [linea(latte)]);
         // El trigger de actividad pisa la fecha: se apaga un momento para simular que pasó el tiempo.
         // (ALTER TABLE es DDL: lo hace el rol migrador; la app corre con privilegios mínimos.)
+        const exclusivo = await tomarExclusivo(); // GLOBAL: exclusivo para no cambiar la huella que miden las pruebas de aislamiento (test/helpers/exclusion.js). Apagar el trigger afecta a todas las empresas.
         const migrador = crearPoolMigrador();
         try {
             await migrador.query("ALTER TABLE pos_cuentas DISABLE TRIGGER pos_cuentas_actividad");
@@ -1104,6 +1106,7 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
             }
         } finally {
             await migrador.end();
+            await exclusivo.liberar();
         }
         reiniciarPurga(); // la revisión se hace a lo mucho una vez por minuto por empresa
         const mapa = (await req("GET", api("/mapa"), { token: tokMesero })).json.data.mesas;

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { iniciarServidor } from "../helpers/servidor.js";
 import { descubrirAlcance, limpiarEmpresas } from "../helpers/alcance.js";
+import { tomarCompartido } from "../helpers/exclusion.js";
 import { EmpresaPrueba } from "../helpers/empresaCompleta.js";
 import { auditarSoloLectura, POLIMORFICAS, SIN_FK } from "../../scripts/audit_tenant.js";
 
@@ -25,7 +26,10 @@ describe("audit:tenant — contaminación entre empresas (solo lectura)", { skip
     const auditoria = (opciones = { empresas: IDS }) => auditarSoloLectura(pool, opciones);
     const relaciones = (r) => r.hallazgos.map((h) => h.relacion);
 
+    let candado;
     before(async () => {
+        // Antes de leer el esquema: otro archivo puede estar ejecutando algo global (ver test/helpers/exclusion.js).
+        candado = await tomarCompartido();
         const { default: app } = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         const { signToken } = await import("../../src/utils/jwt.js");
@@ -41,6 +45,7 @@ describe("audit:tenant — contaminación entre empresas (solo lectura)", { skip
         await limpiarEmpresas(pool, IDS, alcance);
         await pool.end();
         await new Promise((r) => server.close(r));
+        await candado?.liberar();
     });
 
     it("dos empresas completas y sanas no tienen contaminación, y se revisaron más de cien relaciones", async () => {
