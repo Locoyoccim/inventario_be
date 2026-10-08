@@ -9,6 +9,7 @@ import {
     diferencias,
     limpiarEmpresas,
 } from "../helpers/alcance.js";
+import { tomarCompartido } from "../helpers/exclusion.js";
 import { EmpresaPrueba, fechaRelativa } from "../helpers/empresaCompleta.js";
 import { CASOS } from "../helpers/casosAislamiento.js";
 
@@ -32,7 +33,10 @@ describe("Aislamiento multiempresa — dinámico con dos empresas (prueba B)", {
     const IDS = [9861, 9862];
     let server, pool, catalogo, alcance, A, B;
 
+    let candado;
     before(async () => {
+        // Antes de leer el esquema: otro archivo puede estar ejecutando algo global (ver test/helpers/exclusion.js).
+        candado = await tomarCompartido();
         const real = await catalogoReal();
         catalogo = real.catalogo;
         ({ default: pool } = await import("../../src/config/db.js"));
@@ -49,6 +53,7 @@ describe("Aislamiento multiempresa — dinámico con dos empresas (prueba B)", {
         await limpiarEmpresas(pool, IDS, alcance);
         await pool.end();
         server.close();
+        await candado?.liberar();
     });
 
     /** Arma la petición del caso: fabrica los recursos y resuelve la URL. `E` pide; `D` es dueña de los recursos `aj`. */
