@@ -106,7 +106,8 @@ export async function limpiarEmpresas(pool, ids, alcance) {
             try {
                 await pool.query(`DELETE FROM ${q(l.tabla)} WHERE ${l.predicado}`, [ids]);
             } catch (e) {
-                if (e.code !== "23503") throw e; // solo se reintenta lo que depende del orden (violación de FK)
+                // Solo se reintenta lo que depende del orden: violación de FK (23503) o de un CHECK que un ON DELETE SET NULL rompe (23514).
+                if (e.code !== "23503" && e.code !== "23514") throw e;
                 ultimoError = e;
                 siguientes.push(l);
             }

@@ -1,12 +1,8 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { iniciarServidor } from "../helpers/servidor.js";
-import {
-    inspeccionar,
-    validarClasificacion,
-    clasificar,
-    resumen,
-} from "../helpers/catalogoRutas.js";
+import { validarClasificacion, clasificar, resumen } from "../helpers/catalogoRutas.js";
+import { catalogoReal } from "../helpers/catalogoReal.js";
 import {
     descubrirAlcance,
     huellaEmpresas,
@@ -76,34 +72,11 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
     };
 
     before(async () => {
-        const appMod = await import("../../src/app.js");
+        const real = await catalogoReal();
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        const { default: routes } = await import("../../src/routes/index.js");
-        const { default: authRoutes } = await import("../../src/routes/auth.routes.js");
-        const { default: agenteRoutes } = await import("../../src/routes/agente.routes.js");
-        const { posController } = await import("../../src/container.js");
-        ({ server, base } = await iniciarServidor(appMod.default));
-
-        catalogo = inspeccionar({
-            app: appMod.default,
-            montajes: [
-                {
-                    nombre: "api",
-                    prefijo: "/api",
-                    router: routes,
-                    precedidoPor: ["requireAuth", "requireActiveUser", "requirePasswordCurrent"],
-                },
-                { nombre: "auth", prefijo: "/api/auth", router: authRoutes },
-                // Todo lo que se registra después de router.use(requireAgente) exige el token del agente; /emparejar va antes, a propósito.
-                {
-                    nombre: "agente",
-                    prefijo: "/api/agente",
-                    router: agenteRoutes,
-                    capasUso: [{ nombre: "requireAgente", fn: posController.requireAgente }],
-                },
-            ],
-        });
+        ({ server, base } = await iniciarServidor(real.app));
+        catalogo = real.catalogo;
 
         alcance = await descubrirAlcance(pool);
         await limpiarEmpresas(pool, [A, B], alcance);
