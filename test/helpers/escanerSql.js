@@ -170,3 +170,54 @@ export function pendientesDeRevision(consultas, esquema) {
     }
     return [...grupos.values()];
 }
+
+const MOTIVO_MINIMO = 60;
+
+/**
+ * Compara lo que encontró el escáner con la línea base revisada a mano. Devuelve la lista de problemas (vacía = todo en orden).
+ *   · SQL nuevo o modificado (otra huella) que no está revisado;
+ *   · más o menos ocurrencias de una consulta de las que se revisaron;
+ *   · entradas del baseline que ya no existen (la lista no se pudre);
+ *   · entradas sin categoría válida, sin motivo entendible (≥ 60 caracteres) o sin guardia citada.
+ */
+export function compararConBaseline(pendientes, baseline) {
+    const problemas = [];
+    const clave = (x) => `${x.archivo}#${x.huella}`;
+    const revisadas = new Map(baseline.consultas.map((e) => [clave(e), e]));
+    const actuales = new Set();
+    for (const g of pendientes) {
+        actuales.add(clave(g));
+        const e = revisadas.get(clave(g));
+        const donde = `${g.archivo}:${g.lineas.join(",")} (${g.metodo ?? "sin método"})`;
+        if (!e) {
+            problemas.push(
+                `SQL SIN REVISAR en ${donde} [${g.tablas.join(", ")}]: ${g.sql.slice(0, 150)}\n` +
+                    "   → Añade el filtro de empresa (… AND empresa_id = $n) o, tras leer quién la invoca y con qué ids, documenta la revisión en test/tenant-sql.baseline.json.",
+            );
+        } else if (e.ocurrencias !== g.ocurrencias) {
+            problemas.push(
+                `${donde}: hay ${g.ocurrencias} ocurrencia(s) de esta consulta y en el baseline se revisaron ${e.ocurrencias}. Revisa la copia nueva (o ajusta el baseline si quitaste una).`,
+            );
+        }
+    }
+    for (const e of baseline.consultas) {
+        const donde = `${e.archivo} (${e.metodo})`;
+        if (!actuales.has(clave(e)))
+            problemas.push(
+                `Entrada obsoleta del baseline: ${donde} huella ${e.huella} ya no existe o ya filtra por empresa. Elimínala.`,
+            );
+        if (!baseline.categorias?.[e.categoria])
+            problemas.push(
+                `${donde}: categoría «${e.categoria}» no definida en baseline.categorias.`,
+            );
+        if (typeof e.motivo !== "string" || e.motivo.trim().length < MOTIVO_MINIMO)
+            problemas.push(
+                `${donde}: el motivo es demasiado corto para ser auditable (mínimo ${MOTIVO_MINIMO} caracteres).`,
+            );
+        if (typeof e.guardia !== "string" || e.guardia.trim().length === 0)
+            problemas.push(
+                `${donde}: falta citar la guardia (la consulta o helper que verifica la empresa).`,
+            );
+    }
+    return problemas;
+}
