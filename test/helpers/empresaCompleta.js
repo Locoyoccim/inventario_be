@@ -25,12 +25,14 @@ export class EmpresaPrueba {
 
     // ---------- HTTP ----------
     /** Petición con el token indicado (por defecto el Admin de esta empresa). Devuelve {status, texto, json}. */
-    async http(metodo, ruta, { token = this.tokAdmin, body } = {}) {
+    async http(metodo, ruta, { token = this.tokAdmin, body, headers = {}, cookie } = {}) {
         const res = await fetch(this.base + ruta, {
             method: metodo,
             headers: {
                 ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(cookie ? { Cookie: cookie } : {}),
                 ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+                ...headers,
             },
             body: body !== undefined ? JSON.stringify(body) : undefined,
         });
@@ -41,7 +43,13 @@ export class EmpresaPrueba {
         } catch {
             /* sin cuerpo JSON */
         }
-        return { status: res.status, texto, json };
+        return {
+            status: res.status,
+            texto,
+            json,
+            headers: res.headers,
+            cookies: res.headers.getSetCookie(),
+        };
     }
 
     /** Como `http` pero exige 2xx y devuelve `data`. Es la vía de los fixtures: si falla, el mensaje dice qué petición. */
