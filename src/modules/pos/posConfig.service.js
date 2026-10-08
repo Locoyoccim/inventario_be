@@ -10,6 +10,7 @@ export default class PosConfigService {
     listarMesas(e, incluirInactivas) { return this.repo.listarMesas(e, incluirInactivas); }
     crearMesa(e, data) { return this.repo.crearMesa(e, data); }
     actualizarMesa(e, id, data) { return this.repo.actualizarMesa(e, id, data); }
+    eliminarMesa(e, id) { return this.repo.eliminarMesa(e, id); }
 
     listarAsignacion(e) { return this.repo.listarAsignacion(e); }
     asignarAreaCategoria(e, id, area_id) { return this.repo.asignarAreaCategoria(e, id, area_id); }

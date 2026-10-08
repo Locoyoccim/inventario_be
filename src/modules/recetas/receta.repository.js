@@ -2,6 +2,8 @@ import pool from "../../config/db.js";
 import { recalcularCostoTotal, costoUtil } from "../../utils/costeo.js";
 import ApiError from "../../utils/ApiError.js";
 
+const CATEGORIA_PREPARACION = "Preparación";
+
 const QUERIES = {
     SELECT_ALL: `
     SELECT id, nombre, categoria, precio_venta, costo_total, margen, activo,
@@ -74,6 +76,17 @@ export default class RecetaRepository {
     async findById(empresa_id, id) {
         const result = await pool.query(QUERIES.SELECT_BY_ID, [id, empresa_id]);
         return result.rows[0];
+    }
+
+    // Ingredientes de la receta con el nombre y la unidad del insumo (el guard de ruta ya validó la empresa).
+    async detalle(receta_id) {
+        const r = await pool.query(
+            `SELECT d.id, d.receta_id, d.producto_id, p.producto, p.unidad_medida, p.es_elaborado, d.cantidad, d.costo_unitario, d.costo_final
+             FROM receta_detalle d INNER JOIN productos p ON p.id = d.producto_id
+             WHERE d.receta_id = $1 ORDER BY d.id ASC`,
+            [receta_id],
+        );
+        return r.rows;
     }
 
     async existsReceta(id) {
@@ -208,43 +221,78 @@ export default class RecetaRepository {
     }
 
     // Mezcla de ventas por receta en un rango (para costo % ponderado e ingeniería de menú).
-    // Fuente: venta_diaria + venta_diaria_detalle (los días revertidos ya no existen, CASCADE).
+    // Fuentes: el CSV importado (venta_diaria + detalle; los días revertidos ya no existen, CASCADE) y las
+    // cuentas cobradas en el POS. Nunca coinciden en un día: importarDia rechaza los días que cubre el POS.
     // costo_teorico usa el costo VIGENTE de la receta (r.costo_total actual), no el histórico.
     async ventasPorReceta(empresa_id, { desde, hasta }) {
         const rango = [empresa_id, desde, hasta];
+        // Lo cobrado en el POS por renglón: sin cancelados, con descuento y cortesía aplicados; el IVA va
+        // según el precio congelado del renglón (si no lo incluye, se suma encima, igual que en la cuenta).
+        const posNeto = `(CASE WHEN i.cortesia THEN 0 ELSE GREATEST(i.cantidad * i.precio_unitario - COALESCE(i.descuento, 0), 0) END)`;
+        const posFactor = `(1 + i.iva_pct / 100)`;
         const [recetasRes, diasRes, sinRecetaRes] = await Promise.all([
             pool.query(
-                `SELECT r.id AS receta_id, r.nombre, r.categoria, r.es_preparacion, r.activo,
-                        SUM(d.cantidad)::numeric AS unidades,
-                        SUM(d.cantidad * COALESCE(d.precio_unitario, r.precio_venta))::numeric AS ingreso,
-                        SUM(d.cantidad * COALESCE(d.precio_unitario, r.precio_venta)
-                            / (CASE WHEN r.precio_incluye_iva THEN 1 + r.iva_pct / 100 ELSE 1 END))::numeric AS ingreso_neto,
-                        (SUM(d.cantidad) * r.costo_total)::numeric AS costo_teorico
-                 FROM venta_diaria vd
-                 JOIN venta_diaria_detalle d ON d.venta_diaria_id = vd.id
-                 JOIN recetas r ON r.id = d.receta_id
-                 WHERE vd.empresa_id = $1 AND vd.fecha BETWEEN $2 AND $3
-                   AND d.tipo = 'RECETA' AND d.receta_id IS NOT NULL
+                `WITH v AS (
+                     SELECT d.receta_id, d.cantidad::numeric AS unidades,
+                            d.cantidad * COALESCE(d.precio_unitario, r.precio_venta) AS ingreso,
+                            d.cantidad * COALESCE(d.precio_unitario, r.precio_venta)
+                                / (CASE WHEN r.precio_incluye_iva THEN 1 + r.iva_pct / 100 ELSE 1 END) AS ingreso_neto
+                     FROM venta_diaria vd
+                     JOIN venta_diaria_detalle d ON d.venta_diaria_id = vd.id
+                     JOIN recetas r ON r.id = d.receta_id
+                     WHERE vd.empresa_id = $1 AND vd.fecha BETWEEN $2 AND $3
+                       AND d.tipo = 'RECETA' AND d.receta_id IS NOT NULL
+                     UNION ALL
+                     SELECT i.receta_id, i.cantidad::numeric,
+                            ${posNeto} * (CASE WHEN i.precio_incluye_iva THEN 1 ELSE ${posFactor} END),
+                            ${posNeto} / (CASE WHEN i.precio_incluye_iva THEN ${posFactor} ELSE 1 END)
+                     FROM pos_cuentas c
+                     JOIN pos_cuenta_items i ON i.cuenta_id = c.id
+                     WHERE c.empresa_id = $1 AND c.estado = 'PAGADA' AND c.fecha_negocio BETWEEN $2 AND $3
+                       AND i.estado <> 'CANCELADO' AND i.receta_id IS NOT NULL
+                 )
+                 SELECT r.id AS receta_id, r.nombre, r.categoria, r.es_preparacion, r.activo,
+                        SUM(v.unidades)::numeric AS unidades,
+                        SUM(v.ingreso)::numeric AS ingreso,
+                        SUM(v.ingreso_neto)::numeric AS ingreso_neto,
+                        (SUM(v.unidades) * r.costo_total)::numeric AS costo_teorico
+                 FROM v JOIN recetas r ON r.id = v.receta_id
                  GROUP BY r.id, r.nombre, r.categoria, r.es_preparacion, r.activo, r.costo_total
                  ORDER BY unidades DESC, r.nombre ASC`,
                 rango
             ),
             pool.query(
-                "SELECT COUNT(*)::int AS dias FROM venta_diaria WHERE empresa_id = $1 AND fecha BETWEEN $2 AND $3",
+                `SELECT COUNT(DISTINCT fecha)::int AS dias,
+                        COUNT(*) FILTER (WHERE origen = 'POS')::int AS dias_pos
+                 FROM (
+                     SELECT fecha, 'CSV' AS origen FROM venta_diaria WHERE empresa_id = $1 AND fecha BETWEEN $2 AND $3
+                     UNION
+                     SELECT DISTINCT fecha_negocio, 'POS' FROM pos_cuentas
+                     WHERE empresa_id = $1 AND estado = 'PAGADA' AND fecha_negocio BETWEEN $2 AND $3
+                 ) d`,
                 rango
             ),
             pool.query(
-                `SELECT COUNT(*)::int AS lineas, COALESCE(SUM(d.cantidad), 0)::numeric AS unidades
-                 FROM venta_diaria vd
-                 JOIN venta_diaria_detalle d ON d.venta_diaria_id = vd.id
-                 WHERE vd.empresa_id = $1 AND vd.fecha BETWEEN $2 AND $3
-                   AND d.tipo IN ('SIN_MAPEO', 'INSUMO')`,
+                `SELECT COUNT(*)::int AS lineas, COALESCE(SUM(unidades), 0)::numeric AS unidades FROM (
+                     SELECT d.cantidad AS unidades
+                     FROM venta_diaria vd
+                     JOIN venta_diaria_detalle d ON d.venta_diaria_id = vd.id
+                     WHERE vd.empresa_id = $1 AND vd.fecha BETWEEN $2 AND $3
+                       AND d.tipo IN ('SIN_MAPEO', 'INSUMO')
+                     UNION ALL
+                     SELECT i.cantidad
+                     FROM pos_cuentas c
+                     JOIN pos_cuenta_items i ON i.cuenta_id = c.id
+                     WHERE c.empresa_id = $1 AND c.estado = 'PAGADA' AND c.fecha_negocio BETWEEN $2 AND $3
+                       AND i.estado <> 'CANCELADO' AND i.receta_id IS NULL
+                 ) x`,
                 rango
             ),
         ]);
         return {
             recetas: recetasRes.rows,
             dias_importados: diasRes.rows[0].dias,
+            dias_pos: diasRes.rows[0].dias_pos,
             sin_receta: { lineas: sinRecetaRes.rows[0].lineas, unidades: Number(sinRecetaRes.rows[0].unidades) },
         };
     }
@@ -314,23 +362,29 @@ export default class RecetaRepository {
             // Alta del producto elaborado (subreceta) y enlace
             let productoElaborado = null;
             if (es_preparacion) {
+                // La categoría debe existir ANTES de insertar el producto: el trigger de la migración 028 la exige.
+                // Si la empresa ya la tiene (con cualquier mayúscula) se reutiliza su nombre exacto; si no, se crea (tipo PRODUCTO).
+                const cat = await client.query(
+                    `WITH ya AS (
+                         SELECT nombre FROM categorias WHERE empresa_id = $1 AND lower(nombre) = lower($2) LIMIT 1
+                     ), nueva AS (
+                         INSERT INTO categorias (empresa_id, nombre, tipo)
+                         SELECT $1, $2, 'PRODUCTO' WHERE NOT EXISTS (SELECT 1 FROM ya)
+                         RETURNING nombre
+                     )
+                     SELECT nombre FROM ya UNION ALL SELECT nombre FROM nueva`,
+                    [empresa_id, CATEGORIA_PREPARACION]
+                );
+
                 const prodElab = await client.query(QUERIES.INSERT_PRODUCTO_ELAB, [
                     nombre,
                     unidad,
-                    "Preparación",
+                    cat.rows[0].nombre,
                     empresa_id,
                     rendimiento,                    // cantidad_presentacion = rendimiento
                     Number(recetaFinal.costo_total), // costo_presentacion = costo_total
                 ]);
                 productoElaborado = prodElab.rows[0];
-
-                // Asegura que la categoría "Preparación" (tipo PRODUCTO) exista en la lista compartida.
-                await client.query(
-                    `INSERT INTO categorias (empresa_id, nombre, tipo)
-                     SELECT $1, 'Preparación', 'PRODUCTO'
-                     WHERE NOT EXISTS (SELECT 1 FROM categorias WHERE empresa_id = $1 AND lower(nombre) = lower('Preparación'))`,
-                    [empresa_id]
-                );
 
                 const inv = await client.query(QUERIES.INSERT_INVENTARIO_ELAB, [
                     productoElaborado.id,

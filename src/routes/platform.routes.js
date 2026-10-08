@@ -11,5 +11,6 @@ export default function registerPlatform(router) {
     router.get("/platform/empresas", requirePlatformAdmin, platformController.listarEmpresas);
     router.post("/platform/empresas", requirePlatformAdmin, validate(crearEmpresaSchema), platformController.crearEmpresa);
     router.patch("/platform/empresas/:id/estado", requirePlatformAdmin, validate(cambiarEstadoEmpresaSchema), platformController.cambiarEstado);
+    router.post("/platform/empresas/:id/reenviar-invitacion", requirePlatformAdmin, platformController.reenviarInvitacion);
     router.post("/platform/empresas/:id/resetear-password", requirePlatformAdmin, validate(resetearPasswordOwnerSchema), platformController.resetearPasswordOwner);
 }

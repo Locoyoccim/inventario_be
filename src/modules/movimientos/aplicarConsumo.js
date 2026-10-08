@@ -2,6 +2,7 @@
 // (referencia VENTA_DIARIA) y el POS (referencia POS_CUENTA). Todas las funciones reciben un
 // client con la transacción YA abierta; no hacen BEGIN/COMMIT.
 import { explotarRenglones } from "../../utils/consumo.js";
+import { netoABruto } from "../../utils/costeo.js";
 import { armarPreparaciones, resolverPreparaciones } from "../../utils/preparaciones.js";
 
 const LOCK_INV = `SELECT producto_id FROM inventario WHERE producto_id = ANY($1::int[]) ORDER BY producto_id FOR UPDATE`;
@@ -28,11 +29,12 @@ async function bloquearInventario(client, aDescontar, autoProduccion) {
 }
 
 // Aplica el consumo en 3 fases: (1) salida de insumos auto-producidos, (2) entrada de los
-// elaborados auto-producidos, (3) VENTA del consumo. Siempre permite negativo: la venta ya
+// elaborados auto-producidos, (3) salida del consumo (VENTA, o MERMA si se preparó y no se vendió). Siempre permite negativo: la venta ya
 // ocurrió y un stock negativo es señal de inventario desfasado, no un error a bloquear.
 // Muta autoProduccion (producto, producto_id, stock_resultante...) para el reporte de quien llama.
 export async function aplicarConsumo(client, movimientoRepository, empresa_id, opts) {
-    const { consumo, autoProduccion, nombrePorId, referencia_tipo, referencia_id, usuario_id = null, motivoAuto, motivoVenta } = opts;
+    // tipoSalida: «VENTA» (lo vendido) o «MERMA» (lo preparado y no vendido, p. ej. un platillo cancelado ya enviado a cocina).
+    const { consumo, autoProduccion, nombrePorId, referencia_tipo, referencia_id, usuario_id = null, motivoAuto, motivoVenta, tipoSalida = "VENTA" } = opts;
     const errores = [];
     const negativos = [];
     const descontado = [];
@@ -89,7 +91,7 @@ export async function aplicarConsumo(client, movimientoRepository, empresa_id, o
     for (const item of aDescontar) {
         const mov = await movimientoRepository.aplicar(
             client, item.producto_id, empresa_id,
-            { tipo_movimiento: "VENTA", cantidad: item.cantidad, motivo: motivoVenta, ...ref },
+            { tipo_movimiento: tipoSalida, cantidad: item.cantidad, motivo: motivoVenta, ...ref },
             { permitirNegativo: true },
         );
         if (!mov) {
@@ -98,7 +100,7 @@ export async function aplicarConsumo(client, movimientoRepository, empresa_id, o
         }
         const registro = { producto_id: item.producto_id, producto: nombrePorId.get(item.producto_id), cantidad: item.cantidad, stock_nuevo: Number(mov.stock_nuevo) };
         descontado.push(registro);
-        if (Number(mov.stock_nuevo) < 0) negativos.push({ ...registro, origen: "VENTA" });
+        if (Number(mov.stock_nuevo) < 0) negativos.push({ ...registro, origen: tipoSalida });
     }
 
     return { descontado, negativos, errores };
@@ -137,7 +139,8 @@ export async function revertirPorReferencia(client, movimientoRepository, empres
 // Contexto de consumo acotado a lo vendido (para un ticket, no un día completo): escandallo de
 // las recetas vendidas + todas las preparaciones (pueden anidarse) y stock solo de elaborados.
 // renglones: [{ receta_id | producto_id, cantidad }]
-export async function cargarContextoConsumo(db, empresa_id, renglones) {
+// consumoExtra: Map producto_id -> cantidad que consumen las opciones elegidas (se suma, con la merma del insumo, al de las recetas).
+export async function cargarContextoConsumo(db, empresa_id, renglones, consumoExtra = new Map()) {
     const recetaIds = [...new Set(renglones.filter((r) => r.receta_id != null).map((r) => Number(r.receta_id)))];
     const [detalleRes, prodRes, prepRes] = await Promise.all([
         db.query(
@@ -158,6 +161,7 @@ export async function cargarContextoConsumo(db, empresa_id, renglones) {
     const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
     const nombrePorId = new Map(prodRes.rows.map((p) => [Number(p.id), p.producto]));
     const { consumo, recetas_sin_escandallo } = explotarRenglones(renglones, detalleRes.rows, mermaPorId);
+    for (const [pid, cantidad] of consumoExtra) consumo.set(pid, Number(((consumo.get(pid) ?? 0) + netoABruto(cantidad, mermaPorId.get(pid))).toFixed(3)));
 
     const preparaciones = armarPreparaciones(prepRes.rows, detalleRes.rows);
     const elaborados = [...preparaciones.keys()];

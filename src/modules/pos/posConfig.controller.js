@@ -29,6 +29,11 @@ export default class PosConfigController {
         res.json({ success: true, data: await this.service.actualizarMesa(empresa_id, id, req.body) });
     });
 
+    eliminarMesa = asyncHandler(async (req, res) => {
+        const { empresa_id, id } = req.params;
+        res.json({ success: true, data: await this.service.eliminarMesa(empresa_id, id) });
+    });
+
     listarAsignacion = asyncHandler(async (req, res) => {
         res.json({ success: true, data: await this.service.listarAsignacion(req.params.empresa_id) });
     });

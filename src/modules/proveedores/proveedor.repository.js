@@ -1,11 +1,11 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
+import { hoyEmpresa } from "../../utils/zonaHoraria.js";
 
 // Columnas expuestas del proveedor (incluye 'activo' para soft-delete)
 const COLS = "P.id, P.nombre, P.telefono, P.email, P.domicilio, P.empresa_id, P.activo";
 
 const QUERIES = {
-    SELECT_BY_ID: `SELECT ${COLS} FROM proveedores P WHERE P.empresa_id = $1 AND P.id = $2`,
     INSERT: `
         INSERT INTO proveedores (nombre, telefono, email, domicilio, empresa_id)
         VALUES ($1, $2, $3, $4, $5)
@@ -38,13 +38,6 @@ export default class ProveedorRepository {
         const sql = `SELECT ${COLS} FROM proveedores AS P WHERE P.empresa_id = $1${filtroActivos} ORDER BY P.id ASC`;
         const result = await pool.query(sql, [empresa_id]);
         return result.rows;
-    }
-
-    async findByID(empresa_id, id) {
-        if (!empresa_id) throw ApiError.badRequest("empresa_id es requerido");
-        if (!id) throw ApiError.badRequest("ID es requerido");
-        const result = await pool.query(QUERIES.SELECT_BY_ID, [empresa_id, id]);
-        return result.rows[0];
     }
 
     // Devuelve { activo } si el proveedor pertenece a la empresa, o null si no existe.
@@ -136,9 +129,9 @@ export default class ProveedorRepository {
              ORDER BY fecha DESC, id DESC LIMIT 10`, [empresa_id, id])).rows;
         const tot = (await pool.query(
             `SELECT
-                COALESCE(SUM(total) FILTER (WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'), 0) AS d30,
-                COALESCE(SUM(total) FILTER (WHERE fecha >= CURRENT_DATE - INTERVAL '90 days'), 0) AS d90
-             FROM compra WHERE empresa_id = $1 AND proveedor_id = $2 AND anulado = false`, [empresa_id, id])).rows[0];
+                COALESCE(SUM(total) FILTER (WHERE fecha >= $3::date - 30), 0) AS d30,
+                COALESCE(SUM(total) FILTER (WHERE fecha >= $3::date - 90), 0) AS d90
+             FROM compra WHERE empresa_id = $1 AND proveedor_id = $2 AND anulado = false`, [empresa_id, id, await hoyEmpresa(empresa_id)])).rows[0];
         const precios = (await pool.query(
             `SELECT DISTINCT ON (m.producto_id) m.producto_id, p.producto, m.costo_unitario, m.fecha
              FROM movimientosinventario m

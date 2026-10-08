@@ -1,17 +1,20 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
-import { hoyISO } from "../../utils/fecha.js";
+import { reclamarIdempotencia } from "../../utils/idempotencia.js";
+import { notificar } from "../../realtime/eventosPos.js";
+import { consumoDeOpciones, precioConExtras } from "./pos.opciones.logic.js";
+import { hoyEmpresa } from "../../utils/zonaHoraria.js";
 import { aplicarConsumo, cargarContextoConsumo } from "../movimientos/aplicarConsumo.js";
 import { exigirAutorizador, registrarAutorizacion } from "./pos.autorizacion.js";
 import { agruparPorArea, calcularTotales, normalizarPagos, payloadComanda, payloadPrecuenta, payloadTicket } from "./pos.logic.js";
 
 const CUENTA_COLS = `c.id, c.empresa_id, c.folio, c.tipo, c.mesa_id, m.nombre AS mesa, c.reservacion_id, c.nombre_cliente,
     c.personas, c.mesero_id, u.nombre AS mesero, c.turno_id, c.estado, c.unida_a, c.dividida_de, c.fecha_negocio,
-    c.abierta_at, c.cerrada_at, c.motivo_cancelacion, c.propina, c.anulada_at`;
+    c.abierta_at, c.actualizada_at, c.cerrada_at, c.motivo_cancelacion, c.propina, c.anulada_at`;
 
 const ITEM_COLS = `i.id, i.cuenta_id, i.receta_id, i.producto_id, i.nombre, i.precio_unitario, i.iva_pct, i.precio_incluye_iva,
     i.cantidad, i.notas, i.estado, i.area_id, a.nombre AS area, i.comanda_id, i.descuento, i.cortesia, i.autorizado_por,
-    i.motivo, i.created_at`;
+    i.motivo, i.created_at, i.opciones, i.comensal, i.tiempo`;
 
 const Q = {
     CUENTA: `SELECT ${CUENTA_COLS} FROM pos_cuentas c
@@ -30,22 +33,39 @@ const Q = {
             FROM pos_pagos p LEFT JOIN usuarios u ON u.id = p.usuario_id WHERE p.cuenta_id = $1 ORDER BY p.id`,
     // FOR SHARE: un cierre de turno (FOR UPDATE) espera a los cobros en curso y los siguientes ya no ven el turno abierto.
     TURNO_ABIERTO: `SELECT id, fecha_negocio FROM pos_turnos WHERE empresa_id = $1 AND usuario_id = $2 AND estado = 'ABIERTO' FOR SHARE`,
+    // Comandas de la cuenta con su estado en pantalla (solo cuenta si el área tiene pantalla y la empresa la activó) y el de su impresión.
+    COMANDAS_CUENTA: `SELECT k.id, k.numero, k.area_id, a.nombre AS area, COALESCE(a.pantalla AND e.usa_pantalla_cocina, false) AS pantalla,
+                             k.estado, k.created_at, k.lista_at, pi.id AS impresion_id, pi.estado AS impresion_estado
+                      FROM pos_comandas k
+                      JOIN empresas e ON e.id = k.empresa_id
+                      LEFT JOIN areas_preparacion a ON a.id = k.area_id
+                      LEFT JOIN LATERAL (SELECT id, estado FROM pos_impresiones WHERE empresa_id = k.empresa_id AND tipo = 'COMANDA' AND referencia_id = k.id ORDER BY id DESC LIMIT 1) pi ON true
+                      WHERE k.id IN (SELECT DISTINCT comanda_id FROM pos_cuenta_items WHERE cuenta_id = $1 AND comanda_id IS NOT NULL)
+                      ORDER BY k.id`,
     MESA_OCUPADA: `SELECT id, folio FROM pos_cuentas WHERE mesa_id = $1 AND estado = 'ABIERTA' LIMIT 1`,
 };
 
-const fechaNegocio = async (db, empresa_id) => (await db.query(Q.FECHA_NEGOCIO, [empresa_id])).rows[0]?.fecha_negocio ?? hoyISO();
+const fechaNegocio = async (db, empresa_id) => (await db.query(Q.FECHA_NEGOCIO, [empresa_id])).rows[0]?.fecha_negocio ?? await hoyEmpresa(empresa_id, db);
 const aCentavos = (n) => Math.round(Number(n) * 100);
+const MAX_CANTIDAD = 99;
+// Las cuentas vacías se revisan a lo mucho una vez por minuto por empresa: el mapa se consulta cada pocos segundos.
+const ultimaPurga = new Map();
+// Solo para pruebas: vuelve a permitir la revisión de cuentas vacías de inmediato.
+export const reiniciarPurga = () => ultimaPurga.clear();
 
 export default class PosCuentasRepository {
-    constructor(posConfigRepository, movimientoRepository) {
+    constructor(posConfigRepository, movimientoRepository, opcionesRepository) {
         this.posConfig = posConfigRepository;
         this.movimientoRepository = movimientoRepository;
+        this.opciones = opcionesRepository;
     }
 
     async #tx(fn) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
+            // Con Idempotency-Key, reserva la llave en esta misma transacción (si ya estaba, aborta y se responde lo ya hecho).
+            await reclamarIdempotencia(client);
             const result = await fn(client);
             await client.query("COMMIT");
             return result;
@@ -68,12 +88,24 @@ export default class PosCuentasRepository {
         const cuenta = (await db.query(Q.CUENTA, [id, empresa_id])).rows[0];
         if (!cuenta) throw ApiError.notFound("Cuenta no encontrada");
         const items = (await db.query(Q.ITEMS, [id])).rows;
-        const pagos = ["PAGADA", "ANULADA"].includes(cuenta.estado) ? (await db.query(Q.PAGOS, [id])).rows : [];
-        return { ...cuenta, items, totales: calcularTotales(items), pagos };
+        const cobrada = ["PAGADA", "ANULADA"].includes(cuenta.estado);
+        const pagos = cobrada ? (await db.query(Q.PAGOS, [id])).rows : [];
+        // Correcciones de pago hechas después del cobro (quién, cuándo, por qué) y si el corte de la venta ya cerró.
+        const correcciones = cobrada
+            ? (await db.query(
+                  `SELECT k.id, k.motivo, k.turno_cerrado, k.created_at, ua.nombre AS autorizado_por
+                   FROM pos_correcciones_pago k JOIN usuarios ua ON ua.id = k.autorizado_por WHERE k.cuenta_id = $1 ORDER BY k.id`, [id])).rows
+            : [];
+        const turnoCerrado = cobrada && cuenta.turno_id
+            ? (await db.query("SELECT estado FROM pos_turnos WHERE id = $1", [cuenta.turno_id])).rows[0]?.estado === "CERRADO"
+            : false;
+        const comandas = (await db.query(Q.COMANDAS_CUENTA, [id])).rows;
+        return { ...cuenta, items, comandas, totales: calcularTotales(items), pagos, correcciones, turno_cerrado: turnoCerrado };
     }
 
     // Mapa de mesas con sus cuentas abiertas, más las cuentas para llevar.
     async mapa(empresa_id) {
+        await this.#purgarVacias(empresa_id);
         const [mesas, cuentas] = await Promise.all([
             pool.query("SELECT id, nombre, zona, capacidad, orden FROM mesas WHERE empresa_id = $1 AND activo ORDER BY orden, nombre", [empresa_id]),
             pool.query(
@@ -89,6 +121,23 @@ export default class PosCuentasRepository {
                   [ids],
               )).rows
             : [];
+        // Por cuenta: comandas listas para recoger (pantalla) y comandas que no salieron por impresora ni tienen pantalla.
+        const avisos = ids.length
+            ? (await pool.query(
+                  `SELECT i.cuenta_id,
+                          COUNT(DISTINCT k.id) FILTER (WHERE k.estado = 'LISTA' AND a.pantalla AND e.usa_pantalla_cocina)::int AS comandas_listas,
+                          COUNT(DISTINCT k.id) FILTER (WHERE pi.estado IN ('ERROR','SIN_IMPRESORA') AND NOT COALESCE(a.pantalla AND e.usa_pantalla_cocina, false) AND k.estado <> 'CANCELADA')::int AS comandas_sin_salida
+                   FROM pos_cuenta_items i
+                   JOIN pos_comandas k ON k.id = i.comanda_id
+                   JOIN empresas e ON e.id = k.empresa_id
+                   LEFT JOIN areas_preparacion a ON a.id = k.area_id
+                   LEFT JOIN LATERAL (SELECT estado FROM pos_impresiones WHERE empresa_id = k.empresa_id AND tipo = 'COMANDA' AND referencia_id = k.id ORDER BY id DESC LIMIT 1) pi ON true
+                   WHERE i.cuenta_id = ANY($1::int[]) AND i.estado <> 'CANCELADO'
+                   GROUP BY i.cuenta_id`,
+                  [ids],
+              )).rows
+            : [];
+        const avisosPorCuenta = new Map(avisos.map((a) => [a.cuenta_id, a]));
         const porCuenta = new Map();
         for (const item of items) {
             if (!porCuenta.has(item.cuenta_id)) porCuenta.set(item.cuenta_id, []);
@@ -98,9 +147,11 @@ export default class PosCuentasRepository {
             const lista = porCuenta.get(c.id) ?? [];
             return {
                 id: c.id, folio: c.folio, tipo: c.tipo, mesa_id: c.mesa_id, nombre_cliente: c.nombre_cliente, personas: c.personas,
-                mesero: c.mesero, abierta_at: c.abierta_at,
+                mesero: c.mesero, mesero_id: c.mesero_id, abierta_at: c.abierta_at, actualizada_at: c.actualizada_at,
                 total: calcularTotales(lista).total,
                 por_enviar: lista.filter((i) => i.estado === "PENDIENTE").reduce((s, i) => s + i.cantidad, 0),
+                comandas_listas: avisosPorCuenta.get(c.id)?.comandas_listas ?? 0,
+                comandas_sin_salida: avisosPorCuenta.get(c.id)?.comandas_sin_salida ?? 0,
             };
         };
         const abiertas = cuentas.rows.map(resumen);
@@ -119,8 +170,14 @@ export default class PosCuentasRepository {
                 if (ocupada) throw ApiError.conflict(`${mesa.nombre} ya tiene una cuenta abierta (folio ${ocupada.folio})`, { cuenta_id: ocupada.id });
             }
             if (reservacion_id) {
-                const r = await client.query("SELECT 1 FROM reservaciones WHERE id = $1 AND empresa_id = $2", [reservacion_id, empresa_id]);
+                // FOR UPDATE: dos toques seguidos en "Sentar" no abren dos cuentas para la misma reservación.
+                const r = await client.query("SELECT 1 FROM reservaciones WHERE id = $1 AND empresa_id = $2 FOR UPDATE", [reservacion_id, empresa_id]);
                 if (r.rowCount === 0) throw ApiError.badRequest("La reservación no existe en la empresa");
+                const previa = (await client.query(
+                    "SELECT id, folio FROM pos_cuentas WHERE reservacion_id = $1 AND estado <> 'CANCELADA' ORDER BY id DESC LIMIT 1",
+                    [reservacion_id],
+                )).rows[0];
+                if (previa) throw ApiError.conflict(`La reservación ya tiene la cuenta folio ${previa.folio}`, { cuenta_id: previa.id });
             }
             const folio = (await client.query(Q.FOLIO, [empresa_id])).rows[0].ultimo;
             const fecha = await fechaNegocio(client, empresa_id);
@@ -129,6 +186,13 @@ export default class PosCuentasRepository {
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
                 [empresa_id, folio, tipo, tipo === "MESA" ? mesa_id : null, reservacion_id ?? null, nombre_cliente || null, personas, usuario_id, fecha],
             );
+            // Abrir la cuenta de una reservación es sentarla.
+            if (reservacion_id) {
+                await client.query(
+                    "UPDATE reservaciones SET estado = 'sentada', updated_at = now() WHERE id = $1 AND empresa_id = $2 AND estado IN ('pendiente', 'confirmada')",
+                    [reservacion_id, empresa_id],
+                );
+            }
             return r.rows[0].id;
         });
         return this.obtener(empresa_id, id);
@@ -141,22 +205,33 @@ export default class PosCuentasRepository {
             for (const l of lineas) {
                 const a = menu.get(`${l.tipo}-${l.id}`);
                 if (!a) throw ApiError.badRequest("Un artículo ya no está disponible en el menú (inactivo o sin precio)");
-                // Mismo artículo sin notas y aún sin enviar: se suma al renglón existente.
+                // Opciones elegidas: se validan contra los grupos del artículo (mínimos y máximos) y se copian al renglón.
+                const { opciones, extra } = await this.opciones.resolver(client, empresa_id, l.tipo, a.id, l.opciones ?? []);
+                const precio = precioConExtras(a.precio_venta, extra);
+                const comensal = l.comensal ?? null;
+                const tiempo = l.tiempo ?? 1;
+                const opcionesJson = JSON.stringify(opciones);
+                // Mismo artículo con las mismas opciones, comensal y tiempo, sin notas y aún sin enviar: se suma al renglón existente.
                 if (!l.notas) {
-                    const suma = await client.query(
-                        `UPDATE pos_cuenta_items SET cantidad = LEAST(cantidad + $4, 99)
-                         WHERE id = (SELECT id FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'PENDIENTE' AND notas IS NULL
-                                     AND receta_id IS NOT DISTINCT FROM $2 AND producto_id IS NOT DISTINCT FROM $3 ORDER BY id LIMIT 1)`,
-                        [cuenta_id, l.tipo === "RECETA" ? a.id : null, l.tipo === "PRODUCTO" ? a.id : null, l.cantidad],
-                    );
-                    if (suma.rowCount > 0) continue;
+                    const previo = (await client.query(
+                        `SELECT id, cantidad FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'PENDIENTE' AND notas IS NULL
+                         AND receta_id IS NOT DISTINCT FROM $2 AND producto_id IS NOT DISTINCT FROM $3
+                         AND opciones = $4::jsonb AND comensal IS NOT DISTINCT FROM $5::smallint AND tiempo = $6 AND descuento = 0 AND NOT cortesia
+                         ORDER BY id LIMIT 1 FOR UPDATE`,
+                        [cuenta_id, l.tipo === "RECETA" ? a.id : null, l.tipo === "PRODUCTO" ? a.id : null, opcionesJson, comensal, tiempo],
+                    )).rows[0];
+                    if (previo) {
+                        if (previo.cantidad + l.cantidad > MAX_CANTIDAD) throw ApiError.badRequest(`«${a.nombre}»: máximo ${MAX_CANTIDAD} por renglón (ya hay ${previo.cantidad})`);
+                        await client.query("UPDATE pos_cuenta_items SET cantidad = cantidad + $2 WHERE id = $1", [previo.id, l.cantidad]);
+                        continue;
+                    }
                 }
                 await client.query(
                     `INSERT INTO pos_cuenta_items (empresa_id, cuenta_id, receta_id, producto_id, nombre, precio_unitario, iva_pct,
-                        precio_incluye_iva, cantidad, notas, area_id, creado_por)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+                        precio_incluye_iva, cantidad, notas, area_id, creado_por, opciones, comensal, tiempo)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)`,
                     [empresa_id, cuenta_id, l.tipo === "RECETA" ? a.id : null, l.tipo === "PRODUCTO" ? a.id : null, a.nombre,
-                        a.precio_venta, a.iva_pct, a.precio_incluye_iva, l.cantidad, l.notas || null, a.area_id, usuario_id],
+                        precio, a.iva_pct, a.precio_incluye_iva, l.cantidad, l.notas || null, a.area_id, usuario_id, opcionesJson, comensal, tiempo],
                 );
             }
         });
@@ -171,12 +246,13 @@ export default class PosCuentasRepository {
         return item;
     }
 
-    async actualizarItem(empresa_id, cuenta_id, item_id, { cantidad, notas }) {
+    async actualizarItem(empresa_id, cuenta_id, item_id, { cantidad, notas, comensal, tiempo }) {
         await this.#tx(async (client) => {
             await this.#itemPendiente(client, empresa_id, cuenta_id, item_id);
             await client.query(
-                `UPDATE pos_cuenta_items SET cantidad = COALESCE($2, cantidad), notas = CASE WHEN $3::boolean THEN NULLIF($4, '') ELSE notas END WHERE id = $1`,
-                [item_id, cantidad ?? null, notas !== undefined, notas ?? null],
+                `UPDATE pos_cuenta_items SET cantidad = COALESCE($2, cantidad), notas = CASE WHEN $3::boolean THEN NULLIF($4, '') ELSE notas END,
+                        comensal = CASE WHEN $5::boolean THEN $6::smallint ELSE comensal END, tiempo = COALESCE($7, tiempo) WHERE id = $1`,
+                [item_id, cantidad ?? null, notas !== undefined, notas ?? null, comensal !== undefined, comensal ?? null, tiempo ?? null],
             );
         });
         return this.obtener(empresa_id, cuenta_id);
@@ -191,28 +267,62 @@ export default class PosCuentasRepository {
     }
 
     // Un renglón ya enviado no se borra: queda CANCELADO con quién lo autorizó y por qué.
-    async cancelarItem(empresa_id, cuenta_id, item_id, motivo, { autorizador_id, solicitante_id }) {
+    // Con `merma`, lo cancelado ya se preparó: sus insumos salen del inventario como MERMA (aparecen en Finanzas como
+    // merma, no como costo de lo vendido). Sin ella, el inventario no se toca: lo cancelado antes de cobrar nunca lo movió.
+    async cancelarItem(empresa_id, cuenta_id, item_id, motivo, { autorizador_id, solicitante_id, merma = false }) {
         exigirAutorizador(autorizador_id);
         await this.#tx(async (client) => {
-            await this.#bloquear(client, empresa_id, cuenta_id);
+            const cuenta = await this.#bloquear(client, empresa_id, cuenta_id);
             const r = await client.query(
                 `UPDATE pos_cuenta_items SET estado = 'CANCELADO', motivo = $3, autorizado_por = $4
-                 WHERE id = $1 AND cuenta_id = $2 AND estado = 'ENVIADO' RETURNING id, precio_unitario, cantidad`,
+                 WHERE id = $1 AND cuenta_id = $2 AND estado = 'ENVIADO' RETURNING id, receta_id, producto_id, precio_unitario, cantidad, comanda_id, opciones`,
                 [item_id, cuenta_id, motivo, autorizador_id],
             );
             if (r.rowCount === 0) throw ApiError.conflict("Solo se cancelan renglones ya enviados; los pendientes se quitan directamente");
-            const { precio_unitario, cantidad } = r.rows[0];
+            const { precio_unitario, cantidad, comanda_id } = r.rows[0];
+            await this.#sincronizarComanda(client, comanda_id);
+            await notificar(client, { tipo: "comanda.cancelada", empresa_id, cuenta_id, mesero_id: cuenta.mesero_id });
+            if (merma) await this.#registrarMerma(client, empresa_id, cuenta, r.rows, autorizador_id);
             await registrarAutorizacion(client, {
                 empresa_id, cuenta_id, item_id, tipo: "CANCELAR_ITEM", monto: Math.round(Number(precio_unitario) * 100) * cantidad / 100,
-                motivo, autorizado_por: autorizador_id, solicitado_por: solicitante_id,
+                motivo: merma ? `${motivo} (merma)` : motivo, autorizado_por: autorizador_id, solicitado_por: solicitante_id,
             });
         });
         return this.obtener(empresa_id, cuenta_id);
     }
 
+    // Tras cancelar un renglón enviado: la comanda se marca como actualizada (la cocina vuelve a verla) y, si ya no queda
+    // nada que preparar, pasa a CANCELADA.
+    async #sincronizarComanda(client, comanda_id) {
+        if (!comanda_id) return;
+        await client.query(
+            `UPDATE pos_comandas k SET actualizada_at = now(),
+                    estado = CASE WHEN k.estado IN ('NUEVA','EN_PREPARACION','LISTA')
+                                   AND NOT EXISTS (SELECT 1 FROM pos_cuenta_items i WHERE i.comanda_id = k.id AND i.estado <> 'CANCELADO')
+                                  THEN 'CANCELADA' ELSE k.estado END
+             WHERE k.id = $1`,
+            [comanda_id],
+        );
+    }
+
+    async #registrarMerma(client, empresa_id, cuenta, items, usuario_id) {
+        const ctx = await cargarContextoConsumo(client, empresa_id, items.map((i) => ({ receta_id: i.receta_id, producto_id: i.producto_id, cantidad: i.cantidad })), consumoDeOpciones(items));
+        // Referencia propia (no POS_CUENTA): anular una venta cobrada no debe revertir esta merma, que ya ocurrió.
+        return aplicarConsumo(client, this.movimientoRepository, empresa_id, {
+            consumo: ctx.consumo, autoProduccion: ctx.autoProduccion, nombrePorId: ctx.nombrePorId, tipoSalida: "MERMA",
+            referencia_tipo: "POS_MERMA", referencia_id: cuenta.id, usuario_id,
+            motivoAuto: `Producción automática por merma POS folio ${cuenta.folio}`, motivoVenta: `Merma por cancelación POS folio ${cuenta.folio}`,
+        });
+    }
+
     // Resuelve el área real de cada renglón al enviar: si su área se desactivó, va a la predeterminada.
     async #areasActivas(client, empresa_id) {
-        const rows = (await client.query("SELECT id, nombre, imprime, es_default FROM areas_preparacion WHERE empresa_id = $1 AND activo", [empresa_id])).rows;
+        // `pantalla` ya viene resuelta: solo es verdadera si la empresa tiene activada la pantalla de cocina.
+        const rows = (await client.query(
+            `SELECT a.id, a.nombre, a.imprime, (a.pantalla AND e.usa_pantalla_cocina) AS pantalla, a.es_default
+             FROM areas_preparacion a JOIN empresas e ON e.id = a.empresa_id WHERE a.empresa_id = $1 AND a.activo`,
+            [empresa_id],
+        )).rows;
         return { porId: new Map(rows.map((a) => [a.id, a])), predeterminada: rows.find((a) => a.es_default) ?? null };
     }
 
@@ -220,17 +330,21 @@ export default class PosCuentasRepository {
         const r = await client.query(
             `INSERT INTO pos_impresiones (empresa_id, tipo, referencia_id, impresora_id, estado, error, payload)
              VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, estado`,
-            [empresa_id, tipo, referencia_id, impresora?.id ?? null, impresora ? "PENDIENTE" : "ERROR", impresora ? null : `Sin impresora configurada para ${faltante}`, JSON.stringify(payload)],
+            [empresa_id, tipo, referencia_id, impresora?.id ?? null, impresora ? "PENDIENTE" : "SIN_IMPRESORA", impresora ? null : `Sin impresora configurada para ${faltante}`, JSON.stringify(payload)],
         );
         return r.rows[0];
     }
 
-    async enviar(empresa_id, cuenta_id, usuario_id) {
+    // `tiempo`: qué tiempo se envía (1 = lo que sale ahora; el 2.º, 3.º… se dispara aparte cuando toca).
+    async enviar(empresa_id, cuenta_id, usuario_id, tiempo = 1) {
         const resultado = await this.#tx(async (client) => {
             const cuenta = await this.#bloquear(client, empresa_id, cuenta_id);
             const pendientes = (await client.query(`SELECT ${ITEM_COLS} FROM pos_cuenta_items i LEFT JOIN areas_preparacion a ON a.id = i.area_id
-                WHERE i.cuenta_id = $1 AND i.estado = 'PENDIENTE' ORDER BY i.id FOR UPDATE OF i`, [cuenta_id])).rows;
-            if (pendientes.length === 0) throw ApiError.badRequest("No hay productos por enviar");
+                WHERE i.cuenta_id = $1 AND i.estado = 'PENDIENTE' AND i.tiempo = $2 ORDER BY i.id FOR UPDATE OF i`, [cuenta_id, tiempo])).rows;
+            if (pendientes.length === 0) {
+                const otros = (await client.query("SELECT 1 FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'PENDIENTE' LIMIT 1", [cuenta_id])).rowCount > 0;
+                throw ApiError.badRequest(otros ? `No hay productos del ${tiempo}.º tiempo por enviar` : "No hay productos por enviar");
+            }
 
             const { porId, predeterminada } = await this.#areasActivas(client, empresa_id);
             for (const item of pendientes) if (!porId.has(item.area_id) && predeterminada) item.area_id = predeterminada.id;
@@ -243,21 +357,31 @@ export default class PosCuentasRepository {
             let numero = cuenta.next_comanda;
             const creadas = [];
             for (const { area, items } of comandas) {
+                // Con pantalla, la comanda nace NUEVA y la cocina la mueve; sin pantalla nadie la marcará, así que nace ENTREGADA.
                 const comanda = (await client.query(
-                    "INSERT INTO pos_comandas (empresa_id, cuenta_id, area_id, numero, creado_por) VALUES ($1,$2,$3,$4,$5) RETURNING id, numero",
-                    [empresa_id, cuenta_id, area.id, numero, usuario_id],
+                    "INSERT INTO pos_comandas (empresa_id, cuenta_id, area_id, numero, creado_por, estado) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, numero",
+                    [empresa_id, cuenta_id, area.id, numero, usuario_id, area.pantalla ? "NUEVA" : "ENTREGADA"],
                 )).rows[0];
                 await client.query("UPDATE pos_cuenta_items SET estado = 'ENVIADO', comanda_id = $2 WHERE id = ANY($1::int[])", [items.map((i) => i.id), comanda.id]);
-                const impresora = (await client.query(
-                    "SELECT id FROM impresoras WHERE empresa_id = $1 AND area_id = $2 AND activo ORDER BY id LIMIT 1", [empresa_id, area.id],
-                )).rows[0];
-                const payload = { ...payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, items }), area_id: area.id };
-                const impresion = await this.#crearImpresion(client, empresa_id, { tipo: "COMANDA", referencia_id: comanda.id, payload, impresora, faltante: `el área ${area.nombre}` });
-                creadas.push({ id: comanda.id, numero: comanda.numero, area: area.nombre, renglones: items.length, impresion_id: impresion.id, impresion_estado: impresion.estado });
+                // Solo imprime si el área imprime; un área solo de pantalla no genera trabajo (ni «sin impresora»).
+                let impresion = null;
+                if (area.imprime) {
+                    const impresora = (await client.query(
+                        "SELECT id FROM impresoras WHERE empresa_id = $1 AND area_id = $2 AND activo ORDER BY id LIMIT 1", [empresa_id, area.id],
+                    )).rows[0];
+                    const payload = { ...payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, items, tiempo }), area_id: area.id };
+                    impresion = await this.#crearImpresion(client, empresa_id, { tipo: "COMANDA", referencia_id: comanda.id, payload, impresora, faltante: `el área ${area.nombre}` });
+                }
+                creadas.push({
+                    id: comanda.id, numero: comanda.numero, area: area.nombre, area_id: area.id, renglones: items.length, pantalla: Boolean(area.pantalla),
+                    impresion_id: impresion?.id ?? null, impresion_estado: impresion?.estado ?? null,
+                });
                 numero++;
             }
             if (sinComanda.length) await client.query("UPDATE pos_cuenta_items SET estado = 'ENVIADO' WHERE id = ANY($1::int[])", [sinComanda.map((i) => i.id)]);
             await client.query("UPDATE pos_cuentas SET next_comanda = $2 WHERE id = $1", [cuenta_id, numero]);
+            // Sale al confirmar: la cocina ve la comanda al instante y el mesero sabe que ya se envió.
+            if (creadas.length > 0) await notificar(client, { tipo: "comanda.nueva", empresa_id, cuenta_id, mesero_id: cuenta.mesero_id, areas: creadas.map((k) => k.area_id ?? null) });
             return { comandas: creadas, sin_comanda: sinComanda.length };
         });
         return { ...resultado, cuenta: await this.obtener(empresa_id, cuenta_id) };
@@ -277,20 +401,76 @@ export default class PosCuentasRepository {
         return this.obtener(empresa_id, cuenta_id);
     }
 
+    // Salir de una cuenta sin enviar: lo que no se mandó a preparación se descarta y, si la cuenta no tiene nada más
+    // (ni enviados, ni comandas, ni autorizaciones, ni otras cuentas ligadas), se borra y la mesa queda libre.
+    // El folio se devuelve si era el último; una reservación que se había sentado vuelve a "confirmada".
+    async descartar(empresa_id, cuenta_id) {
+        const eliminada = await this.#tx(async (client) => {
+            const cuenta = await this.#bloquear(client, empresa_id, cuenta_id);
+            await client.query("DELETE FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'PENDIENTE'", [cuenta_id]);
+            const { usada } = (await client.query(
+                `SELECT (EXISTS (SELECT 1 FROM pos_cuenta_items WHERE cuenta_id = $1)
+                      OR EXISTS (SELECT 1 FROM pos_comandas WHERE cuenta_id = $1)
+                      OR EXISTS (SELECT 1 FROM pos_autorizaciones WHERE cuenta_id = $1)
+                      OR EXISTS (SELECT 1 FROM pos_cuentas WHERE unida_a = $1 OR dividida_de = $1)) AS usada`,
+                [cuenta_id],
+            )).rows[0];
+            if (usada) return false;
+            const { reservacion_id } = (await client.query("SELECT reservacion_id FROM pos_cuentas WHERE id = $1", [cuenta_id])).rows[0];
+            await client.query("DELETE FROM pos_cuentas WHERE id = $1", [cuenta_id]);
+            await client.query("UPDATE pos_folios SET ultimo = ultimo - 1 WHERE empresa_id = $1 AND ultimo = $2", [empresa_id, cuenta.folio]);
+            if (reservacion_id) {
+                await client.query("UPDATE reservaciones SET estado = 'confirmada', updated_at = now() WHERE id = $1 AND empresa_id = $2 AND estado = 'sentada'", [reservacion_id, empresa_id]);
+            }
+            return true;
+        });
+        return eliminada ? { eliminada: true, cuenta: null } : { eliminada: false, cuenta: await this.obtener(empresa_id, cuenta_id) };
+    }
+
+    // Cuentas vacías que nadie tocó en un buen rato (se cerró la app, se fue la señal…): ocupan la mesa sin razón.
+    async #purgarVacias(empresa_id) {
+        const ahora = Date.now();
+        if (ahora - (ultimaPurga.get(empresa_id) ?? 0) < 60_000) return;
+        ultimaPurga.set(empresa_id, ahora);
+        const { rows } = await pool.query(
+            `SELECT c.id FROM pos_cuentas c
+             WHERE c.empresa_id = $1 AND c.estado = 'ABIERTA' AND c.actualizada_at < now() - interval '30 minutes'
+               AND NOT EXISTS (SELECT 1 FROM pos_cuenta_items i WHERE i.cuenta_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM pos_comandas k WHERE k.cuenta_id = c.id)`,
+            [empresa_id],
+        );
+        for (const { id } of rows) await this.descartar(empresa_id, id).catch(() => {});
+    }
+
+    // Nombre o referencia de la cuenta ("Fam. Hernández", "Sr. Herrera") y número de personas.
+    async actualizar(empresa_id, cuenta_id, { nombre_cliente, personas }) {
+        await this.#tx(async (client) => {
+            await this.#bloquear(client, empresa_id, cuenta_id);
+            await client.query(
+                `UPDATE pos_cuentas SET nombre_cliente = CASE WHEN $2::boolean THEN NULLIF($3, '') ELSE nombre_cliente END,
+                                        personas = COALESCE($4, personas) WHERE id = $1`,
+                [cuenta_id, nombre_cliente !== undefined, nombre_cliente ?? null, personas ?? null],
+            );
+        });
+        return this.obtener(empresa_id, cuenta_id);
+    }
+
     // Une la cuenta origen en la destino. Se bloquean en orden de id para evitar deadlocks.
     async juntar(empresa_id, origen_id, destino_id) {
         if (origen_id === destino_id) throw ApiError.badRequest("Elige una cuenta distinta para juntar");
         await this.#tx(async (client) => {
             const filas = (await client.query(
-                "SELECT id, estado, personas FROM pos_cuentas WHERE id = ANY($1::int[]) AND empresa_id = $2 ORDER BY id FOR UPDATE", [[origen_id, destino_id], empresa_id],
+                "SELECT id, estado, personas, next_comanda FROM pos_cuentas WHERE id = ANY($1::int[]) AND empresa_id = $2 ORDER BY id FOR UPDATE", [[origen_id, destino_id], empresa_id],
             )).rows;
             const origen = filas.find((f) => f.id === origen_id);
             const destino = filas.find((f) => f.id === destino_id);
             if (!origen || !destino) throw ApiError.notFound("Cuenta no encontrada");
             if (origen.estado !== "ABIERTA" || destino.estado !== "ABIERTA") throw ApiError.conflict("Solo se juntan cuentas abiertas");
             await client.query("UPDATE pos_cuenta_items SET cuenta_id = $2 WHERE cuenta_id = $1", [origen_id, destino_id]);
-            await client.query("UPDATE pos_comandas SET cuenta_id = $2 WHERE cuenta_id = $1", [origen_id, destino_id]);
-            await client.query("UPDATE pos_cuentas SET personas = personas + $2 WHERE id = $1", [destino_id, origen.personas]);
+            // Las comandas del origen siguen la numeración del destino: sin esto la cuenta juntada tendría dos «comanda 1».
+            const comandasOrigen = origen.next_comanda - 1;
+            await client.query("UPDATE pos_comandas SET cuenta_id = $2, numero = numero + $3 WHERE cuenta_id = $1", [origen_id, destino_id, destino.next_comanda - 1]);
+            await client.query("UPDATE pos_cuentas SET personas = personas + $2, next_comanda = next_comanda + $3 WHERE id = $1", [destino_id, origen.personas, comandasOrigen]);
             await client.query("UPDATE pos_cuentas SET estado = 'UNIDA', unida_a = $2, cerrada_at = now() WHERE id = $1", [origen_id, destino_id]);
         });
         return this.obtener(empresa_id, destino_id);
@@ -335,10 +515,11 @@ export default class PosCuentasRepository {
                 await client.query("UPDATE pos_cuenta_items SET cantidad = cantidad - $2, descuento = $3 WHERE id = $1", [item.id, p.cantidad, (total - movido) / 100]);
                 await client.query(
                     `INSERT INTO pos_cuenta_items (empresa_id, cuenta_id, receta_id, producto_id, nombre, precio_unitario, iva_pct, precio_incluye_iva,
-                        cantidad, notas, estado, area_id, comanda_id, descuento, cortesia, autorizado_por, motivo, creado_por)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+                        cantidad, notas, estado, area_id, comanda_id, descuento, cortesia, autorizado_por, motivo, creado_por, opciones, comensal, tiempo)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21)`,
                     [empresa_id, nueva.id, item.receta_id, item.producto_id, item.nombre, item.precio_unitario, item.iva_pct, item.precio_incluye_iva,
-                        p.cantidad, item.notas, item.estado, item.area_id, item.comanda_id, movido / 100, item.cortesia, item.autorizado_por, item.motivo, item.creado_por],
+                        p.cantidad, item.notas, item.estado, item.area_id, item.comanda_id, movido / 100, item.cortesia, item.autorizado_por, item.motivo, item.creado_por,
+                        JSON.stringify(item.opciones ?? []), item.comensal, item.tiempo],
                 );
             }
             return nueva.id;
@@ -346,17 +527,28 @@ export default class PosCuentasRepository {
         return { origen: await this.obtener(empresa_id, cuenta_id), nueva: await this.obtener(empresa_id, nuevaId) };
     }
 
-    async cancelarCuenta(empresa_id, cuenta_id, { motivo, autorizador_id, solicitante_id }) {
+    async cancelarCuenta(empresa_id, cuenta_id, { motivo, autorizador_id, solicitante_id, merma = false }) {
         await this.#tx(async (client) => {
-            await this.#bloquear(client, empresa_id, cuenta_id);
+            const cuenta = await this.#bloquear(client, empresa_id, cuenta_id);
             const enviados = (await client.query("SELECT COALESCE(SUM(precio_unitario * cantidad), 0) AS importe FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'ENVIADO'", [cuenta_id])).rows[0];
             const hayEnviados = (await client.query("SELECT 1 FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'ENVIADO' LIMIT 1", [cuenta_id])).rowCount > 0;
             if (hayEnviados && !autorizador_id) throw ApiError.forbidden("La cuenta ya tiene productos enviados: cancelarla requiere autorización de un supervisor");
             if (hayEnviados && !motivo) throw ApiError.badRequest("Indica el motivo de la cancelación");
             await client.query("DELETE FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'PENDIENTE'", [cuenta_id]);
+            if (hayEnviados && merma) {
+                const preparados = (await client.query("SELECT receta_id, producto_id, cantidad, opciones FROM pos_cuenta_items WHERE cuenta_id = $1 AND estado = 'ENVIADO'", [cuenta_id])).rows;
+                await this.#registrarMerma(client, empresa_id, cuenta, preparados, autorizador_id);
+            }
+            // Cancelar la cuenta cancela lo que siga por preparar en pantalla.
+            await client.query(
+                `UPDATE pos_comandas SET estado = 'CANCELADA', actualizada_at = now()
+                 WHERE estado IN ('NUEVA','EN_PREPARACION','LISTA') AND id IN (SELECT DISTINCT comanda_id FROM pos_cuenta_items WHERE cuenta_id = $1 AND comanda_id IS NOT NULL)`,
+                [cuenta_id],
+            );
             await client.query("UPDATE pos_cuentas SET estado = 'CANCELADA', cerrada_at = now(), motivo_cancelacion = $2 WHERE id = $1", [cuenta_id, motivo || null]);
+            await notificar(client, { tipo: "comanda.cancelada", empresa_id, cuenta_id, mesero_id: cuenta.mesero_id });
             if (hayEnviados) {
-                await registrarAutorizacion(client, { empresa_id, cuenta_id, tipo: "CANCELAR_CUENTA", monto: Number(enviados.importe), motivo, autorizado_por: autorizador_id, solicitado_por: solicitante_id });
+                await registrarAutorizacion(client, { empresa_id, cuenta_id, tipo: "CANCELAR_CUENTA", monto: Number(enviados.importe), motivo: merma ? `${motivo} (merma)` : motivo, autorizado_por: autorizador_id, solicitado_por: solicitante_id });
             }
         });
         return this.obtener(empresa_id, cuenta_id);
@@ -369,7 +561,15 @@ export default class PosCuentasRepository {
         const resultado = await this.#tx(async (client) => {
             const cuenta = await this.#bloquear(client, empresa_id, cuenta_id);
             const turno = (await client.query(Q.TURNO_ABIERTO, [empresa_id, usuario_id])).rows[0];
-            if (!turno) throw ApiError.conflict("Abre tu caja para poder cobrar");
+            if (!turno) {
+                // Con una sola caja por negocio, cobrar sin la propia suele significar que la tiene abierta otra persona.
+                const ajena = (await client.query("SELECT u.nombre FROM pos_turnos t JOIN usuarios u ON u.id = t.usuario_id WHERE t.empresa_id = $1 AND t.estado = 'ABIERTO'", [empresa_id])).rows[0];
+                throw ApiError.conflict(
+                    ajena
+                        ? `La caja la tiene abierta ${ajena.nombre}. Solo se cobra desde la caja abierta: pídele que la cierre (o que lo haga un supervisor) y abre la tuya.`
+                        : "Abre tu caja para poder cobrar",
+                );
+            }
 
             const items = (await client.query(
                 `SELECT ${ITEM_COLS} FROM pos_cuenta_items i LEFT JOIN areas_preparacion a ON a.id = i.area_id
@@ -384,7 +584,8 @@ export default class PosCuentasRepository {
             const cobro = normalizarPagos(totales.total, pagos);
 
             const renglones = vivos.map((i) => ({ receta_id: i.receta_id, producto_id: i.producto_id, cantidad: i.cantidad }));
-            const ctx = await cargarContextoConsumo(client, empresa_id, renglones);
+            // Las opciones que consumen un insumo (extra queso, doble shot…) también descuentan inventario, por pieza vendida.
+            const ctx = await cargarContextoConsumo(client, empresa_id, renglones, consumoDeOpciones(vivos));
             const inventario = await aplicarConsumo(client, this.movimientoRepository, empresa_id, {
                 consumo: ctx.consumo,
                 autoProduccion: ctx.autoProduccion,
@@ -457,13 +658,32 @@ export default class PosCuentasRepository {
             const r = await pool.query(
                 `INSERT INTO pos_turnos (empresa_id, usuario_id, fecha_negocio, fondo_inicial) VALUES ($1,$2,$3,$4)
                  RETURNING id, empresa_id, usuario_id, fecha_negocio, fondo_inicial, abierto_at, estado`,
-                [empresa_id, usuario_id, hoyISO(), fondo_inicial],
+                [empresa_id, usuario_id, await hoyEmpresa(empresa_id), fondo_inicial],
             );
             return r.rows[0];
         } catch (error) {
-            if (error.code === "23505") throw ApiError.conflict("Ya tienes una caja abierta");
-            throw error;
+            if (error.code !== "23505") throw error;
+            // Solo puede haber una caja abierta por empresa: se dice de quién es para saber a quién pedirle que la cierre.
+            const abierta = await this.turnoAbierto(empresa_id, usuario_id);
+            if (abierta?.es_mia) throw ApiError.conflict("Ya tienes una caja abierta", { turno_id: abierta.id });
+            throw ApiError.conflict(
+                abierta
+                    ? `Ya hay una caja abierta por ${abierta.cajero}. Solo puede haber una por negocio: hay que cerrarla (un supervisor también puede) antes de abrir otra.`
+                    : "Ya hay una caja abierta en este negocio.",
+                abierta ? { turno_id: abierta.id, cajero: abierta.cajero } : null,
+            );
         }
+    }
+
+    // La caja abierta del negocio (sea de quien sea), para explicar quién la tiene.
+    async turnoAbierto(empresa_id, usuario_id) {
+        const r = await pool.query(
+            `SELECT t.id, t.usuario_id, u.nombre AS cajero, t.fecha_negocio, t.fondo_inicial, t.abierto_at, (t.usuario_id = $2) AS es_mia
+             FROM pos_turnos t JOIN usuarios u ON u.id = t.usuario_id
+             WHERE t.empresa_id = $1 AND t.estado = 'ABIERTO'`,
+            [empresa_id, usuario_id],
+        );
+        return r.rows[0] ?? null;
     }
 
     async turnoActual(empresa_id, usuario_id) {

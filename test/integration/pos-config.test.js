@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -35,6 +36,10 @@ describe("Integración HTTP — POS: áreas, mesas, menú y permisos", { skip: S
         await pool.query("DELETE FROM productos WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM proveedores WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM categorias WHERE empresa_id = ANY($1)", e);
+        await pool.query("DELETE FROM pos_cuenta_items WHERE empresa_id = ANY($1)", e);
+        await pool.query("DELETE FROM pos_comandas WHERE empresa_id = ANY($1)", e);
+        await pool.query("DELETE FROM pos_cuentas WHERE empresa_id = ANY($1)", e);
+        await pool.query("DELETE FROM pos_folios WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM mesas WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM areas_preparacion WHERE empresa_id = ANY($1)", e);
         await pool.query("DELETE FROM usuarios WHERE empresa_id = ANY($1)", e);
@@ -54,9 +59,7 @@ describe("Integración HTTP — POS: áreas, mesas, menú y permisos", { skip: S
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'POS A'), ($2,'POS B')", [A, B]);
@@ -146,5 +149,33 @@ describe("Integración HTTP — POS: áreas, mesas, menú y permisos", { skip: S
         assert.equal((await req("POST", `/api/pos/${A}/mesas`, { token: tokMesero, body: { nombre: "Mesa 2" } })).status, 403);
         assert.equal((await req("GET", `/api/pos/${A}/mesas`, { token: tokFinanzas })).status, 403);
         assert.equal((await req("GET", `/api/pos/${A}/mesas`, { token: tokAdminB })).status, 403);
+    });
+
+    it("eliminar mesa: sin uso se borra, con historial se desactiva, con cuenta abierta 409, solo Admin", async () => {
+        const mk = async (nombre) => (await req("POST", `/api/pos/${A}/mesas`, { token: tokAdmin, body: { nombre, capacidad: 2 } })).json.data.id;
+        const libre = await mk("Borrable");
+        assert.equal((await req("DELETE", `/api/pos/${A}/mesas/${libre}`, { token: tokMesero })).status, 403);
+        const del = await req("DELETE", `/api/pos/${A}/mesas/${libre}`, { token: tokAdmin });
+        assert.equal(del.status, 200);
+        assert.equal(del.json.data.accion, "eliminada");
+        const todas = (await req("GET", `/api/pos/${A}/mesas?incluir_inactivas=true`, { token: tokAdmin })).json.data;
+        assert.equal(todas.some((x) => x.id === libre), false);
+        assert.equal((await req("DELETE", `/api/pos/${A}/mesas/${libre}`, { token: tokAdmin })).status, 404);
+
+        const usada = await mk("Con historial");
+        const cuenta = await req("POST", `/api/pos/${A}/cuentas`, { token: tokMesero, body: { tipo: "MESA", mesa_id: usada, personas: 2 } });
+        assert.equal(cuenta.status, 201, JSON.stringify(cuenta.json));
+        const abierta = await req("DELETE", `/api/pos/${A}/mesas/${usada}`, { token: tokAdmin });
+        assert.equal(abierta.status, 409);
+        assert.match(abierta.json.error, /cuenta abierta/);
+
+        await req("POST", `/api/pos/${A}/cuentas/${cuenta.json.data.id}/cancelar`, { token: tokMesero, body: { motivo: "Prueba" } });
+        const des = await req("DELETE", `/api/pos/${A}/mesas/${usada}`, { token: tokAdmin });
+        assert.equal(des.status, 200);
+        assert.equal(des.json.data.accion, "desactivada");
+        const activas = (await req("GET", `/api/pos/${A}/mesas`, { token: tokAdmin })).json.data;
+        assert.equal(activas.some((x) => x.id === usada), false, "ya no sale en el mapa");
+        const conInactivas = (await req("GET", `/api/pos/${A}/mesas?incluir_inactivas=true`, { token: tokAdmin })).json.data;
+        assert.equal(conInactivas.find((x) => x.id === usada).activo, false);
     });
 });

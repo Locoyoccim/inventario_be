@@ -24,4 +24,10 @@ export default class ReporteService {
     async estadoDiario(empresa_id, fecha) {
         return await this.reporteRepository.estadoDiario(empresa_id, fecha);
     }
+    async primerosPasos(empresa_id) {
+        return await this.reporteRepository.primerosPasos(empresa_id);
+    }
+    async estadoPos(empresa_id, hoy) {
+        return await this.reporteRepository.estadoPos(empresa_id, hoy);
+    }
 }

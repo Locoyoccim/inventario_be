@@ -2,7 +2,7 @@
   "info": {
     "name": "Inventario Café Aroma — API",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Backend de inventario multiempresa. Configura baseUrl y empresa_id; corre Auth > Login para guardar el token automáticamente."
+    "description": "Backend de inventario multiempresa. Configura baseUrl y empresa_id; corre Auth > Login para guardar la sesión automáticamente (se lee de la cookie gh_session; el login no devuelve el token en el body)."
   },
   "auth": {
     "type": "bearer",
@@ -97,9 +97,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "// El login ya NO devuelve el token en el body: la sesión viaja en la cookie httpOnly gh_session. Aquí se lee de Set-Cookie solo para usarla como Bearer en esta colección.",
                   "const d=pm.response.json();",
-                  "if(d.success){ pm.collectionVariables.set('token', d.data.token); pm.collectionVariables.set('empresa_id', String(d.data.user.empresa_id)); }",
-                  "pm.test('token guardado', ()=>pm.expect(pm.collectionVariables.get('token')).to.be.a('string').and.not.empty);"
+                  "const m=/(?:^|[;,\\s])gh_session=([^;]+)/.exec(pm.response.headers.get('Set-Cookie')||'');",
+                  "if(d.success){ if(m){ pm.collectionVariables.set('token', decodeURIComponent(m[1])); } pm.collectionVariables.set('empresa_id', String(d.data.user.empresa_id)); }",
+                  "pm.test('sesion guardada (JWT leido de la cookie gh_session)', ()=>{ if(!pm.collectionVariables.get('token')){ throw new Error('El login no devolvio la cookie gh_session'); } });"
                 ]
               }
             }

@@ -81,12 +81,6 @@ export default class FinanzasController {
         const nuevo = await this.finanzasService.crearIngreso(empresa_id, req.body, req.user.id);
         res.status(201).json({ success: true, data: nuevo });
     });
-    crearIngresosLote = asyncHandler(async (req, res) => {
-        const { empresa_id } = req.params;
-        const { fecha, lineas } = req.body;
-        const creados = await this.finanzasService.crearIngresosLote(empresa_id, fecha, lineas, req.user.id);
-        res.status(201).json({ success: true, data: creados, message: `${creados.length} ingresos registrados` });
-    });
     actualizarIngreso = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
         res.json({ success: true, data: await this.finanzasService.actualizarIngreso(empresa_id, id, req.body) });

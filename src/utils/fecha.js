@@ -13,8 +13,8 @@ export function hoyISO(now = new Date(), tz = process.env.TZ_NEGOCIO || "America
 }
 
 // Comparación lexicográfica: válida para cadenas YYYY-MM-DD.
-export function noFutura(str, now = new Date()) {
-    return str <= hoyISO(now);
+export function noFutura(str, now = new Date(), tz = undefined) {
+    return str <= hoyISO(now, tz);
 }
 
 // Resta n días a una fecha YYYY-MM-DD (en UTC) y la devuelve en el mismo formato.

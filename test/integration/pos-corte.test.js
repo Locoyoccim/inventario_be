@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -78,9 +79,7 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Café Cobro'), ($2,'Otra')", [A, B]);
@@ -115,6 +114,8 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
 
     const abrirCaja = (token, fondo = 500) => req("POST", api("/turnos/abrir"), { token, body: { fondo_inicial: fondo } });
     const turnoDe = async (token) => (await req("GET", api("/turnos/actual"), { token })).json.data;
+    // Mesas libres: las pruebas dejan cuentas abiertas y la caja no se cierra con ellas.
+    const liberarCuentas = () => pool.query("UPDATE pos_cuentas SET estado = 'CANCELADA' WHERE empresa_id = $1 AND estado = 'ABIERTA'", [A]);
     const cerrar = (id, body, token = tokCajero) => req("POST", api(`/turnos/${id}/cerrar`), { token, body });
 
     it("corte parcial: separa ventas de propinas y calcula el efectivo esperado; solo el dueño del turno o un supervisor lo ven", async () => {
@@ -147,7 +148,7 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
         assert.equal((await req("GET", api(`/turnos/${t.id}/corte`), { token: tokAdminB })).status, 403, "otra empresa tampoco");
     });
 
-    it("cerrar: valida entregas, exige confirmar si quedan cuentas abiertas y no deja cerrar dos veces", async () => {
+    it("cerrar: valida entregas, NO deja cerrar con cuentas abiertas (ni confirmándolo) y no deja cerrar dos veces", async () => {
         const id = est.turno;
         assert.equal((await cerrar(id, { efectivo_contado: -1 })).status, 400);
         assert.equal((await cerrar(id, {})).status, 400, "el conteo es obligatorio");
@@ -159,6 +160,15 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
         const bloqueo = await cerrar(id, { efectivo_contado: 690, propinas_entregadas: 10 });
         assert.equal(bloqueo.status, 409);
         assert.equal(bloqueo.json.details.cuentas_abiertas, 1);
+        assert.match(bloqueo.json.error, /No se puede cerrar la caja: hay 1 cuenta\(s\) abierta\(s\) con productos \(Mesa \d+\)/);
+        assert.equal(bloqueo.json.details.cuentas[0].id, abierta);
+        // Ya no existe «confirmar el cierre»: aunque se mande forzar, sigue bloqueado (y lo ven también quienes autorizan).
+        assert.equal((await cerrar(id, { efectivo_contado: 690, propinas_entregadas: 10, forzar: true })).status, 409);
+        assert.equal((await cerrar(id, { efectivo_contado: 690, propinas_entregadas: 10, forzar: true }, tokSupervisor)).status, 409);
+        const corteAbierto = (await req("GET", api(`/turnos/${id}/corte`), { token: tokCajero })).json.data;
+        assert.equal(corteAbierto.cuentas_abiertas, 1);
+        assert.equal(corteAbierto.cuentas_abiertas_detalle[0].id, abierta, "el corte lista cuáles son para cobrarlas o cancelarlas");
+        assert.equal(corteAbierto.cuentas_abiertas_detalle[0].piezas, 1);
         assert.equal((await turnoDe(tokCajero)).id, id, "el turno sigue abierto");
         assert.equal((await pool.query("SELECT count(*)::int n FROM ingresos WHERE empresa_id = $1", [A])).rows[0].n, 0);
         est.cuentaAbierta = abierta;
@@ -166,7 +176,8 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
 
     it("cierre: guarda esperado, contado y diferencia, y genera los ingresos por método sin propinas", async () => {
         const id = est.turno;
-        const r = await cerrar(id, { efectivo_contado: 685, propinas_entregadas: 10, nota: "Faltaron 5", forzar: true });
+        await liberarCuentas(); // la cuenta que bloqueaba el cierre se cancela
+        const r = await cerrar(id, { efectivo_contado: 685, propinas_entregadas: 10, nota: "Faltaron 5" });
         assert.equal(r.status, 200, JSON.stringify(r.json));
         const { turno, corte, ingresos, impresion } = r.json.data;
         assert.equal(turno.estado, "CERRADO");
@@ -192,7 +203,8 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
 
     it("turno cerrado: no se cierra otra vez, no se cobra con él y el corte sigue consultable e imprimible", async () => {
         assert.equal((await cerrar(est.turno, { efectivo_contado: 690 })).status, 409);
-        const sinCaja = await cobrar(est.cuentaAbierta, [{ metodo: "TARJETA", monto: 55 }]);
+        const nueva = await cuentaLista([linea(latte)]); // la anterior se canceló para poder cerrar la caja
+        const sinCaja = await cobrar(nueva, [{ metodo: "TARJETA", monto: 55 }]);
         assert.equal(sinCaja.status, 409);
         assert.match(sinCaja.json.error, /Abre tu caja/);
         const c = (await req("GET", api(`/turnos/${est.turno}/corte`), { token: tokCajero })).json.data;
@@ -200,6 +212,11 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
         assert.equal(c.corte.efectivo_esperado, 690);
         const re = await req("POST", api(`/turnos/${est.turno}/corte/imprimir`), { token: tokCajero });
         assert.equal(re.status, 201);
+        // El corte lleva cifras de caja: un mesero no puede verlo ni imprimirlo desde el navegador; el cajero sí.
+        const jid = re.json.data.impresion_id;
+        assert.equal((await req("GET", api(`/impresiones/${jid}`), { token: tokMesero })).status, 403);
+        assert.equal((await req("POST", api(`/impresiones/${jid}/impreso-navegador`), { token: tokMesero })).status, 403);
+        assert.equal((await req("GET", api(`/impresiones/${jid}`), { token: tokCajero })).json.data.payload.tipo, "CORTE");
     });
 
     it("la lista de turnos: el cajero ve los suyos y el supervisor todos", async () => {
@@ -212,15 +229,57 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
         assert.equal((await req("GET", api("/turnos"), { token: tokMesero })).status, 403);
     });
 
-    it("con otra caja abierta se puede cerrar aunque queden cuentas abiertas; un cajero no cierra la caja de otro", async () => {
-        await abrirCaja(tokCajero, 100);
-        const mio = await turnoDe(tokCajero);
+    it("una sola caja abierta por negocio: nadie abre ni cobra con la caja de otro abierta, y el mensaje dice de quién es", async () => {
+        // El supervisor ya tiene su caja abierta (prueba anterior).
+        const abierta = await req("GET", api("/turnos/abierto"), { token: tokCajero });
+        assert.equal(abierta.status, 200);
+        assert.equal(abierta.json.data.cajero, "CT-sup");
+        assert.equal(abierta.json.data.es_mia, false);
+        assert.equal((await req("GET", api("/turnos/abierto"), { token: tokSupervisor })).json.data.es_mia, true);
+        assert.equal(await turnoDe(tokCajero), null, "para el cajero no hay caja propia");
+
+        const intento = await abrirCaja(tokCajero, 100);
+        assert.equal(intento.status, 409);
+        assert.match(intento.json.error, /Ya hay una caja abierta por CT-sup/);
+        assert.equal((await abrirCaja(tokSupervisor, 0)).json.error, "Ya tienes una caja abierta", "quien la tiene lo oye de otra forma");
+
+        const c = await cuentaLista([linea(latte)]);
+        const cobro = await cobrar(c, [{ metodo: "TARJETA", monto: 55 }]);
+        assert.equal(cobro.status, 409);
+        assert.match(cobro.json.error, /La caja la tiene abierta CT-sup/);
+
+        // Un cajero no cierra la caja de otro; el supervisor cierra la suya y entonces el cajero ya puede abrir la suya.
         const sup = await turnoDe(tokSupervisor);
-        const r = await cerrar(mio.id, { efectivo_contado: 100 });
-        assert.equal(r.status, 200, "la caja del supervisor sigue abierta: no bloquea");
-        assert.equal(r.json.data.ingresos.length, 0, "sin ventas no hay ingresos");
-        assert.equal(Number(r.json.data.turno.diferencia), 0);
-        assert.equal((await cerrar(sup.id, { efectivo_contado: 0 }, tokCajero)).status, 403, "un cajero no cierra la caja de otro");
+        assert.equal((await cerrar(sup.id, { efectivo_contado: 0 }, tokCajero)).status, 403);
+        assert.equal((await cerrar(sup.id, { efectivo_contado: 0 }, tokSupervisor)).status, 409, "hay una cuenta abierta con productos: no cierra");
+        await liberarCuentas();
+        assert.equal((await cerrar(sup.id, { efectivo_contado: 0 }, tokSupervisor)).status, 200);
+        assert.equal((await req("GET", api("/turnos/abierto"), { token: tokCajero })).json.data, null);
+        assert.equal((await abrirCaja(tokCajero, 100)).status, 201);
+        const nueva = await cuentaLista([linea(latte)]); // la anterior se canceló para poder cerrar la caja del supervisor
+        assert.equal((await cobrar(nueva, [{ metodo: "TARJETA", monto: 55 }])).status, 200);
+        // Se cierra para dejar el negocio sin caja abierta: la siguiente prueba abre la suya desde cero.
+        const propia = await turnoDe(tokCajero);
+        await liberarCuentas();
+        assert.equal((await cerrar(propia.id, { efectivo_contado: 100 })).status, 200);
+    });
+
+    it("la regla vive en la base: aunque se salte la API no caben dos cajas abiertas del mismo negocio", async () => {
+        assert.equal((await abrirCaja(tokSupervisor, 0)).status, 201);
+        const yo = (await pool.query("SELECT id FROM usuarios WHERE codigo_ingreso = 'CT-sup' AND empresa_id = $1", [A])).rows[0].id;
+        await assert.rejects(
+            pool.query("INSERT INTO pos_turnos (empresa_id, usuario_id, fecha_negocio, fondo_inicial) VALUES ($1,$2,CURRENT_DATE,0)", [A, yo]),
+            (e) => e.code === "23505",
+        );
+        // Otra empresa sí puede tener su propia caja abierta.
+        const otro = (await pool.query("INSERT INTO usuarios (nombre,codigo_ingreso,empresa_id) VALUES ('CT-otro','CT-otro',$1) RETURNING id", [B])).rows[0].id;
+        await pool.query("INSERT INTO pos_turnos (empresa_id, usuario_id, fecha_negocio, fondo_inicial) VALUES ($1,$2,CURRENT_DATE,0)", [B, otro]);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM pos_turnos WHERE estado = 'ABIERTO' AND empresa_id = ANY($1)", [[A, B]])).rows[0].n, 2);
+        await pool.query("DELETE FROM pos_turnos WHERE empresa_id = $1", [B]);
+        await pool.query("DELETE FROM usuarios WHERE id = $1", [otro]);
+        const sup = await turnoDe(tokSupervisor);
+        await liberarCuentas();
+        assert.equal((await cerrar(sup.id, { efectivo_contado: 0 }, tokSupervisor)).status, 200);
     });
 
     it("cobrar y cerrar a la vez: lo que se cobra queda en el turno o se rechaza, nunca se pierde del corte", async () => {
@@ -230,14 +289,15 @@ describe("Integración HTTP — POS: turnos, corte de caja e ingresos", { skip: 
         for (let i = 0; i < 4; i++) ids.push(await cuentaLista([linea(latte)]));
         const [r1, r2, r3, r4, cierre] = await Promise.all([
             ...ids.map((id) => cobrar(id, [{ metodo: "TARJETA", monto: 55 }])),
-            cerrar(t.id, { efectivo_contado: 0, forzar: true }, tokSupervisor), // un supervisor cierra la caja del cajero
+            cerrar(t.id, { efectivo_contado: 0 }, tokSupervisor), // un supervisor intenta cerrar la caja del cajero mientras se cobra
         ]);
-        assert.equal(cierre.status, 200);
+        // Con cuentas abiertas el cierre se rechaza; solo pasa si ya estaban todas cobradas. En ambos casos nada se pierde del corte.
+        assert.ok(cierre.status === 200 || cierre.status === 409, JSON.stringify(cierre.json));
         const cobrados = [r1, r2, r3, r4].filter((r) => r.status === 200).length;
         const enPagos = (await pool.query("SELECT COALESCE(SUM(monto),0)::float AS s FROM pos_pagos WHERE turno_id = $1", [t.id])).rows[0].s;
         const enIngresos = (await pool.query("SELECT COALESCE(SUM(monto),0)::float AS s FROM ingresos WHERE pos_turno_id = $1", [t.id])).rows[0].s;
         assert.equal(enPagos, cobrados * 55);
-        assert.equal(enIngresos, enPagos, "los ingresos del corte cuadran con los pagos del turno");
+        assert.equal(enIngresos, cierre.status === 200 ? enPagos : 0, "los ingresos del corte cuadran con los pagos del turno (o no hay corte)");
         assert.ok([r1, r2, r3, r4].every((r) => r.status === 200 || r.status === 409));
     });
 });

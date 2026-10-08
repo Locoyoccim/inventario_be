@@ -54,8 +54,8 @@ export default class MovimientoRepository {
         let i = 2;
         if (productoId) { where.push(`m.producto_id = $${i}`); params.push(productoId); i++; }
         if (tipo) { where.push(`m.tipo_movimiento = $${i}`); params.push(tipo); i++; }
-        if (desde) { where.push(`m.fecha::date >= $${i}`); params.push(desde); i++; }
-        if (hasta) { where.push(`m.fecha::date <= $${i}`); params.push(hasta); i++; }
+        if (desde) { where.push(`fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1)) >= $${i}`); params.push(desde); i++; }
+        if (hasta) { where.push(`fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1)) <= $${i}`); params.push(hasta); i++; }
         if (sentido === "entrada") where.push("m.stock_nuevo > m.stock_anterior");
         if (sentido === "salida") where.push("m.stock_nuevo < m.stock_anterior");
         const sql = `
@@ -154,31 +154,6 @@ export default class MovimientoRepository {
             }
             await client.query("COMMIT");
             return movimiento;
-        } catch (error) {
-            await client.query("ROLLBACK");
-            throw error;
-        } finally {
-            client.release();
-        }
-    }
-
-    // Registro por lote genérico: N movimientos en UNA sola transacción.
-    // items: [{ producto_id, tipo_movimiento, cantidad, ... }]
-    async registrarLote(empresa_id, items, opts = {}) {
-        const client = await pool.connect();
-        try {
-            await client.query("BEGIN");
-            const resultados = [];
-            for (const item of items) {
-                const { producto_id, ...data } = item;
-                const mov = await this.aplicar(client, producto_id, empresa_id, data, opts);
-                if (!mov) {
-                    throw ApiError.notFound(`Producto ${producto_id} no encontrado para la empresa ${empresa_id}`);
-                }
-                resultados.push(mov);
-            }
-            await client.query("COMMIT");
-            return resultados;
         } catch (error) {
             await client.query("ROLLBACK");
             throw error;

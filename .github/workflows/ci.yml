@@ -6,6 +6,41 @@ on:
   pull_request:
 
 jobs:
+  # Compuerta de dependencias: bloquea ante vulnerabilidades HIGH/CRITICAL en PRODUCCIÓN. El árbol completo (herramientas de
+  # desarrollo) se muestra como aviso y no bloquea. Solo necesita package.json y el lockfile (no instala nada).
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: "Dependencias de producción (bloqueante: HIGH/CRITICAL)"
+        run: npm audit --omit=dev --audit-level=high
+      - name: "Árbol completo (informativo, no bloquea)"
+        if: always()
+        run: |
+          npm audit --audit-level=high || echo "::warning title=npm audit informativo::El arbol completo tiene vulnerabilidades HIGH o CRITICAL (herramientas de desarrollo). No bloquea; revisa el log."
+
+  # Trinquete de formato: en cada pull request, Prettier solo se exige a los archivos que ese PR modifica (nunca al repositorio
+  # entero) y solo a lo posterior al commit de .prettier-ratchet. Ver scripts/formato_modificados.js.
+  formato:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Formato de los archivos modificados
+        env:
+          FORMATO_BASE: ${{ github.event.pull_request.base.sha }}
+        run: npm run format:check
+
   test:
     runs-on: ubuntu-latest
     services:
@@ -22,7 +57,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventarios
       JWT_SECRET: ci-secret-no-usar-en-produccion
       NODE_ENV: test
     steps:
@@ -32,11 +66,28 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - name: Migrar esquema
+      # Roles de la base (ADR-006): el MIGRADOR es dueño de los objetos y corre las migraciones; la APP solo lee/escribe datos.
+      # El administrador (postgres) se usa ÚNICAMENTE en este paso. Contraseñas aleatorias por corrida, enmascaradas en el log.
+      - name: Roles de la base (migrador y app)
+        env:
+          ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventarios
+        run: |
+          GH_APP_PASSWORD="$(openssl rand -hex 16)"
+          GH_MIGRADOR_PASSWORD="$(openssl rand -hex 16)"
+          echo "::add-mask::$GH_APP_PASSWORD"
+          echo "::add-mask::$GH_MIGRADOR_PASSWORD"
+          export GH_APP_PASSWORD GH_MIGRADOR_PASSWORD
+          npm run db:roles
+          {
+            echo "MIGRATE_DATABASE_URL=postgres://gh_migrador:${GH_MIGRADOR_PASSWORD}@localhost:5432/inventarios"
+            echo "TEST_MIGRATOR_URL=postgres://gh_migrador:${GH_MIGRADOR_PASSWORD}@localhost:5432/inventarios"
+            echo "TEST_DATABASE_URL=postgres://gh_app:${GH_APP_PASSWORD}@localhost:5432/inventarios"
+          } >> "$GITHUB_ENV"
+      - name: Migrar esquema (como migrador)
         run: npm run migrate
       - name: Lint
         run: npm run lint
-      - name: Pruebas (unit + integración)
-        run: npm test
-        env:
-          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventarios
+      # Modo estricto: exige las dos URLs (REQUIRE_DB=1), corre la suite como rol de privilegios mínimos y falla ante cualquier
+      # prueba omitida o suite que no corra.
+      - name: Pruebas (unit + integración, como rol de la app)
+        run: npm run test:ci

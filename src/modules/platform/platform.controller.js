@@ -15,6 +15,11 @@ export default class PlatformController {
         res.status(201).json({ success: true, data });
     });
 
+    reenviarInvitacion = asyncHandler(async (req, res) => {
+        const data = await this.platformService.reenviarInvitacion(req.params.id);
+        res.json({ success: true, data });
+    });
+
     cambiarEstado = asyncHandler(async (req, res) => {
         const data = await this.platformService.cambiarEstado(req.params.id, req.body.activo);
         res.json({ success: true, data });

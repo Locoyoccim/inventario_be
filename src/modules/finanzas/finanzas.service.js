@@ -1,6 +1,7 @@
 import { armarResumen } from "./finanzas.logic.js";
 import ApiError from "../../utils/ApiError.js";
 import { esFechaReal } from "../../utils/fecha.js";
+import { exigirNoFutura } from "../../utils/zonaHoraria.js";
 
 const UNIDAD = { dia: "day", semana: "week", mes: "month" };
 
@@ -16,15 +17,14 @@ export default class FinanzasService {
 
     // Gastos
     listarGastos(e, filtros, solo) { return this.repo.listarGastos(e, filtros, solo); }
-    crearGasto(e, data, uid) { return this.repo.crearGasto(e, data, uid); }
-    actualizarGasto(e, id, data) { return this.repo.actualizarGasto(e, id, data); }
+    async crearGasto(e, data, uid) { await exigirNoFutura(e, data.fecha); return this.repo.crearGasto(e, data, uid); }
+    async actualizarGasto(e, id, data) { await exigirNoFutura(e, data.fecha); return this.repo.actualizarGasto(e, id, data); }
     anularGasto(e, id, uid, motivo) { return this.repo.anularGasto(e, id, uid, motivo); }
 
     // Ingresos
     listarIngresos(e, filtros, solo) { return this.repo.listarIngresos(e, filtros, solo); }
-    crearIngreso(e, data, uid) { return this.repo.crearIngreso(e, data, uid); }
-    crearIngresosLote(e, fecha, lineas, uid) { return this.repo.crearIngresosLote(e, fecha, lineas, uid); }
-    actualizarIngreso(e, id, data) { return this.repo.actualizarIngreso(e, id, data); }
+    async crearIngreso(e, data, uid) { await exigirNoFutura(e, data.fecha); return this.repo.crearIngreso(e, data, uid); }
+    async actualizarIngreso(e, id, data) { await exigirNoFutura(e, data.fecha); return this.repo.actualizarIngreso(e, id, data); }
     anularIngreso(e, id, uid, motivo) { return this.repo.anularIngreso(e, id, uid, motivo); }
 
     // Libro

@@ -1,13 +1,12 @@
 import { z } from "zod";
-import { esFechaReal, noFutura } from "../../utils/fecha.js";
+import { esFechaReal } from "../../utils/fecha.js";
 
 export const METODOS = ["EFECTIVO", "TARJETA", "TRANSFERENCIA", "OTRO"];
 
 const fechaSchema = z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "fecha debe tener formato YYYY-MM-DD")
-    .refine(esFechaReal, "fecha inexistente (revisa día/mes)")
-    .refine(noFutura, "la fecha no puede ser futura");
+    .refine(esFechaReal, "fecha inexistente (revisa día/mes)"); // que no sea futura se valida en el servicio, con la zona de la empresa
 
 const montoSchema = z.coerce
     .number()
@@ -43,11 +42,6 @@ export const ingresoCreateSchema = z.object({
     nota: z.string().trim().optional(),
 });
 export const ingresoUpdateSchema = ingresoCreateSchema;
-
-export const ingresoLoteSchema = z.object({
-    fecha: fechaSchema,
-    lineas: z.array(z.object({ metodo_pago: metodoSchema, monto: montoSchema })).min(1, "envía al menos una línea"),
-});
 
 export const anularSchema = z.object({
     motivo: z.string().trim().min(1, "motivo es requerido"),

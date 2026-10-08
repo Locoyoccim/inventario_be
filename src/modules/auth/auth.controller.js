@@ -1,11 +1,22 @@
 import { asyncHandler } from "../../middlewares/asyncHandler.js";
 import ApiError from "../../utils/ApiError.js";
+import { aceptarInvitacion, consultarInvitacion } from "./invitacion.service.js";
 import { AUTH_COOKIE, authCookieOptions, clearAuthCookieOptions } from "../../utils/authCookie.js";
 
 export default class AuthController {
     constructor(authService) {
         this.authService = authService;
     }
+
+    // Activación de cuenta por enlace de invitación (pública: la autoriza el token de un solo uso).
+    verInvitacion = asyncHandler(async (req, res) => {
+        res.json({ success: true, data: await consultarInvitacion(req.params.token) });
+    });
+
+    aceptarInvitacion = asyncHandler(async (req, res) => {
+        const data = await aceptarInvitacion(req.body.token, req.body.password);
+        res.json({ success: true, data });
+    });
 
     setup = asyncHandler(async (req, res) => {
         // Si SETUP_TOKEN está definido en el entorno, exígelo por header (blindaje en producción)
@@ -14,17 +25,17 @@ export default class AuthController {
                 throw ApiError.forbidden("SETUP_TOKEN inválido");
             }
         }
-        const data = await this.authService.setup(req.body);
-        res.cookie(AUTH_COOKIE, data.token, authCookieOptions());
+        const { token, ...data } = await this.authService.setup(req.body);
+        res.cookie(AUTH_COOKIE, token, authCookieOptions());
         res.status(201).json({ success: true, data });
     });
 
-    // El token se entrega en cookie httpOnly (front web) y también en el body
-    // (Postman/integraciones que usan Authorization: Bearer).
+    // La sesión web viaja SOLO en la cookie httpOnly: el JWT no se devuelve en el body (así un XSS o un log de respuestas no lo ve).
+    // El middleware sigue aceptando Authorization: Bearer para integraciones futuras (ver docs/AUTH_STRATEGY.md).
     login = asyncHandler(async (req, res) => {
         const { email, password } = req.body;
-        const data = await this.authService.login(email, password);
-        res.cookie(AUTH_COOKIE, data.token, authCookieOptions());
+        const { token, ...data } = await this.authService.login(email, password);
+        res.cookie(AUTH_COOKIE, token, authCookieOptions());
         res.json({ success: true, data });
     });
 

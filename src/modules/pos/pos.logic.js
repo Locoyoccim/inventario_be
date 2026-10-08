@@ -156,9 +156,66 @@ export function calcularCorte({ fondo = 0, filas = [], propinas_entregadas = 0, 
     };
 }
 
+// --- Corrección de pagos ya cobrados ---------------------------------------------------------------------------
+
+// Lo que entra al cajón por una lista de pagos: monto + propina en efectivo (el cambio ya salió).
+export const efectivoDePagos = (pagos) =>
+    aPesos(pagos.filter((p) => p.metodo === "EFECTIVO").reduce((s, p) => s + aCentavos(p.monto) + aCentavos(p.propina), 0));
+
+// Mismo reparto de métodos, montos, propinas y referencias (sin importar el orden): no hay nada que corregir.
+const firma = (pagos) =>
+    pagos.map((p) => `${p.metodo}|${aCentavos(p.monto)}|${aCentavos(p.propina)}|${p.referencia ?? ""}`).sort().join(";");
+export const mismosPagos = (a, b) => firma(a) === firma(b);
+
+// Cuánto cambió cada método (en pesos), cuántas cuentas pasan de uno a otro y cuánto efectivo entra de más o de menos.
+export function diferenciaPagos(antes, despues) {
+    const suma = (pagos, metodo, campo) => pagos.filter((p) => p.metodo === metodo).reduce((s, p) => s + aCentavos(p[campo]), 0);
+    return {
+        por_metodo: METODOS_PAGO.map((metodo) => ({
+            metodo,
+            cuentas: (despues.some((p) => p.metodo === metodo) ? 1 : 0) - (antes.some((p) => p.metodo === metodo) ? 1 : 0),
+            monto: aPesos(suma(despues, metodo, "monto") - suma(antes, metodo, "monto")),
+            propina: aPesos(suma(despues, metodo, "propina") - suma(antes, metodo, "propina")),
+        })),
+        efectivo: aPesos(aCentavos(efectivoDePagos(despues)) - aCentavos(efectivoDePagos(antes))),
+    };
+}
+
+// Un corte ya cerrado conserva sus cifras de cierre. Las correcciones hechas DESPUÉS del cierre (`turno_cerrado`)
+// se suman aparte para ver cómo quedó de verdad: ventas por método, efectivo esperado y diferencia contra lo contado.
+// Devuelve null si no hubo ninguna.
+export function aplicarCorrecciones(corte, contado, correcciones) {
+    const posteriores = correcciones.filter((c) => c.turno_cerrado);
+    if (posteriores.length === 0) return null;
+    const por = new Map(corte.por_metodo.map((m) => [m.metodo, { ...m }]));
+    let efectivoC = 0;
+    for (const c of posteriores) {
+        const d = diferenciaPagos(c.antes, c.despues);
+        for (const m of d.por_metodo) {
+            const x = por.get(m.metodo);
+            x.cuentas += m.cuentas;
+            x.monto = aPesos(aCentavos(x.monto) + aCentavos(m.monto));
+            x.propina = aPesos(aCentavos(x.propina) + aCentavos(m.propina));
+        }
+        efectivoC += aCentavos(d.efectivo);
+    }
+    const por_metodo = METODOS_PAGO.map((m) => por.get(m));
+    const sum = (campo) => por_metodo.reduce((s, m) => s + aCentavos(m[campo]), 0);
+    const ajustado = {
+        ...corte,
+        por_metodo,
+        ventas: aPesos(sum("monto")),
+        propinas: aPesos(sum("propina")),
+        efectivo_cobrado: aPesos(aCentavos(corte.efectivo_cobrado) + efectivoC),
+        efectivo_esperado: aPesos(aCentavos(corte.efectivo_esperado) + efectivoC),
+    };
+    return { corte: ajustado, diferencia: contado === null || contado === undefined ? null : diferenciaEfectivo(contado, ajustado.efectivo_esperado) };
+}
+
 export const diferenciaEfectivo = (contado, esperado) => aPesos(aCentavos(contado) - aCentavos(esperado));
 
-export function payloadCorte({ negocio, turno, cajero, corte, contado = null, diferencia = null, nota = null, ahora = new Date() }) {
+// `ajuste`: un corte cerrado reimpreso con correcciones de pago posteriores al cierre (cifras ya ajustadas + cómo cerró).
+export function payloadCorte({ negocio, turno, cajero, corte, contado = null, diferencia = null, nota = null, ajuste = null, ahora = new Date() }) {
     return {
         tipo: "CORTE",
         negocio,
@@ -178,6 +235,7 @@ export function payloadCorte({ negocio, turno, cajero, corte, contado = null, di
         contado,
         diferencia,
         nota,
+        ajuste,
     };
 }
 
@@ -188,7 +246,8 @@ export function agruparPorArea(items, areasPorId) {
     const sinComanda = [];
     for (const item of items) {
         const area = areasPorId.get(item.area_id);
-        if (!area || !area.imprime) {
+        // Hay comanda si el área imprime o muestra pantalla (la pantalla solo cuenta si la empresa la tiene activada).
+        if (!area || !(area.imprime || area.pantalla)) {
             sinComanda.push(item);
             continue;
         }
@@ -198,9 +257,10 @@ export function agruparPorArea(items, areasPorId) {
     return { comandas: [...imprimen.values()], sinComanda };
 }
 
-const lineaItem = (i) => ({ cantidad: Number(i.cantidad), nombre: i.nombre, notas: i.notas ?? null });
+// Cada renglón impreso lleva sus opciones elegidas («Medio», «Extra queso»); en la comanda también el comensal al que se le sirve.
+const lineaItem = (i) => ({ cantidad: Number(i.cantidad), nombre: i.nombre, notas: i.notas ?? null, opciones: (i.opciones ?? []).map((o) => o.nombre) });
 
-export function payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, items, ahora = new Date() }) {
+export function payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, items, tiempo = 1, ahora = new Date() }) {
     return {
         tipo: "COMANDA",
         negocio,
@@ -209,10 +269,14 @@ export function payloadComanda({ negocio, cuenta, mesa, mesero, numero, area, it
         comanda: numero,
         mesa: mesa?.nombre ?? null,
         llevar: cuenta.tipo === "LLEVAR" ? (cuenta.nombre_cliente ?? "Para llevar") : null,
+        // Nombre o referencia de una cuenta de mesa ("Fam. Hernández"); en las de llevar ya va en `llevar`.
+        cliente: cuenta.tipo === "MESA" ? (cuenta.nombre_cliente || null) : null,
         personas: cuenta.personas,
         mesero: mesero ?? null,
         fecha: ahora.toISOString(),
-        items: items.map(lineaItem),
+        // 1 = sale ahora; 2.º y siguientes se disparan después (la comanda lo anuncia en grande).
+        tiempo,
+        items: items.map((i) => ({ ...lineaItem(i), comensal: i.comensal ?? null })),
     };
 }
 
@@ -224,6 +288,8 @@ export function payloadPrecuenta({ negocio, cuenta, mesa, mesero, items, ahora =
         folio: cuenta.folio,
         mesa: mesa?.nombre ?? null,
         llevar: cuenta.tipo === "LLEVAR" ? (cuenta.nombre_cliente ?? "Para llevar") : null,
+        // Nombre o referencia de una cuenta de mesa ("Fam. Hernández"); en las de llevar ya va en `llevar`.
+        cliente: cuenta.tipo === "MESA" ? (cuenta.nombre_cliente || null) : null,
         personas: cuenta.personas,
         mesero: mesero ?? null,
         fecha: ahora.toISOString(),
@@ -242,6 +308,8 @@ export function payloadTicket({ negocio, cuenta, mesa, mesero, cajero, items, pa
         folio: cuenta.folio,
         mesa: mesa?.nombre ?? null,
         llevar: cuenta.tipo === "LLEVAR" ? (cuenta.nombre_cliente ?? "Para llevar") : null,
+        // Nombre o referencia de una cuenta de mesa ("Fam. Hernández"); en las de llevar ya va en `llevar`.
+        cliente: cuenta.tipo === "MESA" ? (cuenta.nombre_cliente || null) : null,
         personas: cuenta.personas,
         mesero: mesero ?? null,
         cajero: cajero ?? null,

@@ -57,6 +57,10 @@ export default class RecetaController {
         res.json({ success: true, data: await this.recetaService.previewCosteo(empresa_id, req.body) });
     });
 
+    detalle = asyncHandler(async (req, res) => {
+        res.json({ success: true, data: await this.recetaService.getDetalle(req.params.receta_id) });
+    });
+
     actualizar = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
         if (!(await this.recetaService.existsEmpresa(empresa_id)))

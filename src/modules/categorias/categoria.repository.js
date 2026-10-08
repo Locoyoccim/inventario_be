@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
+import { areaIdPorNombre, areaSugerida } from "../pos/pos.areas.js";
 
 const QUERIES = {
     LIST_ALL: `SELECT id, empresa_id, nombre, tipo, activo FROM categorias WHERE empresa_id = $1 ORDER BY nombre ASC`,
@@ -33,7 +34,12 @@ export default class CategoriaRepository {
         if (await this.#existeNombre(pool, empresa_id, nombre)) {
             throw ApiError.conflict("Ya existe una categoría con ese nombre");
         }
-        return (await pool.query(QUERIES.INSERT, [empresa_id, nombre, tipo])).rows[0];
+        const categoria = (await pool.query(QUERIES.INSERT, [empresa_id, nombre, tipo])).rows[0];
+        // Categoría de bebidas -> área "Barra" (si no, todo saldría a Cocina por defecto). Se puede cambiar en el POS.
+        const sugerida = areaSugerida(nombre);
+        const area_id = sugerida ? await areaIdPorNombre(pool, empresa_id, sugerida) : null;
+        if (area_id) await pool.query("UPDATE categorias SET area_id = $2 WHERE id = $1", [categoria.id, area_id]);
+        return { ...categoria, area_id };
     }
 
     // Renombra en cascada (productos + recetas) y/o cambia el tipo, en UNA transacción.

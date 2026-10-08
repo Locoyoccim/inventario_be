@@ -1,11 +1,12 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
+import { hoyEmpresa } from "../../utils/zonaHoraria.js";
 import { validarLineasConteo, resumirVarianza } from "./conteo.logic.js";
 
 const QUERIES = {
     INSERT_HEADER: `
         INSERT INTO conteo_fisico (empresa_id, fecha, usuario_id, motivo, estado)
-        VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4, 'CERRADO')
+        VALUES ($1, $2, $3, $4, 'CERRADO')
         RETURNING id, empresa_id, fecha, usuario_id, motivo, estado, created_at;`,
     // Lee stock teórico y costo, bloqueando la fila de inventario (FOR UPDATE OF i)
     LOCK_PRODUCTO: `
@@ -92,7 +93,7 @@ export default class ConteoRepository {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
-            const cab = (await client.query(QUERIES.INSERT_HEADER, [empresa_id, fecha, usuario_id, motivo])).rows[0];
+            const cab = (await client.query(QUERIES.INSERT_HEADER, [empresa_id, fecha ?? await hoyEmpresa(empresa_id, client), usuario_id, motivo])).rows[0];
 
             const detalle = [];
             // Bloqueo en orden por producto_id: evita deadlocks entre conteos concurrentes.
@@ -108,14 +109,20 @@ export default class ConteoRepository {
                 const prod = prodRes.rows[0];
                 if (!prod) throw ApiError.badRequest(`El producto ${producto_id} no existe o no tiene inventario en la empresa ${empresa_id}`);
 
-                const stockTeorico = Number(prod.stock_actual);
+                const stockActual = Number(prod.stock_actual);
+                // Sin base se compara contra la existencia de este momento. Con base (la de cuando se empezó a contar),
+                // la diferencia es contado - base y se aplica sobre la existencia actual: las ventas o compras hechas
+                // durante el conteo se conservan en lugar de aparecer como sobrante o faltante.
+                const base = l.stock_teorico_base;
+                const conBase = base !== undefined && base !== null && Number.isFinite(Number(base));
+                const stockTeorico = conBase ? Number(base) : stockActual;
                 const det = (await client.query(QUERIES.INSERT_DETALLE, [
                     cab.id, producto_id, stockTeorico, stockFisico, prod.costo_unitario,
                 ])).rows[0];
 
                 const variacion = Number(det.variacion);
                 let ajusteAplicado = false;
-                let stockNuevo = stockTeorico;
+                let stockNuevo = stockActual;
                 if (variacion !== 0) {
                     const mov = await this.movimientoRepository.aplicar(client, producto_id, empresa_id, {
                         tipo_movimiento: "AJUSTE",
@@ -124,7 +131,9 @@ export default class ConteoRepository {
                         motivo: `Conteo físico #${cab.id}${motivo ? " - " + motivo : ""}`,
                         referencia_tipo: "CONTEO",
                         referencia_id: cab.id,
-                    });
+                    // Si hubo movimiento durante el conteo, la existencia actual puede quedar bajo cero: es un desfase
+                    // del inventario que el ajuste deja a la vista, no un motivo para perder el conteo.
+                    }, { permitirNegativo: conBase && stockTeorico !== stockActual });
                     if (!mov) throw ApiError.notFound(`Producto ${producto_id} sin inventario`);
                     ajusteAplicado = true;
                     stockNuevo = Number(mov.stock_nuevo);
@@ -135,6 +144,7 @@ export default class ConteoRepository {
                     producto: prod.producto,
                     unidad_medida: prod.unidad_medida,
                     stock_teorico: stockTeorico,
+                    movimiento_durante_conteo: conBase ? Number((stockActual - stockTeorico).toFixed(3)) : 0,
                     stock_fisico: stockFisico,
                     variacion,
                     valor_variacion: Number(det.valor_variacion),

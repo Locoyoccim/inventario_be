@@ -9,10 +9,13 @@ const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(__dirname, "migrations");
 
+// Las migraciones las corre el rol MIGRADOR (dueño de los objetos): MIGRATE_DATABASE_URL. Sin ella se usa la conexión normal
+// (DATABASE_URL o DB_*), que solo sirve si ese rol es dueño de las tablas (desarrollo sin roles). Ver docs/DB_ROLES.md.
 function makePool() {
-    if (process.env.DATABASE_URL) {
+    const url = process.env.MIGRATE_DATABASE_URL || process.env.DATABASE_URL;
+    if (url) {
         return new Pool({
-            connectionString: process.env.DATABASE_URL,
+            connectionString: url,
             ssl: process.env.DB_SSL === "require" ? { rejectUnauthorized: false } : false,
         });
     }
@@ -110,5 +113,9 @@ try {
     }
 } catch (e) {
     console.error("Error de migración:", e.message);
+    // 42501 = privilegios insuficientes: casi siempre es correr las migraciones con el rol de la app en vez del migrador.
+    if (e.code === "42501" || /must be owner|permission denied/i.test(e.message)) {
+        console.error("Pista: las migraciones necesitan el rol migrador. Define MIGRATE_DATABASE_URL (ver docs/DB_ROLES.md).");
+    }
     process.exit(1);
 }

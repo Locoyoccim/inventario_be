@@ -1,12 +1,15 @@
 // Cargar .env ANTES que cualquier otro módulo: varios leen process.env al importarse
 // (app.js: CORS_ORIGINS/NODE_ENV). Los imports ESM se evalúan en orden.
 import "dotenv/config";
-import { validateEnv } from "./src/config/env.js";
+// Valida la configuración (secretos incluidos) antes de cargar la app y la base; aborta el arranque si es insegura.
+import "./src/config/validar-env.js";
 import app from "./src/app.js";
 import pool from "./src/config/db.js";
+import { cerrarEventos } from "./src/realtime/eventosPos.js";
+import { verificarRolDeAplicacion } from "./src/config/rolDb.js";
 
-// Aborta el arranque si la configuración crítica no es válida.
-validateEnv();
+// La app no debe conectarse como superusuario ni como dueña de las tablas (aborta en producción; avisa en desarrollo).
+await verificarRolDeAplicacion(pool);
 
 const PORT = process.env.PORT || 4000;
 
@@ -26,6 +29,8 @@ async function shutdown(signal) {
         process.exit(1);
     }, 10000);
     forzar.unref();
+    // Los flujos SSE no terminan solos: se cierran para que server.close() no espere.
+    await cerrarEventos();
     server.close(async () => {
         try {
             await pool.end();

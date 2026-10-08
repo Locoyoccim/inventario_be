@@ -8,6 +8,7 @@ const QUERIES = {
         SELECT e.id, e.nombre, e.activo, e.created_at,
                o.id AS owner_id, o.nombre AS owner_nombre, o.email AS owner_email,
                o.must_change_password AS owner_must_change_password,
+               (o.id IS NOT NULL AND o.password_hash IS NULL) AS owner_invitacion_pendiente,
                (SELECT COUNT(*)::int FROM usuarios u2 WHERE u2.empresa_id = e.id) AS usuarios_total
         FROM empresas e
         LEFT JOIN usuarios o ON o.empresa_id = e.id AND o.is_owner = true
@@ -31,6 +32,10 @@ const QUERIES = {
             (nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email, password_hash, must_change_password)
         VALUES ($1, $2, $3, true, true, $4, $5, $6, $7, true)
         RETURNING id, nombre, codigo_ingreso, puesto, is_admin, is_owner, role_id, empresa_id, email
+    `,
+    FIND_OWNER_DETALLE: `
+        SELECT u.id, u.nombre, u.email, u.password_hash, e.nombre AS empresa
+        FROM usuarios u JOIN empresas e ON e.id = u.empresa_id WHERE u.empresa_id = $1 AND u.is_owner = true LIMIT 1
     `,
     UPDATE_ESTADO: `UPDATE empresas SET activo = $2 WHERE id = $1 RETURNING id, nombre, activo`,
     FIND_OWNER: `SELECT id, empresa_id FROM usuarios WHERE empresa_id = $1 AND is_owner = true LIMIT 1`,
@@ -82,6 +87,10 @@ export default class PlatformRepository {
     async cambiarEstado(id, activo) {
         const result = await pool.query(QUERIES.UPDATE_ESTADO, [id, activo]);
         return result.rows[0];
+    }
+
+    async findOwnerDetalle(empresa_id) {
+        return (await pool.query(QUERIES.FIND_OWNER_DETALLE, [empresa_id])).rows[0];
     }
 
     async findOwner(empresa_id) {

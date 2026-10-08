@@ -1,5 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
+import { crearPoolMigrador } from "../helpers/migrador.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -11,7 +13,7 @@ if (DB) {
 describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { skip: SKIP }, () => {
     const A = 9411;
     const B = 9412;
-    let server, base, pool, signToken;
+    let server, base, pool, signToken, reiniciarPurga;
     let tokAdmin, tokMesero, tokCajero, tokSupervisor, tokHostess, tokAdminB;
     let m1, m2, m3, barra, sinComanda;
     let latte, baguette, pellegrino;
@@ -70,9 +72,8 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ reiniciarPurga } = await import("../../src/modules/pos/pos.cuentas.repository.js"));
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Café Test'), ($2,'Otra')", [A, B]);
@@ -158,7 +159,7 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         est.cuentaFlujo = c.id;
     });
 
-    it("enviar: una comanda por área (bebidas a Barra, alimentos a Cocina); 'Sin comanda' no imprime; sin impresora queda en ERROR", async () => {
+    it("enviar: una comanda por área (bebidas a Barra, alimentos a Cocina); 'Sin comanda' no imprime; sin impresora queda en SIN_IMPRESORA", async () => {
         const c = (await req("GET", api("/cuentas/" + est.cuentaFlujo), { token: tokMesero })).json.data;
         await agregar(c.id, [linea(pellegrino)]);
         const env = await req("POST", api(`/cuentas/${c.id}/enviar`), { token: tokMesero });
@@ -166,13 +167,29 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         const { comandas, sin_comanda, cuenta } = env.json.data;
         assert.deepEqual(comandas.map((x) => [x.area, x.renglones]).sort(), [["Barra", 1], ["Cocina", 1]]);
         assert.equal(sin_comanda, 1);
-        assert.ok(comandas.every((x) => x.impresion_estado === "ERROR"));
+        assert.ok(comandas.every((x) => x.impresion_estado === "SIN_IMPRESORA"));
         assert.ok(cuenta.items.every((i) => i.estado === "ENVIADO"));
         assert.equal(cuenta.items.filter((i) => i.comanda_id).length, 2);
 
         assert.equal((await req("POST", api(`/cuentas/${c.id}/enviar`), { token: tokMesero })).status, 400, "ya no hay nada por enviar");
-        const cola = (await req("GET", api("/impresiones?estado=ERROR"), { token: tokSupervisor })).json.data;
+        const cola = (await req("GET", api("/impresiones?estado=SIN_IMPRESORA"), { token: tokSupervisor })).json.data;
         assert.ok(cola.some((j) => j.error?.includes("Sin impresora configurada")));
+    });
+
+    it("sin impresora: el trabajo se obtiene y se marca impreso desde el navegador (una sola vez)", async () => {
+        const cola = (await req("GET", api("/impresiones?estado=SIN_IMPRESORA"), { token: tokSupervisor })).json.data;
+        const job = cola.find((j) => j.tipo === "COMANDA");
+        assert.ok(job, "hay una comanda sin impresora");
+        const det = await req("GET", api(`/impresiones/${job.id}`), { token: tokMesero });
+        assert.equal(det.status, 200);
+        assert.equal(det.json.data.payload.tipo, "COMANDA");
+        const est = (await req("GET", api("/impresion/estado"), { token: tokMesero })).json.data;
+        assert.ok(est.sin_impresora >= 1, "el estado cuenta los trabajos sin impresora");
+        const ok = await req("POST", api(`/impresiones/${job.id}/impreso-navegador`), { token: tokMesero });
+        assert.equal(ok.status, 200);
+        assert.equal(ok.json.data.estado, "IMPRESO");
+        assert.equal((await req("POST", api(`/impresiones/${job.id}/impreso-navegador`), { token: tokMesero })).status, 409, "ya impreso");
+        assert.equal((await req("GET", api("/impresiones/99999999"), { token: tokMesero })).status, 404);
     });
 
     it("el contenido de la comanda lleva mesa, mesero, número y notas, sin precios", async () => {
@@ -180,7 +197,8 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         assert.equal(job.mesa, "Mesa 1");
         assert.equal(job.comanda, 1);
         assert.ok(job.mesero);
-        assert.deepEqual(job.items, [{ cantidad: 3, nombre: "Latte", notas: null }]);
+        assert.deepEqual(job.items, [{ cantidad: 3, nombre: "Latte", notas: null, opciones: [], comensal: null }]);
+        assert.equal(job.tiempo, 1);
     });
 
     it("renglón enviado: no se edita; cancelarlo exige autorización y motivo", async () => {
@@ -230,7 +248,7 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         assert.equal(estado.agentes_conectados, 1);
 
         const jid = pend.json.data[0].id;
-        assert.equal(pend.json.data[0].reimpresiones, 0, "nunca se imprimió (estaba en ERROR sin impresora): su primera salida no es una copia");
+        assert.equal(pend.json.data[0].reimpresiones, 0, "nunca se imprimió (estaba SIN_IMPRESORA): su primera salida no es una copia");
         assert.equal((await req("POST", `/api/agente/impresiones/${jid}/resultado`, { token, body: { ok: true } })).json.data.estado, "IMPRESO");
         assert.equal((await req("POST", `/api/agente/impresiones/${jid}/resultado`, { token, body: { ok: true } })).status, 404, "ya no está en impresión");
 
@@ -308,6 +326,7 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         assert.equal(mesa2.cuentas.length, 2, "la mesa dividida muestra sus dos cuentas");
         assert.equal(mesa2.cuentas.reduce((s, c) => s + c.total, 0), 4 * PRECIO_LATTE + 2 * 120);
         assert.ok(mesa2.cuentas.every((c) => c.por_enviar > 0));
+        assert.ok(mesa2.cuentas.every((c) => Number.isInteger(c.mesero_id)), "el mapa trae el id del mesero (filtro Mías)");
         assert.equal(mapa.llevar.length, 1);
         assert.equal(mapa.llevar[0].nombre_cliente, "Luis");
         assert.equal(mapa.mesas.find((m) => m.id === m3).cuentas.length, 0, "Mesa 3 quedó libre al mover la cuenta");
@@ -327,13 +346,13 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         assert.equal((await req("POST", api(`/cuentas/${origen}/juntar`), { token: tokMesero, body: { destino_id: destino } })).status, 409, "una unida no se junta otra vez");
     });
 
-    it("precuenta: se encola para tickets con los totales; sin productos 400; sin impresora de tickets queda en ERROR", async () => {
+    it("precuenta: se encola para tickets con los totales; sin productos 400; sin impresora de tickets queda en SIN_IMPRESORA", async () => {
         const vacia = (await req("POST", api("/cuentas"), { token: tokMesero, body: { tipo: "LLEVAR" } })).json.data;
         assert.equal((await req("POST", api(`/cuentas/${vacia.id}/precuenta`), { token: tokMesero })).status, 400);
 
         const sin = await req("POST", api(`/cuentas/${est.cuentaMesa2}/precuenta`), { token: tokMesero });
         assert.equal(sin.status, 200);
-        assert.equal(sin.json.data.impresion_estado, "ERROR");
+        assert.equal(sin.json.data.impresion_estado, "SIN_IMPRESORA");
         assert.equal(sin.json.data.payload.totales.total, 4 * PRECIO_LATTE + 2 * 120);
 
         await req("POST", api("/impresoras"), { token: tokAdmin, body: { nombre: "Caja", conexion: "USB", nombre_usb: "EPSON TM-T20", es_ticket: true, ancho: 58 } });
@@ -380,13 +399,110 @@ describe("Integración HTTP — POS: mesas, cuentas, comandas e impresión", { s
         assert.equal(dos.items[0].cantidad, 4);
         const conNota = await agregar(c.id, [linea(latte, 1, "sin hielo")]);
         assert.equal(conNota.items.length, 2, "con notas no se mezcla");
-        const tope = await agregar(c.id, [linea(latte, 99)]);
-        assert.equal(tope.items.find((i) => !i.notas).cantidad, 99, "tope de 99 por renglón");
+        // El tope de 99 por renglón avisa en lugar de recortar en silencio, y no cambia lo ya capturado.
+        const pasado = await req("POST", api(`/cuentas/${c.id}/items`), { token: tokMesero, body: { lineas: [linea(latte, 99)] } });
+        assert.equal(pasado.status, 400);
+        assert.match(pasado.json.error, /máximo 99/);
+        assert.equal((await req("GET", api(`/cuentas/${c.id}`), { token: tokMesero })).json.data.items.find((i) => !i.notas).cantidad, 4);
+        const tope = await agregar(c.id, [linea(latte, 95)]);
+        assert.equal(tope.items.find((i) => !i.notas).cantidad, 99, "se puede llegar exactamente a 99");
         await req("POST", api(`/cuentas/${c.id}/enviar`), { token: tokMesero });
         const nuevo = await agregar(c.id, [linea(latte)]);
         assert.equal(nuevo.items.filter((i) => i.estado === "PENDIENTE").length, 1, "tras enviar, lo nuevo es otro renglón");
         assert.equal(nuevo.items.length, 3);
         await req("POST", api(`/cuentas/${c.id}/cancelar`), { token: tokSupervisor, body: { motivo: "prueba" } });
+    });
+
+    it("nombrar la cuenta y última actividad: se renombra y cambia personas; el mapa avisa cuándo fue lo último que se tocó", async () => {
+        const c = (await req("POST", api("/cuentas"), { token: tokMesero, body: { tipo: "LLEVAR", personas: 1, nombre_cliente: "Luis M." } })).json.data;
+        const mapa = async () => (await req("GET", api("/mapa"), { token: tokMesero })).json.data.llevar.find((x) => x.id === c.id);
+        const inicio = await mapa();
+        assert.ok(inicio.actualizada_at, "el mapa trae la última actividad");
+
+        await new Promise((r) => setTimeout(r, 30));
+        const r = await req("PATCH", api(`/cuentas/${c.id}`), { token: tokMesero, body: { nombre_cliente: "Sr. Herrera", personas: 4 } });
+        assert.equal(r.status, 200);
+        assert.equal(r.json.data.nombre_cliente, "Sr. Herrera");
+        assert.equal(r.json.data.personas, 4);
+        const trasNombre = await mapa();
+        assert.ok(new Date(trasNombre.actualizada_at) > new Date(inicio.actualizada_at), "renombrar cuenta como actividad");
+        assert.equal(trasNombre.abierta_at, inicio.abierta_at, "la hora de apertura no cambia");
+
+        await new Promise((r2) => setTimeout(r2, 30));
+        await agregar(c.id, [linea(latte)]);
+        const trasItem = await mapa();
+        assert.ok(new Date(trasItem.actualizada_at) > new Date(trasNombre.actualizada_at), "agregar un producto también cuenta");
+
+        // Vaciar el nombre lo quita; sin campos, 400; una cuenta ya cerrada no se edita; el hostess (solo lectura) no puede.
+        assert.equal((await req("PATCH", api(`/cuentas/${c.id}`), { token: tokMesero, body: { nombre_cliente: "" } })).json.data.nombre_cliente, null);
+        assert.equal((await req("PATCH", api(`/cuentas/${c.id}`), { token: tokMesero, body: {} })).status, 400);
+        assert.equal((await req("PATCH", api(`/cuentas/${c.id}`), { token: tokHostess, body: { personas: 2 } })).status, 403);
+        await req("POST", api(`/cuentas/${c.id}/cancelar`), { token: tokMesero, body: { motivo: "Prueba" } });
+        assert.equal((await req("PATCH", api(`/cuentas/${c.id}`), { token: tokMesero, body: { nombre_cliente: "x" } })).status, 409);
+    });
+
+    it("salir sin enviar: se descarta lo pendiente y, si la cuenta queda vacía, se borra y la mesa queda libre", async () => {
+        const mesa = (await req("POST", api("/mesas"), { token: tokAdmin, body: { nombre: "Mesa descarte", capacidad: 2 } })).json.data.id;
+        const libre = async () => (await req("GET", api("/mapa"), { token: tokMesero })).json.data.mesas.find((m) => m.id === mesa).cuentas.length === 0;
+
+        // 1) Abrir y salir sin tocar nada: la mesa queda libre y el folio se reutiliza.
+        const a = await abrir(mesa);
+        assert.equal(await libre(), false);
+        const d1 = await req("POST", api(`/cuentas/${a.id}/descartar`), { token: tokMesero });
+        assert.equal(d1.status, 200);
+        assert.equal(d1.json.data.eliminada, true);
+        assert.equal(await libre(), true);
+        assert.equal((await req("GET", api(`/cuentas/${a.id}`), { token: tokMesero })).status, 404);
+        const b = await abrir(mesa);
+        assert.equal(b.folio, a.folio, "el folio de una cuenta que nunca existió se devuelve");
+
+        // 2) Con productos sin enviar: también se borra todo.
+        await agregar(b.id, [linea(latte, 2), linea(baguette)]);
+        const d2 = await req("POST", api(`/cuentas/${b.id}/descartar`), { token: tokMesero });
+        assert.equal(d2.json.data.eliminada, true);
+        assert.equal(await libre(), true);
+
+        // 3) Con algo ya enviado: solo se descarta lo pendiente y la cuenta sigue abierta.
+        const c = await abrir(mesa);
+        await agregar(c.id, [linea(latte)]);
+        await req("POST", api(`/cuentas/${c.id}/enviar`), { token: tokMesero });
+        await agregar(c.id, [linea(baguette, 3)]);
+        const d3 = await req("POST", api(`/cuentas/${c.id}/descartar`), { token: tokMesero });
+        assert.equal(d3.json.data.eliminada, false);
+        assert.deepEqual(d3.json.data.cuenta.items.map((i) => [i.nombre, i.estado]), [["Latte", "ENVIADO"]]);
+        assert.equal(d3.json.data.cuenta.estado, "ABIERTA");
+        assert.equal(await libre(), false);
+
+        // Solo cuentas abiertas; el hostess (solo lectura) no puede.
+        assert.equal((await req("POST", api(`/cuentas/${c.id}/descartar`), { token: tokHostess })).status, 403);
+        await req("POST", api(`/cuentas/${c.id}/cancelar`), { token: tokAdmin, body: { motivo: "Prueba" } });
+        assert.equal((await req("POST", api(`/cuentas/${c.id}/descartar`), { token: tokMesero })).status, 409);
+    });
+
+    it("una cuenta vacía abandonada más de 30 minutos se libera sola al consultar el mapa; con productos no", async () => {
+        const mesa = (await req("POST", api("/mesas"), { token: tokAdmin, body: { nombre: "Mesa abandono", capacidad: 2 } })).json.data.id;
+        const vacia = await abrir(mesa);
+        const otra = (await req("POST", api("/mesas"), { token: tokAdmin, body: { nombre: "Mesa con producto", capacidad: 2 } })).json.data.id;
+        const conProducto = await abrir(otra);
+        await agregar(conProducto.id, [linea(latte)]);
+        // El trigger de actividad pisa la fecha: se apaga un momento para simular que pasó el tiempo.
+        // (ALTER TABLE es DDL: lo hace el rol migrador; la app corre con privilegios mínimos.)
+        const migrador = crearPoolMigrador();
+        try {
+            await migrador.query("ALTER TABLE pos_cuentas DISABLE TRIGGER pos_cuentas_actividad");
+            try {
+                await pool.query("UPDATE pos_cuentas SET actualizada_at = now() - interval '45 minutes' WHERE id = ANY($1)", [[vacia.id, conProducto.id]]);
+            } finally {
+                await migrador.query("ALTER TABLE pos_cuentas ENABLE TRIGGER pos_cuentas_actividad");
+            }
+        } finally {
+            await migrador.end();
+        }
+        reiniciarPurga(); // la revisión se hace a lo mucho una vez por minuto por empresa
+        const mapa = (await req("GET", api("/mapa"), { token: tokMesero })).json.data.mesas;
+        assert.equal(mapa.find((m) => m.id === mesa).cuentas.length, 0, "la vacía se liberó");
+        assert.equal(mapa.find((m) => m.id === otra).cuentas.length, 1, "la que tiene productos se queda");
+        assert.equal((await req("GET", api(`/cuentas/${vacia.id}`), { token: tokMesero })).status, 404);
     });
 
     it("aislamiento: una cuenta de otra empresa no se ve ni se toca, aunque se conozca su id", async () => {

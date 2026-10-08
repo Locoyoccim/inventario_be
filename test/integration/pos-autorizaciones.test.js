@@ -1,6 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 const DB = process.env.TEST_DATABASE_URL;
 const SKIP = !DB && "define TEST_DATABASE_URL para correrlo";
@@ -84,9 +85,7 @@ describe("Integración HTTP — POS: autorizaciones, descuentos y anulaciones", 
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Café Cobro'), ($2,'Otra')", [A, B]);
@@ -280,14 +279,14 @@ describe("Integración HTTP — POS: autorizaciones, descuentos y anulaciones", 
         // Mesas libres (las pruebas anteriores dejaron cuentas abiertas) y turno nuevo: se cierra el actual del cajero.
         await pool.query("UPDATE pos_cuentas SET estado = 'CANCELADA' WHERE empresa_id = $1 AND estado = 'ABIERTA'", [A]);
         const t0 = await turnoDe(tokCajero);
-        assert.equal((await req("POST", api(`/turnos/${t0.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 0, forzar: true } })).status, 200);
+        assert.equal((await req("POST", api(`/turnos/${t0.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 0 } })).status, 200);
         assert.equal((await abrirCaja(tokCajero, 100)).status, 201);
         const t1 = await turnoDe(tokCajero);
         const s1 = await cuentaLista([linea(latte), linea(baguette)]);
         await cobrar(s1, [{ metodo: "EFECTIVO", monto: 100 }, { metodo: "TARJETA", monto: 75 }]);
         const s2 = await cuentaLista([linea(latte)]);
         await cobrar(s2, [{ metodo: "EFECTIVO", monto: 55 }]);
-        const cierre = await req("POST", api(`/turnos/${t1.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 255, forzar: true } });
+        const cierre = await req("POST", api(`/turnos/${t1.id}/cerrar`), { token: tokCajero, body: { efectivo_contado: 255 } });
         assert.equal(cierre.status, 200, JSON.stringify(cierre.json));
         const cerradoAntes = (await req("GET", api(`/turnos/${t1.id}/corte`), { token: tokCajero })).json.data.corte;
         assert.equal(cerradoAntes.ventas, 230);

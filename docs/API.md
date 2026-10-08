@@ -9,7 +9,7 @@ API REST multiempresa (Node/Express + PostgreSQL) para café-restaurante: produc
 | URL base (local) | `http://localhost:4000` |
 | Prefijo | `/api` |
 | Formato | JSON (`Content-Type: application/json` en todo POST/PUT) |
-| Autenticación | **JWT** (7 días) en todo `/api/*` salvo `login`, `setup` y `logout`. Dos vías: header `Authorization: Bearer <token>` (Postman/integraciones) o cookie httpOnly `gh_session` (front web). Con cookie, POST/PUT/DELETE exigen el header `X-Requested-With` (anti-CSRF) o responden `403` |
+| Autenticación | **JWT** (7 días) en todo `/api/*` salvo `login`, `setup` y `logout`. Sesión web: cookie httpOnly `gh_session` (**el JWT nunca viaja en el body**). El middleware también acepta `Authorization: Bearer <jwt>` (pruebas, Postman; no hay API tokens para terceros todavía). Con cookie, POST/PUT/DELETE exigen el header `X-Requested-With` (anti-CSRF) o responden `403`. Ver `docs/AUTH_STRATEGY.md` |
 | Multiempresa | cada recurso cuelga de `:empresa_id`; el token debe corresponder a esa empresa o responde `403` |
 
 ### Seguridad de borde
@@ -66,13 +66,16 @@ Crea el **primer** usuario (owner/admin). Solo funciona si no existe ningún usu
 ```json
 { "empresa_id": 4, "nombre": "Carlos", "email": "carlos@aroma.mx", "password": "min6chars", "codigo_ingreso": "0001", "puesto": "Dueño", "role_id": 1 }
 ```
-Respuesta: `{ "token": "...", "user": { } }`.
+Respuesta: `{ "user": { } }` y `Set-Cookie: gh_session=<jwt>; HttpOnly` (sin `token` en el body).
+
+### `GET /api/auth/invitacion/:token` · `POST /api/auth/invitacion`
+Activación de cuenta por **enlace de invitación** (públicas; las autoriza el token de un solo uso). `GET` valida el enlace y devuelve `{ nombre, email, empresa }` (`404` si ya se usó, venció o no existe). `POST { "token": "...", "password": "mín. 8 caracteres" }` define la contraseña, consume el enlace en la misma operación atómica, revoca sesiones anteriores y deja `must_change_password = false`; después se inicia sesión con `POST /auth/login`. Con el mismo límite de intentos que el login.
 
 ### `POST /api/auth/login`
 ```json
 { "email": "carlos@aroma.mx", "password": "..." }
 ```
-Respuesta: `{ "token": "...", "user": { } }` y además `Set-Cookie: gh_session=<token>; HttpOnly; SameSite=Lax`. El token dura **7 días** (config `JWT_EXPIRES`). El front web ignora el `token` del body y usa la cookie (enviar peticiones con `credentials: include` / `withCredentials`).
+Respuesta: `{ "user": { …, "permisos": [ ] } }` y `Set-Cookie: gh_session=<jwt>; HttpOnly; SameSite=Lax`. **El body no incluye el token** (cambio de la Fase 2: antes lo devolvía además de la cookie; nadie lo usaba salvo Postman). La sesión dura **7 días** (config `JWT_EXPIRES`). Enviar peticiones con `credentials: include` / `withCredentials`. Para probar con Postman: la colección guarda el JWT leído de `Set-Cookie` (ver `AUTH_STRATEGY.md` §8).
 
 El correo se compara sin distinguir mayúsculas ni espacios (`lower(trim(email))`), y se guarda en minúsculas al crear usuarios. Si un usuario no puede entrar: `LOGIN_PASSWORD='clave' npm run diagnosticar:login -- correo@dominio.com`.
 
@@ -85,11 +88,35 @@ Requiere sesión. Sube la `token_version` del usuario → **revoca todas** sus s
 ### `GET /api/auth/me`
 Con Bearer o cookie → devuelve el perfil actual desde BD: `{ id, nombre, email, empresa_id, is_admin, is_owner }` (mismo formato que `user` en login). Pasa por `requireActiveUser`: `401` si el usuario ya no existe, está desactivado o su sesión fue revocada (`logout-all`).
 
+### Ingreso con PIN en equipos registrados
+El personal operativo (mesero, cajero, cocina) entra con un **PIN de 4 a 6 dígitos** desde un **equipo registrado** (el celular o la tablet del local). El PIN solo sirve ahí: sin la cookie del equipo no hay ingreso con PIN. **No aplica a dueño ni administradores**, que siguen con correo y contraseña.
+
+Flujo: un Admin registra el equipo y obtiene un **código de un solo uso** (`XXXX-XXXX`, vale 15 min, sin 0/O/1/I; solo se guarda su hash) → se escribe en el equipo → el servidor entrega la cookie `gh_device` (httpOnly, `Path=/api/auth`, 400 días; solo se guarda el hash del token) → en ese equipo el personal toca su nombre y teclea su PIN.
+
+- `POST /api/auth/dispositivo/registrar` — público (con límite de intentos y header `X-Requested-With`). `{ "codigo": "ABCD-2345" }` → `{ "nombre" }` + `Set-Cookie: gh_device`. El código se consume al usarse (`400` si no existe, ya se usó o venció).
+- `GET /api/auth/dispositivo/personal` — con la cookie del equipo: `{ dispositivo: { id, nombre }, personal: [{ id, nombre, puesto }] }` (solo activos con PIN y que no son administradores). `401` si el equipo no está registrado o fue revocado (y borra la cookie).
+- `POST /api/auth/pin` — con la cookie del equipo y `X-Requested-With`. `{ "usuario_id", "pin" }` → `{ user }` + `Set-Cookie: gh_session` **de turno** (`PIN_SESSION_EXPIRES`, 12 h por defecto; el token no viaja en el body). Un PIN incorrecto, una persona sin PIN, un administrador o alguien de otra empresa responden igual: `401 PIN incorrecto`.
+
+**Bloqueos** (contadores en `pin_fallos`): 5 fallos del mismo usuario en el mismo equipo (ventana de 15 min), 15 del equipo o 30 de la IP → `429` con `details.espera_seg` (5 min desde el último intento, aunque el PIN sea el bueno). 10 fallos de un usuario en una hora (en cualquier equipo) lo **bloquean** (`pin_bloqueado`): solo un Admin lo quita.
+
+**Límites de una sesión de PIN:** el JWT lleva `pin: true` y el equipo (`disp`). No es Admin aunque la persona lo sea (`requireAdmin`, `requirePermiso` y plataforma la rechazan con `403`); **no autoriza** descuentos/cancelaciones por sí misma (el supervisor lo confirma con correo y contraseña en el cuerpo); y deja de valer al revocar el equipo, quitar el PIN, desactivar a la persona o ascenderla a Admin (`401`, hasta 1 min por la caché).
+
+Administración *(Admin; nunca desde una sesión de PIN)*:
+- `GET /api/dispositivos/:empresa_id` — equipos con `estado` (`PENDIENTE`, `CODIGO_VENCIDO`, `ACTIVO`, `ACTIVO_CON_CODIGO`, `REVOCADO`), `ultimo_uso`. Nunca salen hashes.
+- `POST /api/dispositivos/:empresa_id` — `{ "nombre" }` → `{ dispositivo, codigo, vigencia_min }` (el código solo se ve aquí). `PUT .../:id` renombra.
+- `POST /api/dispositivos/:empresa_id/:id/codigo` — código nuevo para re-registrar el equipo (cambio de teléfono); al canjearlo, el token anterior deja de valer.
+- `POST /api/dispositivos/:empresa_id/:id/revocar` — no borra: queda como `REVOCADO` y sus sesiones de PIN dejan de valer.
+- `PUT /api/usuarios/:empresa_id/:id/pin` — `{ "pin" }` (4–6 dígitos; se rechazan `0000` y secuencias como `1234`). `400` para administradores. Se guarda `bcrypt(HMAC(pimienta, id:pin))`; la pimienta es `PIN_PEPPER` (o `JWT_SECRET`). Limpia el bloqueo.
+- `DELETE /api/usuarios/:empresa_id/:id/pin` — quita el PIN y **cierra las sesiones** de esa persona. `POST .../pin/desbloquear` quita el bloqueo y los contadores.
+- `GET /api/usuarios/:empresa_id` agrega `tiene_pin` y `pin_bloqueado` (nunca el hash).
+
+En despliegue con el front en otro dominio, la cookie del equipo usa las mismas opciones que la de sesión (`COOKIE_SAMESITE=none` + HTTPS).
+
 ### Roles: Admin vs Operativo (+ permisos granulares)
 Cada usuario es **Admin** (`is_owner` o `is_admin` = true) u **Operativo** (lo demás).
 - **Admin**: acceso total.
 - **Operativo**: siempre puede **leer** todo (productos, inventario, recetas, reportes, categorías). Para **crear** (compras, conteos, producción, gastos, ingresos) depende de su **rol** (`usuarios.role_id` → catálogo en `GET /api/roles/:empresa_id`): cada rol trae una lista de `permisos` (claves `compras.crear`, `conteos.crear`, `produccion.crear`, `gastos.crear`, `ingresos.crear`). Sin `role_id` asignado, un Operativo se trata como el rol "Operativo completo" (todas esas claves) — compatibilidad con usuarios creados antes de que existiera este sistema. Falta de permiso para la acción → `403 "Tu rol no tiene permiso para esta acción"`.
-- Un Operativo NO puede crear/editar productos, recetas, costos, proveedores, usuarios, pos-map ni categorías, ni revertir ventas, sin importar su rol → `403`.
+- Un Operativo NO puede crear/editar productos, recetas, costos, proveedores, usuarios ni categorías, sin importar su rol → `403`.
 - Un usuario **desactivado** (`activo: false`) no puede iniciar sesión (`403`) y sus tokens vigentes dejan de servir (`401`, a más tardar en 1 minuto).
 
 Un Admin crea usuarios Operativo con `POST /api/usuarios/:empresa_id` incluyendo `email` + `password`, `is_admin`/`is_owner` en `false` y, opcionalmente, `role_id`.
@@ -111,13 +138,9 @@ El rol **Mesero** no tiene ningún permiso hoy: es un lugar reservado para cuand
 ---
 
 ## Empresas
-- `GET /api/empresas` — lista (solo la propia)
-- `GET /api/empresas/:id`
-- `POST /api/empresas` *(plataforma)* — crea un tenant nuevo; exige el header `x-platform-token: <PLATFORM_TOKEN>` (sin esa variable, el endpoint queda cerrado). `{ "nombre", "titular?", "telefono?", "email?", "domicilio?" }`
-- `PUT /api/empresas/:id` *(owner/admin)*
-- `DELETE /api/empresas/:id` *(solo dueño)* — borra la empresa (en cascada); requiere `is_owner`.
-- `GET /api/empresas/:id/configuracion` — `{ iva_pct, precios_incluyen_iva, food_cost_objetivo }` (cualquier usuario de la empresa).
-- `PUT /api/empresas/:id/configuracion` *(owner/admin)* — campos opcionales (`iva_pct`, `precios_incluyen_iva`, `food_cost_objetivo`). Cambiar el IVA de la empresa **no** modifica recetas existentes; solo aplica a las nuevas. Con `?aplicar_a_recetas=true` propaga el IVA a **todas** las recetas y responde `recetas_actualizadas`. (migración 018)
+El alta, baja y datos generales de las empresas son del usuario maestro de plataforma (`/api/platform/empresas`). Cada empresa solo consulta y ajusta su propia configuración:
+- `GET /api/empresas/:id/configuracion` — `{ iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria }` (cualquier usuario de la empresa).
+- `PUT /api/empresas/:id/configuracion` *(owner/admin)* — campos opcionales (`iva_pct`, `precios_incluyen_iva`, `food_cost_objetivo`, `zona_horaria`). La **zona horaria** (nombre IANA, por defecto `America/Mexico_City`, validada contra Postgres) decide qué día es «hoy» y a qué día pertenece cada movimiento en Finanzas, Reportes y Kardex, sin depender de la zona del servidor (migración 038). Cambiar el IVA de la empresa **no** modifica recetas existentes; solo aplica a las nuevas. Con `?aplicar_a_recetas=true` propaga el IVA a **todas** las recetas y responde `recetas_actualizadas`. (migración 018)
 
 ## Plataforma (administración de tenants)
 
@@ -127,21 +150,22 @@ Nivel aparte de Admin/Operativo: exige `usuarios.is_platform_admin = true` (`req
 - `POST /api/platform/empresas` — crea una empresa nueva **y** su usuario dueño (Owner) en una transacción, en sustitución de `/auth/setup` (que solo sirve una vez, para el primer usuario de toda la base):
 ```json
 { "empresa": { "nombre": "Café Aroma", "titular?": "...", "telefono?": "...", "email?": "...", "domicilio?": "..." },
-  "owner": { "nombre": "Carlos", "email": "carlos@aroma.mx", "password": "min6chars", "codigo_ingreso": "0001", "puesto?": "Dueño" } }
+  "owner": { "nombre": "Carlos", "email": "carlos@aroma.mx", "password?": "min6chars", "codigo_ingreso": "0001", "puesto?": "Dueño" } }
 ```
+  **Invitación por correo (recomendado):** si se omite `owner.password`, el Owner nace sin contraseña (no puede entrar) y recibe un correo con un enlace de **un solo uso, válido 7 días**, para definir la suya; quien da de alta la empresa nunca conoce ni transmite una contraseña. La respuesta incluye `invitacion: { enviada, expira_at, motivo?, url? }`; si el correo no salió (SMTP sin configurar o con error) `enviada` es `false` y `url` trae el enlace para entregarlo a mano. Con `password` se conserva el flujo anterior (contraseña temporal + cambio obligatorio). Configuración SMTP en `.env.example` (`SMTP_URL` o `SMTP_*`, `MAIL_FROM`, `APP_URL`). Migración 041 (`usuario_tokens`: solo se guarda el hash del token).
+- `POST /api/platform/empresas/:id/reenviar-invitacion` — nuevo enlace para un Owner que aún no activa su cuenta (anula el anterior). `409` si ya definió su contraseña. `GET /platform/empresas` trae `owner_invitacion_pendiente`.
 - `PATCH /api/platform/empresas/:id/estado` — `{ "activo": true|false }`. Una empresa desactivada bloquea el login de todos sus usuarios (`401 "La empresa fue desactivada..."`, vía `requireActiveUser`).
 - `POST /api/platform/empresas/:id/resetear-password` — `{ "password": "min6chars" }`. Fija directamente la contraseña del dueño de esa empresa, para soporte cuando pierde acceso.
 
 ## Usuarios
-- `GET /api/usuarios/:empresa_id` · `GET /api/usuarios/:empresa_id/:id`
+- `GET /api/usuarios/:empresa_id`
 - Cada usuario trae `email`, `activo`, `role_id` y `rol`.
 - `POST /api/usuarios/:empresa_id` *(Admin)* — `{ "nombre", "codigo_ingreso", "puesto?", "role_id?", "is_admin?", "email?", "password?" }`
 - `PUT /api/usuarios/:empresa_id/:id` *(Admin)* — `nombre` y `codigo_ingreso` requeridos; el resto es opcional y **lo que no se envía se conserva**: `puesto`, `is_admin`, `role_id`, `email`, `password` (se hashea), `activo` y `forzar_cierre_sesion` (revoca las sesiones vigentes del usuario). `is_owner` no se cambia por API. Nadie puede desactivarse ni quitarse Admin a sí mismo, y al dueño no se le desactiva ni se le quita Admin (`400`).
-- `DELETE /api/usuarios/:empresa_id/:id` *(Admin)* — borrado físico; para conservar historial usa `activo: false`.
 
 ## Proveedores
 Cada proveedor trae `activo`. El borrado es **lógico** (soft-delete): nunca se elimina físicamente, para conservar el historial de compras y productos.
-- `GET /api/proveedores/:empresa_id` — solo **activos** por defecto; `?incluir_inactivos=true` incluye los desactivados. `GET /api/proveedores/:empresa_id/:id`.
+- `GET /api/proveedores/:empresa_id` — solo **activos** por defecto; `?incluir_inactivos=true` incluye los desactivados. 
 - `POST /api/proveedores/:empresa_id` — `{ "nombre", "telefono?", "email?", "domicilio?" }`
 - `PUT /api/proveedores/:empresa_id/:id` — mismos campos; acepta `"activo": true` para **reactivar** un proveedor desactivado.
 - `DELETE /api/proveedores/:empresa_id/:id` — **desactiva** (`activo=false`) y devuelve el proveedor.
@@ -196,9 +220,6 @@ Si cambia el costo **o la merma**, las recetas que usan el producto se recalcula
 ### `GET /api/productos/:empresa_id/:id/uso`
 Dónde se usa el producto, para decidir antes de desactivarlo. Respuesta: `{ recetas: [{ id, nombre }], mapeos_pos: [{ id, nombre_pos }] }` — recetas que lo incluyen como ingrediente y mapeos POS tipo `INSUMO` que apuntan a él. Producto inexistente en la empresa → `404`.
 
-## Inventario (solo lectura)
-- `GET /api/inventario/:empresa_id` · `GET /api/inventario/:empresa_id/:id`
-
 ## Movimientos de inventario
 - `GET /api/movimientos/:empresa_id` — **kardex de la empresa**, paginado. Filtros: `?producto_id=`, `?tipo=COMPRA|VENTA|MERMA|AJUSTE|DEVOLUCION|PRODUCCION`, `?desde=YYYY-MM-DD`, `?hasta=YYYY-MM-DD`, `?sentido=entrada|salida`. Cada fila trae `producto`, `unidad_medida` y `usuario`.
 - `GET /api/productos/:empresa_id/:id/movimientos` — historial paginado del producto
@@ -223,9 +244,9 @@ Campos: `nombre, categoria, precio_venta, costo_produccion?, proteccion_pct?, in
 Filtros: `?q=`, `?categoria=`, `?incluir_inactivos=true`.
 
 ### `GET /api/recetas/:empresa_id/ventas?desde=&hasta=` *(Admin)*
-Mezcla de ventas por receta y **costo % ponderado** (ingeniería de menú), agregando `venta_diaria` + `venta_diaria_detalle`. Por defecto, los últimos 30 días hasta ayer. Valida `desde <= hasta` y rango ≤ 366 días (mismos mensajes que `finanzas/resumen`; `400` con `details`). Solo cuenta líneas `tipo='RECETA'`; los días revertidos ya no existen (CASCADE). El `costo_teorico` usa el **costo vigente** de la receta (no el histórico). Por receta: `unidades`, `ingreso` (precio capturado, normalmente con IVA), `ingreso_neto` (sin IVA cuando `precio_incluye_iva`), `costo_teorico` = `unidades × costo_total`, `costo_pct` = `costo_teorico / ingreso_neto × 100` (null si neto 0) y `utilidad`. Ordenadas por `unidades` desc (incluye inactivas si se vendieron). `totales.costo_pct` es el ponderado (Σcosto_teorico / Σingreso_neto). `sin_receta: { lineas, unidades }` = líneas `SIN_MAPEO`/`INSUMO` que quedan fuera. Sin días importados → `recetas: []`, totales en 0, `costo_pct: null`, `dias_importados: 0`.
+Mezcla de ventas por receta y **costo % ponderado** (ingeniería de menú), agregando las cuentas cobradas en el POS **y el historial de ventas ya importadas del CSV de Toteat (`venta_diaria` + `venta_diaria_detalle`, que se conserva; la importación se retiró)** (`pos_cuentas` `PAGADA` + `pos_cuenta_items` no cancelados). En los renglones del POS `ingreso` es lo cobrado (con descuento; la cortesía suma unidades pero no ingreso) y el IVA sigue el precio congelado del renglón. Por defecto, los últimos 30 días hasta ayer. Valida `desde <= hasta` y rango ≤ 366 días (mismos mensajes que `finanzas/resumen`; `400` con `details`). Solo cuenta líneas `tipo='RECETA'`; los días revertidos ya no existen (CASCADE). El `costo_teorico` usa el **costo vigente** de la receta (no el histórico). Por receta: `unidades`, `ingreso` (precio capturado, normalmente con IVA), `ingreso_neto` (sin IVA cuando `precio_incluye_iva`), `costo_teorico` = `unidades × costo_total`, `costo_pct` = `costo_teorico / ingreso_neto × 100` (null si neto 0) y `utilidad`. Ordenadas por `unidades` desc (incluye inactivas si se vendieron). `totales.costo_pct` es el ponderado (Σcosto_teorico / Σingreso_neto). `sin_receta: { lineas, unidades }` = líneas `SIN_MAPEO`/`INSUMO` que quedan fuera. Sin días importados → `recetas: []`, totales en 0, `costo_pct: null`, `dias_importados: 0`. `dias_importados` cuenta los días con ventas (CSV o POS); `dias_pos` cuántos de ellos se cobraron en el POS. `sin_receta` incluye también los renglones del POS que son producto (no receta).
 ```json
-{ "periodo": { "desde": "2026-08-27", "hasta": "2026-09-25" }, "dias_importados": 24,
+{ "periodo": { "desde": "2026-08-27", "hasta": "2026-09-25" }, "dias_importados": 24, "dias_pos": 9,
   "recetas": [ { "receta_id": 12, "nombre": "Latte", "categoria": "Bebidas", "es_preparacion": false, "activo": true,
     "unidades": 310, "ingreso": 15500.00, "ingreso_neto": 13362.07, "costo_teorico": 1550.00, "costo_pct": 11.60, "utilidad": 11812.07 } ],
   "totales": { "unidades": 820, "ingreso": 52000.00, "ingreso_neto": 44827.59, "costo_teorico": 12100.00, "costo_pct": 26.99, "utilidad": 32727.59 },
@@ -259,16 +280,11 @@ Body: `nombre`, `categoria`, `precio_venta`, opcionales `activo`, `costo_producc
 - Una preparación no puede llevarse a sí misma como ingrediente → `400`. `es_preparacion` y `unidad` no se editan aquí.
 - **`rendimiento`** (solo en preparaciones, `es_preparacion = true`): editable. Al cambiarlo, el backend recalcula `costo_total` de esa receta (el costo por unidad del elaborado cambia porque se reparte entre más o menos unidades) y dispara la misma **cascada de costos** hacia cualquier receta que use ese elaborado como ingrediente. La respuesta agrega `recetas_actualizadas` (cuántas recetas recibieron el recosteo).
 
+### `GET /api/recetas/:receta_id/detalle`
+Ingredientes de la receta (`producto`, `unidad_medida`, `cantidad`, `costo_unitario`, `costo_final`). El guard de `:receta_id` exige que la receta sea de la empresa del token (`403` si no, `404` si no existe). Los ingredientes se editan con `PUT /api/recetas/:empresa_id/:id` (`ingredientes[]` reemplaza el escandallo completo).
+
 ### Cascada de costos
 Cuando cambia el costo o la **merma** de un insumo (compra, `PUT` de producto) o el costo de una preparación (su receta cambió), se refresca `receta_detalle.costo_unitario` (= **costo útil**) de las recetas que lo usan y se recalcula su `costo_total`; si esas recetas son preparaciones, la cascada continúa (con protección contra ciclos).
-
-## Detalle de receta (ingredientes)
-- `GET /api/recetas/:receta_id/detalle` · `GET .../detalle/:id`
-- `POST /api/recetas/:receta_id/detalle` — `{ "producto_id": 7, "cantidad": 200 }`
-- `PUT .../detalle/:id` · `DELETE .../detalle/:id`
-- Cada renglón trae `producto_id`, `producto`, `unidad_medida`, `es_elaborado`, `cantidad`, `costo_unitario` (costo del insumo al guardar el renglón) y `costo_final`.
-
----
 
 ## Producción (preparaciones)
 
@@ -331,6 +347,14 @@ En un pedido aún no recibido, las líneas vienen de `compra_detalle` (no hay mo
 - Sobre un **pedido** (`estado=PEDIDO`) sin recibir: solo marca `anulado=true` (no hay movimientos que revertir — equivale a "cancelar pedido").
 - Las compras anuladas se excluyen del libro de finanzas. Idempotente: reintentar sobre una compra ya anulada → `409`.
 
+## Análisis del negocio *(solo Admin)*
+
+Tres lecturas de lo **cobrado en el POS** dentro de un periodo. Todas aceptan `?desde=YYYY-MM-DD&hasta=YYYY-MM-DD` (por defecto, los últimos 30 días contados desde el «hoy» de la empresa; máximo 366 días; `400` si el rango es inválido) y cuelgan de `/api/analisis/:empresa_id`. Otro rol → `403`.
+
+- `GET /menu` — **ingeniería de menú** (método de Kasavana y Smith). Por cada receta o producto vendido: `unidades`, `ventas_netas` (sin IVA, ya con descuentos y cortesías), `costo` (costo actual de la receta × unidades), `margen`, `margen_unitario`, `food_cost_pct`, `popularidad_pct` y `clase`: **estrella** (popular + margen alto), **popular** (vende mucho, deja poco), **oportunidad** (deja mucho, se pide poco) o **revisar**. *Popular* = su parte de las unidades llega al 70 % de lo que le tocaría en un reparto parejo (`referencias.popularidad_minima_pct`); *margen alto* = su margen por unidad iguala o supera el promedio del menú (`referencias.margen_unitario_promedio`). Un artículo sin costo (`sin_costo: true`) no se clasifica ni mueve los promedios. `precio_sugerido` aparece solo si su costo de alimentos hoy pasa el objetivo de la empresa (`empresas.food_cost_objetivo`): es el precio de lista que lo llevaría al objetivo. `suficiente: false` con menos de 4 artículos medibles. `sin_ventas` lista las recetas activas con precio que no se vendieron.
+- `GET /consumo` — **costo teórico contra real por insumo**. `teorico_*` = movimientos `VENTA` menos las `DEVOLUCION` por anulación de ventas; `merma_*` = movimientos `MERMA` (incluye la de cancelaciones del POS); `diferencia_conteo_*` = ajustes de conteo físico con signo (negativo = faltante); `perdida_valor` = merma − diferencia de conteo (un sobrante la compensa); `desviacion_pct` = pérdida ÷ teórico; `nivel` = `ok | bajo | medio (≥5 %) | alto (≥10 %) | sin_ventas`. Un insumo sin conteo en el periodo trae `contado_en_periodo: false` (no se puede medir su faltante) y `totales.sin_conteo_*` lo suma. `serie` agrupa teórico y pérdida por semana (por mes si el rango pasa de 120 días). Los ajustes de compras anuladas no cuentan como pérdida; los ajustes manuales se reportan aparte (`ajuste_manual_valor`).
+- `GET /fugas` — **control de fugas** a partir de `pos_autorizaciones`: totales y `por_tipo` (descuentos, cortesías, productos y cuentas cancelados, ventas anuladas; corregir un pago y quitar un descuento se cuentan pero **no suman dinero**), `por_usuario` (quien hizo la acción; si el supervisor la hizo directo, él), `por_autorizador` y los `recientes`. Cada persona trae `ventas` (cuentas cobradas donde fue mesero o cobró) y `pct_ventas`; `atipico: true` con al menos 3 eventos y un `pct_ventas` de 2 veces o más el del negocio. `merma_cancelaciones` suma lo cancelado «ya preparado».
+
 ## Conteo físico (varianza y reconciliación)
 
 ### `GET /api/conteos/:empresa_id/plantilla`
@@ -340,37 +364,17 @@ Productos con su stock teórico actual, para llenar el conteo.
 Calcula varianza vs. teórico y reconcilia el inventario con `AJUSTE` (transacción):
 ```json
 { "fecha?": "2026-09-21", "motivo?": "Corte semanal",
-  "lineas": [ { "producto_id": 1, "stock_fisico": 4850 } ] }
+  "lineas": [ { "producto_id": 1, "stock_fisico": 4850, "stock_teorico_base?": 5000 } ] }
 ```
+`stock_teorico_base` (opcional) es la existencia que el sistema tenía **al empezar a contar** (la de la plantilla). Con ella la varianza es `contado − base` y se aplica sobre la existencia actual: lo vendido o recibido mientras se contaba se conserva en lugar de aparecer como faltante o sobrante (si la existencia actual no alcanza para cubrirlo, queda en negativo en vez de perder el conteo). Sin base se compara contra la existencia del momento de guardar. `fecha` omitida = el día de hoy **en la zona horaria de la empresa**. Cada línea de `data.detalle` trae `movimiento_durante_conteo` (actual − base).
 Respuesta: `data.detalle` (varianza y valor por producto) + `data.resumen` (`valor_merma`, `valor_sobrante`, `valor_neto`).
 - `GET /api/conteos/:empresa_id` · `GET /api/conteos/:empresa_id/:id`
 - `POST /api/conteos/:empresa_id/:id/anular` *(Admin)* — `{ "motivo": "..." }`. Revierte cada línea con un `AJUSTE` de signo contrario a la varianza aplicada (`referencia_tipo=CONTEO_ANULADO`) y marca `anulado=true`. Mismo patrón de bloqueo de fila e idempotencia que compras/producción: reintentar sobre un conteo ya anulado → `409`.
 
-## Ventas (importación diaria del POS)
-
-### PosMap — mapea nombres del reporte a recetas/insumos
-- `GET /api/pos-map/:empresa_id`
-- `POST /api/pos-map/:empresa_id` — `{ "nombre_pos": "Chilaquiles Verdes", "tipo": "RECETA|INSUMO|IGNORAR", "receta_id?": 2, "producto_id?": null, "factor?": 1 }`
-- `POST /api/pos-map/:empresa_id/bulk` — arreglo de mapeos (devuelve los creados) · `PUT` · `DELETE`. `receta_id`/`producto_id` deben ser de la misma empresa, o `400`.
-
-### Importar ventas
-- `POST /api/ventas/:empresa_id/importar`
-```json
-{ "fecha": "2026-09-20", "lineas": [ { "nombre_pos": "Chilaquiles Verdes", "cantidad": 4 } ] }
-```
-También acepta `"csv": "<reporte Toteat crudo>"`. Explota recetas a insumos y descuenta stock. Reimportar el mismo día → `409` (revierte primero).
-
-**Descuento en bruto (merma):** las recetas se capturan en **neto** (lo que va al plato); al descontar inventario, cada insumo con `merma_pct` se descuenta en **bruto** = `neto / (1 − merma/100)`, redondeado a 3 decimales (ej. 100 g netos con 8% → 108.696 g). Aplica a importar/preview de ventas, auto-producción y `produccion`. Los mapeos POS tipo **INSUMO** se descuentan tal cual (sin merma); compras y conteo siguen en bruto. El movimiento usa el costo **bruto**, así el valor cuadra (bruto × costo bruto = neto × costo útil).
-
-**Auto-producción de preparaciones:** si un platillo lleva una preparación (p. ej. salsa) y el stock de esa preparación no alcanza, el faltante se **auto-produce** desde sus insumos dentro de la misma transacción (recursivo, tope de 5 niveles; un ciclo entre preparaciones → `400`). Movimientos: `PRODUCCION` de salida por los insumos (permite negativo), `PRODUCCION` de entrada por el elaborado (costo = costo vigente del elaborado) y la `VENTA` normal del consumo — así la preparación queda en 0 y no negativa. Si un insumo no alcanza, queda negativo y el import **no** se detiene.
-
-La respuesta de `importar` (y de `preview`) agrega `auto_produccion: [{ producto_id, producto, receta_id, cantidad, unidad, lotes_equivalentes, insumos: [{ producto_id, producto, cantidad, stock_resultante }] }]`. En `preview`, el `consumo` lista cada producto con `{ producto_id, producto, cantidad, existencia_resultante, negativo }` (incluye los insumos crudos de la auto-producción).
-- `GET /api/ventas/:empresa_id/:fecha` (consultar) — devuelve `movimientos` y `auto_produccion` (reconstruida desde los movimientos) · `DELETE /api/ventas/:empresa_id/:fecha` (revertir) — deshace **todos** los movimientos del día (VENTA→DEVOLUCION; la auto-producción se revierte con el inverso de `PRODUCCION`, que **no** afecta `costo_ventas` ni la merma), dejando cada existencia exactamente como estaba.
-- `GET /api/ventas/:empresa_id?desde=&hasta=` — días importados: `{ fecha, total_lineas, total_unidades, procesado_at, insumos_negativos }`. `insumos_negativos` cuenta los productos que quedaron en negativo al importar, tanto por `VENTA` como por la `PRODUCCION` de la auto-producción.
-- `POST /api/ventas/:empresa_id/preview` — `{ csv | lineas }` devuelve el mapeo, el consumo resultante y la auto-producción **sin guardar nada**.
-
 ## Reportes (solo lectura)
 - `GET /api/reportes/:empresa_id/estado?fecha=YYYY-MM-DD` — KPIs del día: valor de inventario, alertas, compras/consumo/mermas del día.
+- `GET /api/reportes/:empresa_id/primeros-pasos` — avance de la puesta en marcha de una empresa nueva, deducido de sus datos: `{ pasos: [{ id, hecho, cantidad, requerido, ruta }], listo }` con los pasos `categorias`, `proveedores`, `insumos`, `recetas`, `mesas`, `impresora`, `equipo` y `primera_venta`. `listo` = los pasos `requerido` (categorías, insumos, recetas con precio y mesas) ya existen. Inicio lo muestra como guía.
+- `GET /api/reportes/:empresa_id/pos?fecha=YYYY-MM-DD` — señal ligera para Inicio y el menú: `{ activo, turnos_sin_cerrar: [{ id, fecha_negocio, abierto_at, cajero }] }`. `activo` = la empresa ya abrió al menos una caja; `turnos_sin_cerrar` = cajas abiertas de días **anteriores** a `fecha` (default hoy): su venta aún no llega a Finanzas.
 - `GET /api/reportes/:empresa_id/inventario` — valorización por producto + totales. Los productos con `compra_al_producir = true` nunca salen como `bajo_minimo`.
 - `GET /api/reportes/:empresa_id/alertas` — bajo mínimo con acción (`comprar`/`producir`). Excluye los productos con `compra_al_producir = true`.
 - `GET /api/reportes/:empresa_id/actividad?desde=&hasta=` — movimientos por tipo + merma (default últimos 30 días).
@@ -407,11 +411,8 @@ Valida categoría activa y de la empresa, y proveedor (si viene) de la empresa y
 Se permiten varios por día (uno por método o varios conceptos).
 - `GET /api/finanzas/:e/ingresos?desde&hasta&metodo_pago&incluir_anulados&limit&offset`
 - `POST /api/finanzas/:e/ingresos` *(Admin y Operativo)* — `{ "fecha", "metodo_pago", "monto", "concepto"?, "nota"? }` (`concepto` default `"Venta del día"`).
-- `POST /api/finanzas/:e/ingresos/lote` *(Admin y Operativo)* — cierre del día en una transacción:
-```json
-{ "fecha": "2026-09-21", "lineas": [ { "metodo_pago": "EFECTIVO", "monto": 3200 }, { "metodo_pago": "TARJETA", "monto": 1850 } ] }
-```
-- `PUT /api/finanzas/:e/ingresos/:id` *(Admin)*; `POST /api/finanzas/:e/ingresos/:id/anular` *(Admin)* `{ "motivo" }`.
+> El cierre manual del día por lote (`/ingresos/lote`) se retiró: los ingresos del POS salen del corte de caja. Para sumar algo que no pasó por el POS se usa el ingreso individual (`POST /ingresos`).
+- `PUT /api/finanzas/:e/ingresos/:id` *(Admin)*; `POST /api/finanzas/:e/ingresos/:id/anular` *(Admin)* `{ "motivo" }`. Los ingresos que genera el corte de caja traen `pos_turno_id` y **no se editan ni se anulan aquí** (**409**): se ajustan desde el POS (corregir pago o anular la cuenta), que mueven el corte y Finanzas a la vez. La fecha de un ingreso o gasto no puede ser futura **en la zona de la empresa**.
 
 ### Libro (vista unificada) *(Admin)*
 - `GET /api/finanzas/:e/movimientos?desde&hasta&origen=INGRESO|GASTO|COMPRA&limit&offset`
@@ -434,10 +435,11 @@ UNION de ingresos, gastos (no anulados) y **compras** (lectura directa de la tab
   "ingreso_esperado": 41250,
   "ingresos_comparables": 41000,
   "dias_sin_ingreso": ["2026-09-14"],
+  "dias_turno_abierto": ["2026-09-30"],
   "serie": [ { "periodo": "2026-09-01", "ingresos": 1500, "ingresos_neto": 1293.10, "compras": 600, "gastos_extra": 0, "costo_ventas": 500 } ]
 }
 ```
-`costo_ventas` = Σ movimientos `VENTA`×costo − Σ `DEVOLUCION` de reversas (`referencia_tipo='VENTA_DIARIA'`). `resultado_operacion` = ingresos − costo_ventas − gastos.extra (las compras entran como inventario, no aquí). `food_cost_pct` = null si no hay ingresos. `ingreso_esperado` = Σ `venta_diaria_detalle.cantidad × precio_unitario` (snapshot de `recetas.precio_venta` al importar); null si ningún día del rango tiene detalle. `ingresos_comparables` = ingresos no anulados **solo** en las fechas del rango que tienen detalle (para comparar contra `ingreso_esperado`); null cuando `ingreso_esperado` es null. Los días importados antes de la migración 014 no tienen detalle.
+`costo_ventas` = Σ movimientos `VENTA`×costo − Σ `DEVOLUCION` de reversas (`referencia_tipo='VENTA_DIARIA'`). `resultado_operacion` = ingresos − costo_ventas − gastos.extra (las compras entran como inventario, no aquí). `food_cost_pct` = null si no hay ingresos. `ingreso_esperado` = Σ `venta_diaria_detalle.cantidad × precio_unitario` (snapshot de `recetas.precio_venta` al importar); null si ningún día del rango tiene detalle. `ingresos_comparables` = ingresos no anulados **solo** en las fechas del rango que tienen detalle (para comparar contra `ingreso_esperado`); null cuando `ingreso_esperado` es null. Los días importados antes de la migración 014 no tienen detalle. **Con el POS:** `ingreso_esperado` suma además `pos_cuentas.total` de las cuentas `PAGADA` del rango (lo cobrado con descuentos, sin propinas); `ingresos_comparables` incluye también las fechas con cuentas pagadas del POS (los ingresos los genera el corte al cerrar la caja); `dias_sin_ingreso` es solo de días importados por CSV; `dias_turno_abierto` lista las fechas con ventas cobradas en una caja que sigue abierta (aún no hay ingresos). `costo_ventas` ya resta las `DEVOLUCION` de `POS_CUENTA`.
 
 ---
 
@@ -450,6 +452,7 @@ POS propio: mesas, cuentas, comandas por área, precuenta, apertura de caja **co
 ### Configuración *(Admin; las lecturas piden `pos.ver`)*
 - `GET|POST /areas` · `PUT /areas/:id` — áreas de preparación (`Cocina` predeterminada, `Barra`, `Sin comanda`; `imprime=false` = no genera comanda). Se siembran en el primer `GET`. El área predeterminada no se puede desactivar.
 - `GET|POST /mesas` · `PUT /mesas/:id` — `{ nombre, zona?, capacidad?, orden?, activo? }`.
+- `DELETE /mesas/:id` *(Admin)* — sin cuentas en su historial se **borra** (`accion: "eliminada"`); con historial de ventas solo se **desactiva** (`accion: "desactivada"`: las cuentas pasadas y los cortes no cambian); con una cuenta abierta → **409**.
 - `GET /asignacion-areas` · `PUT /asignacion-areas/categoria/:id` · `PUT /asignacion-areas/:receta|producto/:id` — `{ "area_id": 2 | null }`. El área de un artículo se resuelve **artículo → categoría → predeterminada**.
 - `GET /menu` — artículos vendibles (recetas activas no-preparación con precio > 0 y productos con `precio_venta`), con `area_id`, `area_origen`, precio e IVA, más `recetas_sin_precio`.
 
@@ -459,36 +462,51 @@ POS propio: mesas, cuentas, comandas por área, precuenta, apertura de caja **co
 - `GET /cuentas/:id` — cuenta con `items` y `totales { subtotal, descuento, iva, total }` (IVA incluido o sumado según el precio de cada renglón).
 - `POST /cuentas/:id/items` — `{ lineas: [{ tipo: "RECETA"|"PRODUCTO", id, cantidad, notas? }] }`. Nombre, precio e IVA quedan **congelados** en el renglón. El mismo artículo sin notas y sin enviar se suma al renglón existente (tope 99).
 - `PUT|DELETE /cuentas/:id/items/:itemId` — solo renglones `PENDIENTE` (**409** si ya se enviaron).
-- `POST /cuentas/:id/items/:itemId/cancelar` *(autorizar)* — `{ motivo }`; deja el renglón `CANCELADO` con quién lo autorizó.
+- `POST /cuentas/:id/items/:itemId/cancelar` *(autorizar)* — `{ motivo, merma? }`; deja el renglón `CANCELADO` con quién lo autorizó. Con `merma: true` («ya se preparó») los insumos salen del inventario como `MERMA` (`referencia_tipo = 'POS_MERMA'`, no se revierte al anular ventas) y suman a la merma de Finanzas; sin ella el inventario no se toca.
 - `POST /cuentas/:id/enviar` — crea **una comanda por área** con lo pendiente, marca los renglones `ENVIADO` y encola la impresión. `{ comandas: [{ numero, area, renglones, impresion_estado }], sin_comanda, cuenta }`. Si el área no tiene impresora, esa impresión queda en `ERROR` (no se pierde).
-- `POST /cuentas/:id/cambiar-mesa` `{ mesa_id }` (mesa libre) · `POST /cuentas/:id/juntar` `{ destino_id }` (la origen queda `UNIDA`) · `POST /cuentas/:id/dividir` `{ partes: [{ item_id, cantidad }] }` (crea una cuenta nueva en la misma mesa; no puede vaciar la original) · `POST /cuentas/:id/precuenta` (encola el estado de cuenta a la impresora de tickets) · `POST /cuentas/:id/cancelar` `{ motivo? }` (con productos enviados exige `pos.autorizar` y motivo).
+- `POST /cuentas/:id/cambiar-mesa` `{ mesa_id }` (mesa libre) · `POST /cuentas/:id/juntar` `{ destino_id }` (la origen queda `UNIDA`) · `POST /cuentas/:id/dividir` `{ partes: [{ item_id, cantidad }] }` (crea una cuenta nueva en la misma mesa; no puede vaciar la original) · `POST /cuentas/:id/precuenta` (encola el estado de cuenta a la impresora de tickets) · `POST /cuentas/:id/cancelar` `{ motivo?, merma? }` (con productos enviados exige `pos.autorizar` y motivo; `merma: true` registra como merma todo lo enviado). Al juntar, las comandas de la cuenta origen continúan la numeración de la destino. Un renglón admite hasta 99 piezas: pasarse responde **400** en vez de recortar.
+- **Idempotencia** (`Idempotency-Key`, 8–80 caracteres `[A-Za-z0-9_-]`): abrir cuenta, agregar renglones, enviar y cobrar aceptan este header. Si ya se hizo con esa llave se devuelve **la misma respuesta** (mismo status; header `Idempotent-Replay: true`) y no se repite el efecto: un reintento tras cortarse la señal, o un doble toque, no duplica renglones, comandas, folios ni cobros. La llave se reserva en la **misma transacción** que el efecto (`pos_idempotencia`), así que dos peticiones iguales a la vez producen un solo efecto. Es por usuario y empresa; la misma llave con otro cuerpo → `422`; los errores (4xx/5xx) no se guardan, así que tras uno la llave puede volver a intentarse; se conservan 48 h. Sin el header todo se comporta como siempre.
+- **Pantalla de cocina (KDS), opcional.** Apagada por defecto (`PUT /empresas/:id/configuracion {usa_pantalla_cocina}`; `GET /impresion/estado` devuelve `pantalla_cocina`). Cada área elige papel, pantalla o ambos (`areas_preparacion.imprime` / `pantalla`, más `tiempo_objetivo_min`); `pantalla: true` en un área con la pantalla apagada → `409`. Con ella, `enviar` crea la comanda si el área imprime **o** muestra pantalla y solo genera trabajo de impresión si imprime (`impresion_id`/`impresion_estado` pueden venir `null`; cada comanda trae `pantalla`). Estados de comanda: `NUEVA → EN_PREPARACION → LISTA → ENTREGADA` (o `CANCELADA`); las de áreas sin pantalla nacen `ENTREGADA`. `GET /comandas/activas?area_id=` *(`pos.preparar`)* lista lo activo (nuevas, en preparación, listas de los últimos 10 min, canceladas de los últimos 3) con sus renglones —los cancelados después de enviar vienen marcados— y la hora del servidor (`ahora`). `POST /comandas/:id/estado {estado: EN_PREPARACION|LISTA|ENTREGADA}`: cocina (`pos.preparar`) prepara y deja lista, y puede **deshacer «lista»** durante 10 minutos; `ENTREGADA` también la marca quien tiene `pos.ordenar` (el mesero). Las transiciones están protegidas en SQL: repetir el mismo estado no es error, un salto o retroceso → `409`. `GET /cuentas/:id` trae `comandas[]` (área, número, estado, `pantalla`, `lista_at`, estado de su impresión) unidas por los renglones (no por `pos_comandas.cuenta_id`: dividir deja la comanda en la cuenta original) y `GET /mapa` agrega por cuenta `comandas_listas` y `comandas_sin_salida`. Cancelar un renglón marca la comanda como actualizada y, si ya no queda nada, `CANCELADA`; cancelar la cuenta cancela lo que siga por preparar. Apagar la pantalla pasa a `ENTREGADA` lo que seguía abierto y hace que las áreas «solo pantalla» vuelvan a imprimir. El rol «Cocina / Barra» (`cocina`: `pos.ver`, `pos.preparar`) y el supervisor traen el permiso `pos.preparar`.
+- **Avisos en tiempo real (SSE).** `GET /api/pos/:empresa_id/eventos` *(`pos.ver`, cookie de sesión)* es un flujo `text/event-stream`. Los eventos son **avisos con ids** (nunca datos): `comanda.nueva {cuenta_id, mesero_id, areas}` (al confirmar el envío), `comanda.estado {comanda_id, estado, cuenta_id, mesero_id, area_id}`, `comanda.cancelada {cuenta_id}`, `impresion.error {impresion_id}` (una comanda agotó sus reintentos), `config` (se encendió/apagó la pantalla de cocina) y `resync` (pudo perderse algo: refrescar todo; también se manda al reconectar). Quien los recibe vuelve a pedir el estado, por eso perder uno no es grave y el polling sigue como respaldo. Internamente cada `pg_notify('pos_eventos', …)` se emite **dentro de la transacción** (sale al confirmar y no en un rollback; funciona con varias instancias del servidor), una conexión `LISTEN` propia por instancia (con reconexión y backoff) reparte a los clientes de cada empresa; latido cada 20 s, el flujo se cierra al vencer la sesión y como máximo 6 conexiones por usuario (se cierran las más viejas). Cabeceras `Cache-Control: no-cache, no-transform` y `X-Accel-Buffering: no`. Con el front en otro dominio la cookie debe permitir `SameSite=None; Secure` y el cliente usar `withCredentials`; la cadena de conexión a Postgres no puede pasar por un pooler en modo transacción (rompe `LISTEN`).
+- **Opciones por producto, comensal y tiempos.** *Catálogo (Admin):* `GET /opciones` lista los grupos (`{ id, nombre, minimo, maximo, modificadores: [{ id, nombre, precio_extra, producto_id, producto, cantidad }], articulos: [{ tipo, id }] }`); `POST /opciones` y `PUT /opciones/:id` (mismo cuerpo: `nombre`, `minimo` ≥ 0, `maximo` ≥ 1 y ≤ nº de opciones, `modificadores[]`, `articulos[]`) crean o reemplazan el grupo —las opciones que ya no vienen se **desactivan, no se borran**—; `DELETE /opciones/:id` lo desactiva. Una opción puede cobrar un extra (`precio_extra`) y/o **descontar un insumo** al cobrar (`producto_id` + `cantidad` por pieza). `GET /menu` trae `grupos[]` (con sus opciones y extras) y, en cada artículo, `grupos: [ids]`. *Al tomar la orden:* cada línea de `POST /cuentas/:id/items` acepta `opciones: [ids]`, `comensal` (1–99) y `tiempo` (1–6): el servidor valida mínimos y máximos de cada grupo (`400` «Elige una opción de «Término»») y rechaza opciones que no son del artículo; el renglón guarda una **copia** de las opciones (`opciones[]`: grupo, nombre, extra e insumo) y su `precio_unitario` ya incluye los extras, así que cambiar el catálogo no altera cuentas tomadas. Renglones iguales (mismas opciones, comensal y tiempo, sin notas ni descuento) se suman; si algo cambia, van aparte. `PUT …/items/:itemId` permite corregir `comensal` y `tiempo` mientras esté pendiente. *Tiempos:* `POST /cuentas/:id/enviar {tiempo?}` envía lo pendiente de ese tiempo (1 por defecto; `400` «No hay productos del 2.º tiempo por enviar» si no hay); el 2.º, 3.º… se disparan aparte y **cobrar sigue bloqueado mientras quede algo pendiente**. La comanda impresa y la pantalla muestran opciones, comensal y «2.º TIEMPO»; precuenta y ticket listan las opciones. *Inventario:* al cobrar (y en la merma por cancelación) se descuenta el insumo de cada opción por pieza (con la merma del insumo), anular lo regresa. `dividir` conserva opciones, comensal y tiempo.
 - `POST /cuentas/:id/cobrar` *(cobrar)* `{ pagos: [{ metodo: EFECTIVO|TARJETA|TRANSFERENCIA, monto, propina?, recibido?, referencia? }] }` — cobra en **una transacción**: guarda los pagos, descuenta el inventario (movimientos `VENTA` con `referencia_tipo = 'POS_CUENTA'`, `referencia_id` = id de la cuenta), cierra la cuenta (`PAGADA`, la mesa queda libre) y encola el ticket. Reglas: el cajero necesita turno abierto (**409** «Abre tu caja»); la cuenta no puede tener productos sin enviar (**400**); la suma de `monto` debe igualar el total exacto, la propina va aparte y no cuenta para el total; en efectivo `recibido` (opcional, por defecto exacto) debe cubrir `monto + propina` y el cambio es la diferencia; un pago puede ser solo propina (`monto: 0`); una cuenta de total 0 se cierra sin pagos. Una cuenta ya cobrada responde **409** (dos cajas a la vez: gana una). La venta queda en el turno y el día de negocio de quien cobra. Respuesta: `{ cambio, propina, ticket: { impresion_id, impresion_estado }, inventario: { negativos, errores, recetas_sin_escandallo }, cuenta }`. El inventario nunca bloquea el cobro: si una existencia queda negativa se reporta en `negativos`.
 - **Autorización de supervisor.** Descuentos, cortesías, cancelar un renglón enviado, cancelar una cuenta con productos enviados y anular una cuenta cobrada requieren `pos.autorizar`. Quien no lo tiene puede mandar en el cuerpo `autorizacion: { email, password }` de un supervisor/Admin/Owner **de la misma empresa** (las mismas credenciales del login, se validan con bcrypt y no se guardan): esa persona queda como quien autorizó. Credenciales inválidas o de alguien sin permiso → **403**; sin credenciales ni permiso → **403**. Los intentos con credenciales se limitan a 15 por minuto por usuario. Todo queda en `pos_autorizaciones` (quién autorizó, quién lo pidió, importe y motivo).
 - `POST /cuentas/:id/items/:itemId/descuento` · `POST /cuentas/:id/descuento` *(ordenar + autorización)* `{ tipo: PORCENTAJE|MONTO|CORTESIA|QUITAR, valor?, motivo, autorizacion? }` — solo en cuentas abiertas y renglones no cancelados. `PORCENTAJE` (0–100] y `MONTO` (máx. 2 decimales, sin pasar del importe) dan un descuento; `CORTESIA` cubre todo el renglón y **el inventario sí se descuenta al cobrar**; `QUITAR` regresa el precio de lista (sin motivo). A toda la cuenta, un monto se reparte en proporción al importe de cada renglón (y sustituye los descuentos previos). Una cuenta con total 0 se cobra con `pagos: []`.
 - `POST /cuentas/:id/anular` *(cobrar + autorización)* `{ motivo, autorizacion? }` — solo cuentas `PAGADA` (**409** si ya está anulada o sigue abierta). En una transacción: regresa el inventario (`DEVOLUCION` al mismo costo, también la producción automática), marca los pagos como `anulado`, registra el dinero devuelto en `pos_devoluciones` en el turno de quien lo entrega (si hubo efectivo necesita caja abierta: **409** «Abre tu caja») y, si el turno de la venta ya cerró, descuenta lo devuelto de los ingresos que generó el corte (si llegan a 0 el ingreso se anula). El corte ya cerrado conserva sus cifras; la anulación se ve en `anuladas`. Para Finanzas, el costo de ventas ya considera las `DEVOLUCION` de `POS_CUENTA`.
+- `POST /cuentas/:id/corregir-pago` *(cobrar + autorización)* `{ pagos: [{ metodo, monto, propina?, referencia? }], motivo, autorizacion? }` — corrige **cómo se pagó** una cuenta `PAGADA` (método, monto, propina o referencia) sin anularla. Los montos deben sumar exactamente el total de la cuenta (que no cambia, así que el inventario tampoco) y deben ser distintos a los actuales (**400**). **409** si la cuenta está abierta o anulada. En una transacción: reemplaza los pagos en el mismo turno, actualiza la propina de la cuenta, deja la copia del ticket con el pago correcto (`corregido: true`, sin abrir cajón), guarda cómo estaba y cómo quedó en `pos_correcciones_pago` y lo registra en `pos_autorizaciones` (`CORREGIR_PAGO`). **Si el corte del turno ya cerró**, el cierre original (`resumen`, esperado y diferencia) **no se modifica**: se ajustan los `ingresos` que mandó a Finanzas por el cambio de cada método (suben, bajan, se anulan si llegan a 0 o se crea el del método nuevo) y la corrección queda marcada `turno_cerrado`. Una anulación posterior descuenta lo ya corregido. La cuenta devuelve `correcciones` y `turno_cerrado`.
 - `POST /cuentas/:id/ticket` *(ordenar)* — vuelve a imprimir el ticket de una cuenta cobrada; sale marcado como copia y sin abrir el cajón (**404** si la cuenta no tiene ticket).
-- `GET /turnos/actual` *(ver)* · `POST /turnos/abrir` *(cobrar)* `{ fondo_inicial }` — un cajero no puede tener dos turnos abiertos (**409**).
+- `GET /turnos/actual` *(ver)* (la caja abierta **propia**) · `GET /turnos/abierto` *(ver)* (la caja abierta del negocio, de quien sea: `{ id, cajero, fecha_negocio, fondo_inicial, abierto_at, es_mia }` o `null`) · `POST /turnos/abrir` *(cobrar)* `{ fondo_inicial }` — **solo puede haber una caja abierta por empresa** (índice único parcial, migración 050): si ya hay una, **409** con el nombre de quien la tiene (`Ya tienes una caja abierta` si es la propia). Cobrar exige la caja propia: si la tiene otra persona, el **409** de `/cobrar` lo dice; quien la abrió o un supervisor debe cerrarla antes. La migración 050 se detiene con un mensaje si ya hay empresas con varias cajas abiertas (no cierra nada sola).
+- `POST /cuentas/:id/descartar` *(ordenar)* — salir de una cuenta sin enviar: borra los renglones `PENDIENTE` y, si la cuenta no tiene nada más (ni enviados, ni comandas, ni autorizaciones, ni cuentas ligadas por juntar/dividir), la **elimina** y deja la mesa libre; el folio se devuelve si era el último y una reservación que se había sentado vuelve a `confirmada`. Responde `{ eliminada, cuenta }` (`cuenta` = la cuenta ya sin lo pendiente cuando no se borra). **409** si la cuenta ya no está abierta. Además, `GET /mapa` libera por su cuenta las cuentas abiertas sin ningún renglón ni comanda que llevan más de 30 minutos sin actividad (app cerrada, sin señal…).
+- `PATCH /cuentas/:id` *(ordenar)* `{ nombre_cliente?, personas? }` — nombre o referencia de la cuenta («Fam. Hernández») y número de personas; `""` quita el nombre. Solo cuentas abiertas (**409**). `POST /cuentas` también acepta `nombre_cliente` en cuentas de mesa. Las comandas, precuentas y tickets de una cuenta de mesa llevan `cliente` (ese nombre) en el payload de impresión; el agente ≥ 1.4.0 lo imprime en negrita antes de mesero y personas. `GET /mapa` y las cuentas traen `mesero_id` y `actualizada_at` (última actividad: producto, envío, descuento, nombre…; la mantienen triggers de la migración 036) junto a `abierta_at`.
+- **Reservaciones.** `POST /cuentas` acepta `reservacion_id`: abrir la cuenta de una reservación la marca `sentada` (si estaba `pendiente`/`confirmada`) en la misma transacción y la deja ligada; una reservación con cuenta no cancelada → **409** («ya tiene la cuenta folio N»). `GET /api/reservaciones/:e` devuelve `cuenta_id`, `cuenta_folio` y `cuenta_estado` de esa cuenta (o `null`).
 - **Corte de caja** *(cobrar; el cajero ve y cierra sus turnos, quien tiene `pos.autorizar` cualquiera, otro cajero **403**)*:
   - `GET /turnos` — turnos recientes con ventas, esperado, contado y diferencia.
   - `GET /turnos/:id/corte` — `{ turno, corte, ventas, anuladas, autorizaciones, cuentas_abiertas, es_ultimo_turno }` (`autorizaciones` = lo autorizado mientras duró el turno). Abierto = corte parcial. `corte` trae `por_metodo` (`cuentas`, `monto`, `propina`), `ventas` (sin propinas), `propinas`, `efectivo_cobrado` (ventas + propina en efectivo; el cambio ya salió; incluye ventas que luego se anularon), `devoluciones_efectivo` (efectivo devuelto por anulaciones desde este cajón) y `efectivo_esperado` = fondo + efectivo cobrado − devoluciones − propinas entregadas. Un turno cerrado devuelve su corte tal como se cerró.
-  - `POST /turnos/:id/cerrar` `{ efectivo_contado, propinas_entregadas?, nota?, forzar? }` — en una transacción: guarda esperado, contado y `diferencia` (contado − esperado: positivo sobra), cierra el turno, **genera los ingresos de Finanzas por método** (solo ventas, nunca propinas; `concepto` «Corte de caja · turno N», `pos_turno_id`, un ingreso por método y turno) y encola el corte para imprimir. Las propinas entregadas no pueden pasar de las cobradas (**400**). Si hay cuentas abiertas con productos y no queda otra caja abierta responde **409** salvo `forzar: true` (se cobrarán después, en otro turno). Un turno cerrado responde **409**; los cobros que llegan durante el cierre esperan y, si el turno ya cerró, reciben «Abre tu caja».
-  - `POST /turnos/:id/corte/imprimir` — vuelve a imprimir el corte (parcial o definitivo).
+  - `POST /turnos/:id/cerrar` `{ efectivo_contado, propinas_entregadas?, nota? }` — en una transacción: guarda esperado, contado y `diferencia` (contado − esperado: positivo sobra), cierra el turno, **genera los ingresos de Finanzas por método** (solo ventas, nunca propinas; `concepto` «Corte de caja · turno N», `pos_turno_id`, un ingreso por método y turno) y encola el corte para imprimir. Las propinas entregadas no pueden pasar de las cobradas (**400**). **La caja no se cierra con cuentas abiertas con productos** (una cuenta vacía no cuenta): responde **409** «No se puede cerrar la caja: hay N cuenta(s) abierta(s)…» con `details: { cuentas_abiertas, cuentas: [{ id, folio, etiqueta }] }`; no hay forma de forzarlo (un `forzar` enviado se ignora, ni siquiera un supervisor): primero se cobran o se cancelan. `GET /turnos/:id/corte` trae `cuentas_abiertas_detalle` (`id, folio, etiqueta, mesero, piezas`) para mostrarlas. Un turno cerrado responde **409**; los cobros que llegan durante el cierre esperan y, si el turno ya cerró, reciben «Abre tu caja».
+  - Las respuestas de `GET /turnos/:id/corte` traen además `correcciones` (pagos corregidos de las ventas del turno, con `antes`/`despues`) y `ajustado`: con el turno **cerrado** y correcciones hechas después del cierre, `{ corte, diferencia }` ya sumados (ventas por método, efectivo esperado y diferencia contra lo contado); `null` si no hubo. El `corte` y la `diferencia` del turno siguen siendo los del cierre.
+  - `GET /turnos` trae por turno cerrado `correcciones_posteriores` y `diferencia_ajustada` (contado − esperado ya con las correcciones de pago hechas después del cierre; `null` si no hubo). `diferencia` sigue siendo la del cierre original.
+  - `POST /turnos/:id/corte/imprimir` — vuelve a imprimir el corte (parcial o definitivo). Un corte cerrado con correcciones de pago posteriores sale con las cifras ya ajustadas y una nota de cómo se cerró (`ajuste` en el payload; agente ≥ 1.5.0).
 
 ### Impresión
 Las comandas, precuentas y tickets se encolan en `pos_impresiones` (el ticket lleva `abrir_cajon: true` si hubo efectivo); el **agente de impresión** (carpeta `print-agent/`) las toma y las imprime en cada impresora (red o USB).
 - `GET|POST /impresoras` · `PUT /impresoras/:id` · `POST /impresoras/:id/prueba` *(Admin)* — `{ nombre, conexion: "RED"|"USB", ip?, puerto?, nombre_usb?, ancho: 58|80, area_id?, es_ticket? }`; una impresora atiende un área o es la de tickets.
-- `GET|POST /agentes` · `PUT /agentes/:id` · `POST /agentes/:id/rotar-token` *(Admin)* — el token (`gh_agt_...`) se devuelve **una sola vez**; en la base solo queda su hash.
-- `GET /impresion/estado` *(ver)* — `{ agentes_conectados, pendientes, errores }` (conectado = contacto en los últimos 30 s).
-- `GET /impresiones?estado=` *(autorizar)* · `POST /impresiones/:id/reimprimir` *(ordenar)*.
+- `GET|POST /agentes` · `PUT /agentes/:id` · `DELETE /agentes/:id` · `POST /agentes/:id/rotar-token` *(Admin)* (`DELETE` borra el agente: su token y su código dejan de servir; `404` si no existe en la empresa) — el token (`gh_agt_...`) se devuelve **una sola vez**; en la base solo queda su hash. El listado trae `equipo`, `emparejado_at`, `codigo_pendiente` y `desactualizado` (versión del agente < la publicada).
+- **Emparejamiento por código** *(migración 048)*: `POST /agentes` devuelve además `codigo` (`XXXX-XXXX`, vale 15 min, un solo uso; solo se guarda su hash) y `POST /agentes/:id/codigo` *(Admin)* genera otro (el anterior sin usar deja de servir). El instalador lo canjea en `POST /api/agente/emparejar` (público, con límite de intentos) `{ codigo, equipo? }` → `{ servidor, token, zona_horaria, agente: { id, nombre } }`: el token es **nuevo** (reemplaza al anterior) y `servidor` sale de `PUBLIC_API_URL` o del host de la petición. `400` si el código no existe, ya se usó, venció o el agente está desactivado. `GET /agentes-info` *(Admin)* → `{ manifiesto, ultimo_error }` (versión publicada, enlace al instalador y último fallo de impresión).
+- **Actualización automática del agente**: `GET /api/agente/version` (con el token del agente) → `{ manifiesto }` con `{ version, minima, url, sha256, instalador }` o `null`. Sale de las variables `AGENTE_ULTIMA_VERSION`, `AGENTE_URL_DESCARGA` (https), `AGENTE_SHA256`, `AGENTE_VERSION_MINIMA` y `AGENTE_INSTALADOR_URL`; sin URL https y hash válido no se publica la descarga. El agente descarga, verifica el hash, se reemplaza y reinicia; si la versión nueva no se mantiene viva, regresa a la anterior (ver `print-agent/instalador/LEEME.md`).
+- `GET /impresion/estado` *(ver)* — `{ agentes_conectados, pendientes, errores, sin_impresora }` (conectado = contacto en los últimos 30 s; `sin_impresora` = trabajos del último día que no tenían impresora configurada).
+- `POST /impresiones/:id/descartar` *(autorizar)* saca de la cola un trabajo que ya no hace falta (solo `PENDIENTE`, `ERROR` o `SIN_IMPRESORA`; `409` si ya se imprimió, lo está imprimiendo el agente o ya estaba descartado) y `POST /impresiones/descartar` `{ estados?: ["PENDIENTE"|"ERROR"|"SIN_IMPRESORA"] }` limpia varios de una vez → `{ descartados }`. **No borra la fila** (estado **`DESCARTADA`**, con `descartada_at`/`descartada_por`; migración 049): sale de la lista normal y de las alertas de «comanda sin salida», se consulta con `?estado=DESCARTADA` y se recupera con `reimprimir` (así un ticket descartado sigue pudiéndose reimprimir desde la cuenta).
+- `GET /impresiones?estado=` *(autorizar)* · `POST /impresiones/:id/reimprimir` *(ordenar)*. Estados: `PENDIENTE`, `IMPRIMIENDO`, `IMPRESO`, `ERROR` (falló el agente) y **`SIN_IMPRESORA`** (la empresa no tiene impresora/agente para ese trabajo; no es una falla). Migración 040.
+- **Impresión desde el navegador** (respaldo sin impresora): `GET /impresiones/:id` *(ordenar; un corte exige `pos.cobrar`)* → `{ id, tipo, estado, payload }` para dibujarlo en el cliente, y `POST /impresiones/:id/impreso-navegador` lo cierra como `IMPRESO` (solo desde `SIN_IMPRESORA` o `ERROR`; `409` si ya salió o está en la cola del agente).
+- **Áreas de categorías nuevas**: al crear una categoría de bebidas («Bebidas», «Café», «Cervezas»…) queda asignada al área `Barra` (se siembran Cocina/Barra/Sin comanda si la empresa aún no las tiene); el resto va al área por defecto. Se puede cambiar en la asignación de áreas.
 - **Agente** (`/api/agente/*`, autenticado con `Authorization: Bearer <token del agente>`, fuera de la sesión de usuario): `GET /impresiones/pendientes` toma los trabajos de forma atómica (uno no confirmado en 30 s se reintenta); `POST /impresiones/:id/resultado` `{ ok, error? }` — un fallo se reintenta con espera y a los 5 intentos queda en `ERROR`. Cada trabajo trae `reimpresiones` para distinguir una reimpresión manual de una re-entrega.
 
 ---
 
 ## Flujo end-to-end recomendado
 
-1. `POST /api/auth/login` → token (o `/setup` la primera vez para el primer usuario de toda la base; luego, nuevas empresas se crean con `POST /api/platform/empresas`, que exige `is_platform_admin`).
+1. `POST /api/auth/login` → sesión en la cookie `gh_session` (o `/setup` la primera vez para el primer usuario de toda la base; luego, nuevas empresas se crean con `POST /api/platform/empresas`, que exige `is_platform_admin`).
 2. `POST /api/proveedores/:e` y `POST /api/productos/:e` (insumos).
 3. `POST /api/recetas/:e` con `es_preparacion` (salsa) → `POST /api/produccion/:e/confirmar` (producirla).
 4. `POST /api/recetas/:e` del platillo usando la preparación como ingrediente.
-5. `POST /api/pos-map/:e` y `POST /api/ventas/:e/importar` (vender).
+5. `POST /api/pos/:e/turnos/abrir`, `POST /api/pos/:e/cuentas` … `/cobrar` (vender en el POS; el corte de caja lleva los ingresos a Finanzas).
 6. `POST /api/conteos/:e` (contar) y `GET /api/reportes/:e/estado` (ver los números).

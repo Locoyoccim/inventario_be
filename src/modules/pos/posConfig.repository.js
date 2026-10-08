@@ -1,16 +1,12 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
+import { asegurarAreas } from "./pos.areas.js";
 
-const AREA_COLS = "id, empresa_id, nombre, imprime, es_default, activo";
+const AREA_COLS = "id, empresa_id, nombre, imprime, pantalla, tiempo_objetivo_min, es_default, activo";
 const MESA_COLS = "id, empresa_id, nombre, zona, capacidad, orden, activo";
 
 const QUERIES = {
     LIST_AREAS: `SELECT ${AREA_COLS} FROM areas_preparacion WHERE empresa_id = $1 ORDER BY es_default DESC, nombre ASC`,
-    // Empresas creadas después de 030 no tienen áreas: se siembran al primer uso.
-    SEED_AREAS: `
-        INSERT INTO areas_preparacion (empresa_id, nombre, imprime, es_default)
-        VALUES ($1, 'Cocina', true, true), ($1, 'Barra', true, false), ($1, 'Sin comanda', false, false)
-        ON CONFLICT (empresa_id, nombre) DO NOTHING`,
     GET_AREA: `SELECT ${AREA_COLS} FROM areas_preparacion WHERE id = $1 AND empresa_id = $2`,
     EXISTS_AREA_NOMBRE: `SELECT 1 FROM areas_preparacion WHERE empresa_id = $1 AND lower(nombre) = lower($2) AND ($3::int IS NULL OR id <> $3)`,
     UNSET_DEFAULT: `UPDATE areas_preparacion SET es_default = false WHERE empresa_id = $1 AND es_default`,
@@ -53,9 +49,7 @@ const TABLA_ARTICULO = { RECETA: "recetas", PRODUCTO: "productos" };
 
 export default class PosConfigRepository {
     async listarAreas(empresa_id) {
-        const r = await pool.query(QUERIES.LIST_AREAS, [empresa_id]);
-        if (r.rowCount > 0) return r.rows;
-        await pool.query(QUERIES.SEED_AREAS, [empresa_id]);
+        await asegurarAreas(pool, empresa_id);
         return (await pool.query(QUERIES.LIST_AREAS, [empresa_id])).rows;
     }
 
@@ -64,15 +58,22 @@ export default class PosConfigRepository {
         if (r.rowCount > 0) throw ApiError.conflict("Ya existe un área con ese nombre");
     }
 
-    async crearArea(empresa_id, { nombre, imprime = true, es_default = false }) {
+    // Una área solo puede usar pantalla si la empresa activó la pantalla de cocina (es opcional y se decide por negocio).
+    async #exigirPantallaActiva(db, empresa_id) {
+        const r = await db.query("SELECT usa_pantalla_cocina FROM empresas WHERE id = $1", [empresa_id]);
+        if (!r.rows[0]?.usa_pantalla_cocina) throw ApiError.conflict("Activa primero la pantalla de cocina en la configuración del POS");
+    }
+
+    async crearArea(empresa_id, { nombre, imprime = true, pantalla = false, tiempo_objetivo_min = 15, es_default = false }) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
             await this.#validarNombreArea(client, empresa_id, nombre);
+            if (pantalla) await this.#exigirPantallaActiva(client, empresa_id);
             if (es_default) await client.query(QUERIES.UNSET_DEFAULT, [empresa_id]);
             const r = await client.query(
-                `INSERT INTO areas_preparacion (empresa_id, nombre, imprime, es_default) VALUES ($1, $2, $3, $4) RETURNING ${AREA_COLS}`,
-                [empresa_id, nombre, imprime, es_default],
+                `INSERT INTO areas_preparacion (empresa_id, nombre, imprime, pantalla, tiempo_objetivo_min, es_default) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${AREA_COLS}`,
+                [empresa_id, nombre, imprime, pantalla, tiempo_objetivo_min, es_default],
             );
             await client.query("COMMIT");
             return r.rows[0];
@@ -84,13 +85,14 @@ export default class PosConfigRepository {
         }
     }
 
-    async actualizarArea(empresa_id, id, { nombre, imprime, es_default, activo }) {
+    async actualizarArea(empresa_id, id, { nombre, imprime, pantalla, tiempo_objetivo_min, es_default, activo }) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
             const actual = (await client.query(`${QUERIES.GET_AREA} FOR UPDATE`, [id, empresa_id])).rows[0];
             if (!actual) throw ApiError.notFound("Área no encontrada");
             if (nombre !== undefined) await this.#validarNombreArea(client, empresa_id, nombre, id);
+            if (pantalla === true && !actual.pantalla) await this.#exigirPantallaActiva(client, empresa_id);
             const quedaDefault = es_default === true || actual.es_default;
             const quedaActiva = activo ?? actual.activo;
             if (quedaDefault && !quedaActiva) throw ApiError.badRequest("El área por defecto no puede desactivarse; elige otra como predeterminada primero");
@@ -98,9 +100,10 @@ export default class PosConfigRepository {
             const r = await client.query(
                 `UPDATE areas_preparacion
                  SET nombre = COALESCE($3, nombre), imprime = COALESCE($4, imprime),
-                     es_default = COALESCE($5, es_default), activo = COALESCE($6, activo)
+                     es_default = COALESCE($5, es_default), activo = COALESCE($6, activo),
+                     pantalla = COALESCE($7, pantalla), tiempo_objetivo_min = COALESCE($8, tiempo_objetivo_min)
                  WHERE id = $1 AND empresa_id = $2 RETURNING ${AREA_COLS}`,
-                [id, empresa_id, nombre ?? null, imprime ?? null, es_default ?? null, activo ?? null],
+                [id, empresa_id, nombre ?? null, imprime ?? null, es_default ?? null, activo ?? null, pantalla ?? null, tiempo_objetivo_min ?? null],
             );
             await client.query("COMMIT");
             return r.rows[0];
@@ -143,6 +146,35 @@ export default class PosConfigRepository {
         return r.rows[0];
     }
 
+    // Una mesa que nunca tuvo cuentas se borra; con historial de ventas solo se desactiva (las cuentas
+    // pasadas la conservan por nombre y los cortes no cambian). Con una cuenta abierta no se toca.
+    async eliminarMesa(empresa_id, id) {
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            const mesa = (await client.query("SELECT id, nombre FROM mesas WHERE id = $1 AND empresa_id = $2 FOR UPDATE", [id, empresa_id])).rows[0];
+            if (!mesa) throw ApiError.notFound("Mesa no encontrada");
+            const abierta = (await client.query("SELECT folio FROM pos_cuentas WHERE mesa_id = $1 AND estado = 'ABIERTA' LIMIT 1", [id])).rows[0];
+            if (abierta) throw ApiError.conflict(`${mesa.nombre} tiene una cuenta abierta (folio ${abierta.folio}). Cóbrala o cancélala primero.`);
+            const usos = (await client.query("SELECT COUNT(*)::int AS n FROM pos_cuentas WHERE mesa_id = $1", [id])).rows[0].n;
+            let accion;
+            if (usos === 0) {
+                await client.query("DELETE FROM mesas WHERE id = $1", [id]);
+                accion = "eliminada";
+            } else {
+                await client.query("UPDATE mesas SET activo = false WHERE id = $1", [id]);
+                accion = "desactivada";
+            }
+            await client.query("COMMIT");
+            return { id: mesa.id, nombre: mesa.nombre, accion };
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
     async #validarArea(empresa_id, area_id) {
         if (area_id == null) return;
         const r = await pool.query(QUERIES.GET_AREA, [area_id, empresa_id]);
@@ -183,6 +215,25 @@ export default class PosConfigRepository {
             this.articulosVendibles(pool, empresa_id),
             pool.query(QUERIES.RECETAS_SIN_PRECIO, [empresa_id]),
         ]);
-        return { articulos, recetas_sin_precio: sinPrecio.rows[0].n };
+        // Opciones por producto: grupos activos con sus opciones, y a qué artículos se ofrecen (para pedirlas al tomar la orden).
+        const grupos = (await pool.query("SELECT id, nombre, minimo, maximo FROM modificador_grupos WHERE empresa_id = $1 AND activo ORDER BY id", [empresa_id])).rows;
+        let conGrupos = articulos;
+        let gruposMenu = [];
+        if (grupos.length > 0) {
+            const ids = grupos.map((g) => g.id);
+            const [mods, asig] = await Promise.all([
+                pool.query("SELECT id, grupo_id, nombre, precio_extra FROM modificadores WHERE grupo_id = ANY($1::int[]) AND activo ORDER BY orden, id", [ids]),
+                pool.query("SELECT grupo_id, receta_id, producto_id FROM articulo_modificadores WHERE grupo_id = ANY($1::int[])", [ids]),
+            ]);
+            gruposMenu = grupos.map((g) => ({ ...g, modificadores: mods.rows.filter((m) => m.grupo_id === g.id).map((m) => ({ id: m.id, nombre: m.nombre, precio_extra: Number(m.precio_extra) })) }));
+            const porArticulo = new Map();
+            for (const a of asig.rows) {
+                const clave = a.receta_id ? `RECETA-${a.receta_id}` : `PRODUCTO-${a.producto_id}`;
+                if (!porArticulo.has(clave)) porArticulo.set(clave, []);
+                porArticulo.get(clave).push(a.grupo_id);
+            }
+            conGrupos = articulos.map((a) => ({ ...a, grupos: porArticulo.get(`${a.tipo}-${a.id}`) ?? [] }));
+        }
+        return { articulos: conGrupos, recetas_sin_precio: sinPrecio.rows[0].n, grupos: gruposMenu };
     }
 }

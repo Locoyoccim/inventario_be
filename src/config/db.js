@@ -18,20 +18,14 @@ const POOL_OPTS = {
 };
 
 // Railway inyecta DATABASE_URL; en local usamos las variables DB_*.
-const pool = process.env.DATABASE_URL
-    ? new Pool({
-          connectionString: process.env.DATABASE_URL,
-          ssl: process.env.DB_SSL === "require" ? { rejectUnauthorized: false } : false,
-          ...POOL_OPTS,
-      })
-    : new Pool({
-          user: process.env.DB_USER,
-          host: process.env.DB_HOST,
-          database: process.env.DB_NAME,
-          password: process.env.DB_PASSWORD,
-          port: process.env.DB_PORT,
-          ...POOL_OPTS,
-      });
+const conexion = process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL, ssl: process.env.DB_SSL === "require" ? { rejectUnauthorized: false } : false }
+    : { user: process.env.DB_USER, host: process.env.DB_HOST, database: process.env.DB_NAME, password: process.env.DB_PASSWORD, port: process.env.DB_PORT };
+
+// Para clientes fuera del pool (p. ej. LISTEN, que necesita una conexión propia y permanente).
+export const opcionesConexion = conexion;
+
+const pool = new Pool({ ...conexion, ...POOL_OPTS });
 
 // Un cliente inactivo puede fallar (corte de red, reinicio de Postgres). Sin este
 // manejador, ese error emitido por el pool tumbaría el proceso.

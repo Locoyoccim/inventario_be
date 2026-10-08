@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { iniciarServidor } from "../helpers/servidor.js";
 
 // Pruebas de integración HTTP: requieren una BD de prueba migrada en TEST_DATABASE_URL.
 // Sin esa variable se saltan (el `npm test` unitario no toca BD). Los tokens se firman
@@ -37,7 +38,6 @@ describe("Integración HTTP", { skip: SKIP }, () => {
         await pool.query("DELETE FROM conteo_fisico WHERE empresa_id = ANY($1)", emp);
         await pool.query("DELETE FROM venta_diaria WHERE empresa_id = ANY($1)", emp);
         await pool.query("DELETE FROM compra WHERE empresa_id = ANY($1)", emp);
-        await pool.query("DELETE FROM pos_map WHERE empresa_id = ANY($1)", emp);
         await pool.query("DELETE FROM receta_detalle WHERE receta_id IN (SELECT id FROM recetas WHERE empresa_id = ANY($1))", emp);
         await pool.query("DELETE FROM recetas WHERE empresa_id = ANY($1)", emp);
         await pool.query("DELETE FROM movimientosinventario WHERE producto_id IN (SELECT id FROM productos WHERE empresa_id = ANY($1))", emp);
@@ -53,9 +53,7 @@ describe("Integración HTTP", { skip: SKIP }, () => {
         const appMod = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        server = appMod.default.listen(0);
-        await new Promise((r) => server.once("listening", r));
-        base = `http://127.0.0.1:${server.address().port}`;
+        ({ server, base } = await iniciarServidor(appMod.default));
 
         await limpiar();
         await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Emp A'),($2,'Emp B')", [A, B]);
@@ -140,38 +138,6 @@ describe("Integración HTTP", { skip: SKIP }, () => {
         assert.equal(compra.status, 201);
         assert.equal(Number(compra.json.data.lineas[0].costo_nuevo), 0.0123, "costo unitario con 4 decimales");
         assert.ok(compra.json.data.recetas_actualizadas >= 1, "la cascada refrescó la receta");
-    });
-
-    it("ventas: importar, listado (B-N1), 409 y revertir", async () => {
-        const fecha = "2026-09-15";
-        await req("POST", `/api/pos-map/${A}`, { token: tokAdminA, body: { nombre_pos: "Pan", tipo: "RECETA", receta_id: recetaId, factor: 1 } });
-
-        const imp = await req("POST", `/api/ventas/${A}/importar`, { token: tokOperA, body: { fecha, lineas: [{ nombre_pos: "Pan", cantidad: 2 }] } });
-        assert.equal(imp.status, 201, "operativo puede importar ventas");
-
-        const lista = await req("GET", `/api/ventas/${A}?desde=2026-09-01&hasta=2026-09-30`, { token: tokOperA });
-        assert.ok(lista.json.data.find((d) => d.fecha.startsWith(fecha)), "el día aparece en el listado");
-
-        const dup = await req("POST", `/api/ventas/${A}/importar`, { token: tokOperA, body: { fecha, lineas: [{ nombre_pos: "Pan", cantidad: 1 }] } });
-        assert.equal(dup.status, 409, "reimportar el mismo día -> 409");
-
-        const rev = await req("DELETE", `/api/ventas/${A}/${fecha}`, { token: tokAdminA });
-        assert.equal(rev.status, 200, "admin revierte el día");
-
-        // Fecha inexistente en preview/import -> 400 (A6)
-        const fBad = await req("POST", `/api/ventas/${A}/importar`, { token: tokOperA, body: { fecha: "2026-02-31", lineas: [{ nombre_pos: "Pan", cantidad: 1 }] } });
-        assert.equal(fBad.status, 400, "fecha inexistente -> 400");
-    });
-
-    it("ventas: preview no escribe nada (B-N2)", async () => {
-        const prev = await req("POST", `/api/ventas/${A}/preview`, { token: tokOperA, body: { lineas: [{ nombre_pos: "Pan", cantidad: 3 }, { nombre_pos: "Desconocido", cantidad: 1 }] } });
-        assert.equal(prev.status, 200);
-        assert.equal(prev.json.data.total_unidades, 4);
-        assert.ok(prev.json.data.consumo.find((c) => c.producto_id === insumoId), "explota la receta a insumos");
-        assert.ok(prev.json.data.sin_mapeo.find((s) => s.nombre_pos === "Desconocido"));
-        // No se creó ninguna venta_diaria por el preview
-        const dias = await req("GET", `/api/ventas/${A}`, { token: tokOperA });
-        assert.equal(dias.json.data.length, 0);
     });
 
     it("recetas: guardado atómico (PUT con ingredientes)", async () => {

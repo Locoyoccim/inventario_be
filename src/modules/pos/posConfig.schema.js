@@ -6,6 +6,8 @@ const areaId = z.coerce.number().int().positive().nullable();
 export const areaCreateSchema = z.object({
     nombre: nombre(60),
     imprime: z.boolean().optional(),
+    pantalla: z.boolean().optional(),
+    tiempo_objetivo_min: z.coerce.number().int().min(1).max(240).optional(),
     es_default: z.boolean().optional(),
 });
 
@@ -14,6 +16,8 @@ export const areaUpdateSchema = z
     .object({
         nombre: nombre(60).optional(),
         imprime: z.boolean().optional(),
+        pantalla: z.boolean().optional(),
+        tiempo_objetivo_min: z.coerce.number().int().min(1).max(240).optional(),
         es_default: z.literal(true).optional(),
         activo: z.boolean().optional(),
     })

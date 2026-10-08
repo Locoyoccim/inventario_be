@@ -12,20 +12,6 @@ export default class UsuarioService {
         return await this.usuarioRepository.findAll(empresa_id);
     }
 
-    async getUsuarioById(empresa_id, id) {
-        return await this.usuarioRepository.findById(empresa_id, id);
-    }
-
-    async deleteUsuarios(empresa_id, id) {
-        const actual = await this.usuarioRepository.findById(empresa_id, id);
-        if (actual && actual.is_owner) {
-            throw ApiError.badRequest("El dueño de la empresa no se puede eliminar");
-        }
-        const eliminado = await this.usuarioRepository.remove(empresa_id, id);
-        invalidarUsuarioActivo(id);
-        return eliminado;
-    }
-
     async createUsuario(empresa_id, data) {
         let payload = { ...data, is_owner: false };
         if (data.password) {

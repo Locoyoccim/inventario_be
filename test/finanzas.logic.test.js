@@ -38,6 +38,16 @@ test("resumen: food cost null si no hay ingresos; ingreso esperado null", () => 
     assert.equal(r.ingreso_esperado, null);
     assert.equal(r.ingresos_comparables, null);
     assert.deepEqual(r.dias_sin_ingreso, ["2026-09-05"]);
+    assert.deepEqual(r.dias_turno_abierto, [], "sin cajas abiertas del POS, la lista va vacía");
+});
+
+test("resumen: los días con caja del POS abierta se reportan aparte de los importados sin ingreso", () => {
+    const r = armarResumen({
+        periodo: {}, ingresosPorMetodo: [], gastosPorCategoria: [], comprasTotal: 0,
+        ventaCosto: 0, devolucionCosto: 0, mermaCosto: 0, ingresoEsperado: 300, diasTurnoAbierto: ["2026-09-07"],
+    });
+    assert.deepEqual(r.dias_turno_abierto, ["2026-09-07"]);
+    assert.deepEqual(r.dias_sin_ingreso, []);
 });
 
 test("resumen: la serie fusiona las cuatro fuentes por periodo", () => {
@@ -52,4 +62,28 @@ test("resumen: la serie fusiona las cuatro fuentes por periodo", () => {
     assert.equal(r.serie.length, 2);
     assert.deepEqual(r.serie[0], { periodo: "2026-09-01", ingresos: 100, compras: 40, gastos_extra: 0, costo_ventas: 30, ingresos_neto: 100 });
     assert.deepEqual(r.serie[1], { periodo: "2026-09-02", ingresos: 0, compras: 0, gastos_extra: 10, costo_ventas: 0, ingresos_neto: 0 });
+});
+
+test("resumen: las ventas del POS sin corte entran al food cost y al resultado, no a ingresos ni al flujo", () => {
+    const base = {
+        periodo: {}, gastosPorCategoria: [], comprasTotal: 0, ventaCosto: "300", devolucionCosto: 0, mermaCosto: 0,
+        ivaPct: 16, preciosIncluyenIva: true,
+    };
+    // Sin la corrección: costo 300 contra ingresos 0 → food cost null y resultado negativo.
+    const sin = armarResumen({ ...base, ingresosPorMetodo: [] });
+    assert.equal(sin.food_cost_pct, null);
+    assert.equal(sin.ventas_pos_sin_corte.total, 0);
+
+    // 1,160 cobrados en una caja abierta = 1,000 sin IVA → costo 300 = 30 %.
+    const con = armarResumen({ ...base, ingresosPorMetodo: [], posSinCorte: { cuentas: 4, total: "1160" } });
+    assert.equal(con.food_cost_pct, 30);
+    assert.equal(con.resultado_operacion, 700);
+    assert.equal(con.ingresos.total, 0);
+    assert.equal(con.flujo, 0);
+    assert.deepEqual(con.ventas_pos_sin_corte, { cuentas: 4, total: 1160, neto: 1000 });
+
+    // Con ingresos ya registrados de otros días se suman al denominador.
+    const mixto = armarResumen({ ...base, ingresosPorMetodo: [{ metodo_pago: "EFECTIVO", total: "1160" }], posSinCorte: { cuentas: 4, total: "1160" } });
+    assert.equal(mixto.food_cost_pct, 15);
+    assert.equal(mixto.ingresos.total, 1160);
 });

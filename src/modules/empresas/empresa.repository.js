@@ -1,30 +1,12 @@
 import pool from "../../config/db.js";
-import ApiError from "../../utils/ApiError.js";
+import { notificar } from "../../realtime/eventosPos.js";
 
 const QUERIES = {
-    SELECT_ALL: `SELECT * FROM empresas ORDER BY id ASC`,
     SELECT_BY_ID: `SELECT * FROM empresas WHERE id = $1`,
     EXISTS_EMPRESA: `SELECT 1 FROM empresas WHERE id = $1`,
-    INSERT: `
-        INSERT INTO empresas (nombre, titular, telefono, email, domicilio)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, nombre, titular, telefono, email, domicilio
-    `,
-    UPDATE: `
-        UPDATE empresas 
-        SET nombre = $1, titular = $2, telefono = $3, email = $4, domicilio = $5 
-        WHERE id = $6
-        RETURNING id, nombre, titular, telefono, email, domicilio
-    `,
-    DELETE: `DELETE FROM empresas WHERE id = $1 RETURNING id`,
 };
 
 export default class EmpresaRepository {
-    async findAll() {
-        const result = await pool.query(QUERIES.SELECT_ALL);
-        return result.rows;
-    }
-
     async findById(id) {
         const result = await pool.query(QUERIES.SELECT_BY_ID, [id]);
         return result.rows[0];
@@ -35,54 +17,10 @@ export default class EmpresaRepository {
         return result.rowCount > 0;
     }
 
-    async create({ nombre, titular, telefono, email, domicilio }) {
-        if (!nombre) throw ApiError.badRequest("nombre es requerido");
-
-        const values = [nombre, titular ?? null, telefono ?? null, email ?? null, domicilio ?? null];
-        const client = await pool.connect();
-        try {
-            await client.query("BEGIN");
-            const result = await client.query(QUERIES.INSERT, values);
-            const empresa = result.rows[0];
-            // Sembrar las categorías de gasto base para la nueva empresa (FINANZAS).
-            await client.query(
-                `INSERT INTO categorias_gasto (empresa_id, nombre)
-                 SELECT $1, c.nombre FROM (VALUES
-                    ('Renta'),('Luz'),('Agua'),('Gas'),('Sueldos'),
-                    ('Mantenimiento'),('Publicidad'),('Impuestos y comisiones'),('Otros')
-                 ) AS c(nombre)
-                 ON CONFLICT (empresa_id, lower(nombre)) DO NOTHING`,
-                [empresa.id]
-            );
-            await client.query("COMMIT");
-            return empresa;
-        } catch (error) {
-            await client.query("ROLLBACK");
-            throw error;
-        } finally {
-            client.release();
-        }
-    }
-
-    async update(id, { nombre, titular, telefono, email, domicilio }) {
-        if (!id) throw ApiError.badRequest("ID es requerido");
-        if (!nombre) throw ApiError.badRequest("nombre es requerido");
-
-        const values = [nombre, titular ?? null, telefono ?? null, email ?? null, domicilio ?? null, id];
-        const result = await pool.query(QUERIES.UPDATE, values);
-        return result.rows[0];
-    }
-
-    async remove(id) {
-        if (!id) throw ApiError.badRequest("ID es requerido");
-        const result = await pool.query(QUERIES.DELETE, [id]);
-        return result.rows[0];
-    }
-
     // Configuración fiscal/comercial de la empresa.
     async getConfig(id) {
         const r = await pool.query(
-            "SELECT iva_pct, precios_incluyen_iva, food_cost_objetivo FROM empresas WHERE id = $1",
+            "SELECT iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria, usa_pantalla_cocina FROM empresas WHERE id = $1",
             [id]
         );
         return r.rows[0];
@@ -90,7 +28,7 @@ export default class EmpresaRepository {
 
     // Actualiza la configuración (campos opcionales). Con aplicarARecetas=true, propaga el
     // IVA de la empresa a TODAS sus recetas (por defecto solo aplica a las nuevas).
-    async updateConfig(id, { iva_pct, precios_incluyen_iva, food_cost_objetivo }, aplicarARecetas = false) {
+    async updateConfig(id, { iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria, usa_pantalla_cocina }, aplicarARecetas = false) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -98,11 +36,20 @@ export default class EmpresaRepository {
                 `UPDATE empresas
                  SET iva_pct = COALESCE($2, iva_pct),
                      precios_incluyen_iva = COALESCE($3, precios_incluyen_iva),
-                     food_cost_objetivo = COALESCE($4, food_cost_objetivo)
+                     food_cost_objetivo = COALESCE($4, food_cost_objetivo),
+                     zona_horaria = COALESCE($5, zona_horaria),
+                     usa_pantalla_cocina = COALESCE($6, usa_pantalla_cocina)
                  WHERE id = $1
-                 RETURNING iva_pct, precios_incluyen_iva, food_cost_objetivo`,
-                [id, iva_pct ?? null, precios_incluyen_iva ?? null, food_cost_objetivo ?? null]
+                 RETURNING iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria, usa_pantalla_cocina`,
+                [id, iva_pct ?? null, precios_incluyen_iva ?? null, food_cost_objetivo ?? null, zona_horaria ?? null, usa_pantalla_cocina ?? null]
             );
+            // Apagar la pantalla no borra nada: lo que seguía abierto en ella se da por entregado para que no estorbe.
+            if (usa_pantalla_cocina === false) {
+                await client.query("UPDATE pos_comandas SET estado = 'ENTREGADA', actualizada_at = now() WHERE empresa_id = $1 AND estado IN ('NUEVA','EN_PREPARACION','LISTA')", [id]);
+                // Un área que solo mostraba pantalla se quedaría sin comanda: vuelve a imprimir (su opción de pantalla se conserva por si se reactiva).
+                await client.query("UPDATE areas_preparacion SET imprime = true WHERE empresa_id = $1 AND pantalla AND NOT imprime", [id]);
+            }
+            if (usa_pantalla_cocina !== undefined) await notificar(client, { tipo: "config", empresa_id: id });
             const cfg = upd.rows[0];
             let recetas_actualizadas = 0;
             if (cfg && aplicarARecetas) {

@@ -29,7 +29,7 @@ const QUERIES = {
                COALESCE(SUM(ABS(m.stock_nuevo - m.stock_anterior) * m.costo_unitario), 0)::numeric(14,2) AS valor
         FROM movimientosinventario m
         JOIN productos p ON p.id = m.producto_id
-        WHERE p.empresa_id = $1 AND m.fecha::date BETWEEN $2 AND $3
+        WHERE p.empresa_id = $1 AND fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1)) BETWEEN $2 AND $3
         GROUP BY m.tipo_movimiento
         ORDER BY m.tipo_movimiento;`,
     // Merma real: salidas por MERMA o AJUSTE que redujeron stock.
@@ -38,7 +38,7 @@ const QUERIES = {
                COALESCE(SUM((m.stock_anterior - m.stock_nuevo) * m.costo_unitario), 0)::numeric(14,2) AS valor
         FROM movimientosinventario m
         JOIN productos p ON p.id = m.producto_id
-        WHERE p.empresa_id = $1 AND m.fecha::date BETWEEN $2 AND $3
+        WHERE p.empresa_id = $1 AND fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1)) BETWEEN $2 AND $3
           AND m.stock_nuevo < m.stock_anterior
           AND m.tipo_movimiento IN ('MERMA', 'AJUSTE');`,
     // Historial de actividad: registro + anulacion de compras, conteos y producciones, en un
@@ -77,7 +77,7 @@ const QUERIES = {
                COUNT(*) OVER()::int AS total_rows
         FROM eventos e
         LEFT JOIN usuarios u ON u.id = e.usuario_id
-        WHERE e.en IS NOT NULL AND e.en::date BETWEEN $2 AND $3
+        WHERE e.en IS NOT NULL AND fecha_negocio(e.en, (SELECT zona_horaria FROM empresas WHERE id = $1)) BETWEEN $2 AND $3
         ORDER BY e.en DESC
         LIMIT $4 OFFSET $5;`,
     // Top productos consumidos por VENTA en un rango.
@@ -88,7 +88,7 @@ const QUERIES = {
         FROM movimientosinventario m
         JOIN productos p ON p.id = m.producto_id
         WHERE p.empresa_id = $1 AND m.tipo_movimiento = 'VENTA'
-          AND m.fecha::date BETWEEN $2 AND $3
+          AND fecha_negocio(m.fecha, (SELECT zona_horaria FROM empresas WHERE id = $1)) BETWEEN $2 AND $3
         GROUP BY m.producto_id, p.producto, p.unidad_medida
         ORDER BY valor DESC
         LIMIT $4;`,
@@ -203,6 +203,53 @@ export default class ReporteRepository {
                 produccion: kpi("PRODUCCION"),
                 mermas: act.merma,
             },
+        };
+    }
+
+    // Avance de la puesta en marcha de una empresa nueva: cada paso se deduce de sus datos reales.
+    // `requerido` = sin esto no se puede vender; lo demás es recomendable.
+    async primerosPasos(empresa_id) {
+        const r = (await pool.query(
+            `SELECT
+                (SELECT COUNT(*) FROM categorias WHERE empresa_id = $1 AND activo)::int AS categorias,
+                (SELECT COUNT(*) FROM proveedores WHERE empresa_id = $1 AND activo)::int AS proveedores,
+                (SELECT COUNT(*) FROM productos WHERE empresa_id = $1 AND activo AND NOT es_elaborado)::int AS insumos,
+                (SELECT COUNT(*) FROM recetas WHERE empresa_id = $1 AND activo AND NOT es_preparacion AND precio_venta > 0)::int AS recetas,
+                (SELECT COUNT(*) FROM mesas WHERE empresa_id = $1 AND activo)::int AS mesas,
+                (SELECT COUNT(*) FROM impresoras WHERE empresa_id = $1 AND activo)::int AS impresoras,
+                (SELECT COUNT(*) FROM usuarios WHERE empresa_id = $1)::int AS usuarios,
+                (SELECT COUNT(*) FROM pos_cuentas WHERE empresa_id = $1 AND estado = 'PAGADA')::int AS ventas_pos`,
+            [empresa_id],
+        )).rows[0];
+        const pasos = [
+            { id: "categorias", hecho: r.categorias > 0, cantidad: r.categorias, requerido: true, ruta: "/categorias" },
+            { id: "proveedores", hecho: r.proveedores > 0, cantidad: r.proveedores, requerido: false, ruta: "/proveedores" },
+            { id: "insumos", hecho: r.insumos > 0, cantidad: r.insumos, requerido: true, ruta: "/productos" },
+            { id: "recetas", hecho: r.recetas > 0, cantidad: r.recetas, requerido: true, ruta: "/recetas" },
+            { id: "mesas", hecho: r.mesas > 0, cantidad: r.mesas, requerido: true, ruta: "/pos/configuracion" },
+            { id: "impresora", hecho: r.impresoras > 0, cantidad: r.impresoras, requerido: false, ruta: "/pos/configuracion" },
+            { id: "equipo", hecho: r.usuarios > 1, cantidad: Math.max(r.usuarios - 1, 0), requerido: false, ruta: "/usuarios" },
+            { id: "primera_venta", hecho: r.ventas_pos > 0, cantidad: r.ventas_pos, requerido: false, ruta: "/pos" },
+        ];
+        return { pasos, listo: pasos.filter((p) => p.requerido).every((p) => p.hecho) };
+    }
+
+    // ¿La empresa ya opera con el POS? Si es así, importar el CSV deja de ser una tarea diaria y Inicio lo
+    // oculta. Además, las cajas de días anteriores que siguen abiertas: su venta aún no llega a Finanzas.
+    async estadoPos(empresa_id, hoy) {
+        const [opera, vencidos] = await Promise.all([
+            pool.query("SELECT EXISTS (SELECT 1 FROM pos_turnos WHERE empresa_id = $1) AS opera", [empresa_id]),
+            pool.query(
+                `SELECT t.id, t.fecha_negocio, t.abierto_at, u.nombre AS cajero
+                 FROM pos_turnos t JOIN usuarios u ON u.id = t.usuario_id
+                 WHERE t.empresa_id = $1 AND t.estado = 'ABIERTO' AND t.fecha_negocio < $2::date
+                 ORDER BY t.fecha_negocio, t.id`,
+                [empresa_id, hoy],
+            ),
+        ]);
+        return {
+            activo: opera.rows[0].opera,
+            turnos_sin_cerrar: vencidos.rows.map((t) => ({ id: t.id, fecha_negocio: String(t.fecha_negocio).slice(0, 10), abierto_at: t.abierto_at, cajero: t.cajero })),
         };
     }
 }

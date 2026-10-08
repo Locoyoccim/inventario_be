@@ -13,7 +13,8 @@ export const crearEmpresaSchema = z.object({
     owner: z.object({
         nombre: z.string().trim().min(1, "nombre del owner es requerido"),
         email: z.string().trim().toLowerCase().email("email inválido"),
-        password: z.string().min(6, "password debe tener al menos 6 caracteres"),
+        // Opcional: sin contraseña el owner recibe un enlace por correo para definir la suya (recomendado).
+        password: z.string().min(8, "password debe tener al menos 8 caracteres").optional(),
         codigo_ingreso: z.string().trim().min(1, "codigo_ingreso es requerido"),
         puesto: z.string().trim().optional(),
     }),
@@ -24,5 +25,5 @@ export const cambiarEstadoEmpresaSchema = z.object({
 });
 
 export const resetearPasswordOwnerSchema = z.object({
-    password: z.string().min(6, "password debe tener al menos 6 caracteres"),
+    password: z.string().min(8, "password debe tener al menos 8 caracteres"),
 });
