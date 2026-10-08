@@ -40,7 +40,13 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
                 ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
             },
             body: body !== undefined ? JSON.stringify(body) : undefined,
+            signal: AbortSignal.timeout(10_000), // una ruta que se cuelga debe FALLAR la prueba, no colgarla
         });
+        // Un flujo SSE no termina: si se abre (la guardia falló) se informa el estado y se corta la conexión.
+        if (res.headers.get("content-type")?.includes("text/event-stream")) {
+            await res.body?.cancel().catch(() => {});
+            return { status: res.status, texto: "[flujo SSE abierto]", json: null };
+        }
         const texto = await res.text();
         let json = null;
         try {
