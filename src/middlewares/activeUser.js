@@ -149,7 +149,10 @@ export async function requireActiveUser(req, _res, next) {
     try {
         if (!req.user?.id) return next(ApiError.unauthorized());
         const estado = await perfilActivo(req.user.id);
-        if (!estado.activo) return next(ApiError.unauthorized("Usuario desactivado"));
+        if (!estado.activo)
+            return next(
+                ApiError.unauthorized("Usuario desactivado").conEvento("usuario_desactivado"),
+            );
         // El tenant del token debe ser el de la fila del usuario (su empresa base) o un acceso compartido VIGENTE: el aislamiento no puede
         // descansar solo en un claim del JWT. Un acceso retirado o una empresa que ya no le corresponde pierde la sesión (401).
         const ctx = contextoEmpresa(estado, req.user.empresa_id);
@@ -157,16 +160,22 @@ export async function requireActiveUser(req, _res, next) {
             return next(
                 ApiError.unauthorized(
                     "La sesión no corresponde a tu empresa. Vuelve a iniciar sesión.",
-                ),
+                ).conEvento("sesion_empresa_invalida"),
             );
         }
         if (!ctx.empresa_activa)
             return next(
-                ApiError.unauthorized("La empresa fue desactivada. Contacta al administrador."),
+                ApiError.unauthorized(
+                    "La empresa fue desactivada. Contacta al administrador.",
+                ).conEvento("empresa_desactivada"),
             );
         // Revocación: si la versión del token no coincide con la de la BD, la sesión fue cerrada.
         if (Number(req.user.tv ?? 0) !== estado.tv) {
-            return next(ApiError.unauthorized("Sesión finalizada. Vuelve a iniciar sesión."));
+            return next(
+                ApiError.unauthorized("Sesión finalizada. Vuelve a iniciar sesión.").conEvento(
+                    "sesion_revocada",
+                ),
+            );
         }
         // Sesión de PIN: solo vale mientras el equipo siga autorizado y la persona no sea administradora (si la ascendieron,
         // vuelve a entrar con correo y contraseña; una sesión de PIN nunca hereda poderes de Admin).
@@ -176,21 +185,24 @@ export async function requireActiveUser(req, _res, next) {
                 return next(
                     ApiError.unauthorized(
                         "Esta sesión ya no es válida. Entra con tu correo y contraseña.",
-                    ),
+                    ).conEvento("sesion_pin_invalida", { motivo: "empresa_compartida" }),
                 );
             }
             if (estado.is_admin || estado.is_owner || estado.is_platform_admin) {
                 return next(
                     ApiError.unauthorized(
                         "Esta sesión ya no es válida. Entra con tu correo y contraseña.",
-                    ),
+                    ).conEvento("sesion_pin_invalida", { motivo: "ascendido_a_admin" }),
                 );
             }
             if (!(await equipoActivo(req.user.disp, (sql, params) => pool.query(sql, params)))) {
                 return next(
                     ApiError.unauthorized(
                         "Este equipo ya no está autorizado. Pide a un administrador que lo registre de nuevo.",
-                    ),
+                    ).conEvento("sesion_pin_invalida", {
+                        motivo: "equipo_revocado",
+                        equipo: req.user.disp,
+                    }),
                 );
             }
         }

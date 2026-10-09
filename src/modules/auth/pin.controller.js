@@ -1,8 +1,15 @@
 import { asyncHandler } from "../../middlewares/asyncHandler.js";
 import ApiError from "../../utils/ApiError.js";
 import { invalidarDispositivo } from "../../middlewares/activeUser.js";
+import { registrarActividadSegura } from "../actividad/actividad.js";
 import {
-    AUTH_COOKIE, CSRF_HEADER, DEVICE_COOKIE, authCookieOptions, clearDeviceCookieOptions, deviceCookieOptions, readCookie,
+    AUTH_COOKIE,
+    CSRF_HEADER,
+    DEVICE_COOKIE,
+    authCookieOptions,
+    clearDeviceCookieOptions,
+    deviceCookieOptions,
+    readCookie,
 } from "../../utils/authCookie.js";
 
 const ok = (res, data, status = 200) => res.status(status).json({ success: true, data });
@@ -10,7 +17,10 @@ const ok = (res, data, status = 200) => res.status(status).json({ success: true,
 // Las rutas con la cookie del equipo exigen el header anti-CSRF aunque no haya sesión: así otro sitio no puede iniciar sesión
 // «a ciegas» en el navegador de la persona con un PIN que conozca.
 export function exigirCabeceraCsrf(req, _res, next) {
-    if (!req.headers[CSRF_HEADER]) return next(ApiError.forbidden("Falta el header X-Requested-With"));
+    if (!req.headers[CSRF_HEADER])
+        return next(
+            ApiError.forbidden("Falta el header X-Requested-With").conEvento("csrf_faltante"),
+        );
     next();
 }
 
@@ -27,7 +37,10 @@ export default class PinController {
         const d = token ? await this.dispositivos.porToken(token) : null;
         if (!d) {
             if (token) res.clearCookie(DEVICE_COOKIE, clearDeviceCookieOptions());
-            throw ApiError.unauthorized("Este equipo no está registrado");
+            throw ApiError.unauthorized("Este equipo no está registrado").conEvento(
+                "equipo_no_registrado",
+                { motivo: token ? "revocado_o_desconocido" : "sin_cookie" },
+            );
         }
         return d;
     }
@@ -45,38 +58,106 @@ export default class PinController {
 
     entrar = asyncHandler(async (req, res) => {
         const dispositivo = await this.#dispositivo(req, res);
-        const { token, expires, user } = await this.pin.entrar(dispositivo, { usuario_id: req.body.usuario_id, pin: req.body.pin, ip: req.ip });
+        const { token, expires, user } = await this.pin.entrar(dispositivo, {
+            usuario_id: req.body.usuario_id,
+            pin: req.body.pin,
+            ip: req.ip,
+        });
         res.cookie(AUTH_COOKIE, token, authCookieOptions(process.env, expires));
         ok(res, { user });
     });
 
     // ---- Admin ----
-    listarEquipos = asyncHandler(async (req, res) => ok(res, await this.dispositivos.listar(req.params.empresa_id)));
+    listarEquipos = asyncHandler(async (req, res) =>
+        ok(res, await this.dispositivos.listar(req.params.empresa_id)),
+    );
 
-    crearEquipo = asyncHandler(async (req, res) => ok(res, await this.dispositivos.crear(req.params.empresa_id, req.body.nombre, req.user.id), 201));
+    crearEquipo = asyncHandler(async (req, res) => {
+        const creado = await this.dispositivos.crear(
+            req.params.empresa_id,
+            req.body.nombre,
+            req.user.id,
+        );
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "equipo.crear",
+            objeto_tipo: "equipo",
+            objeto_id: creado.dispositivo?.id,
+            detalle: { nombre: req.body.nombre },
+        });
+        ok(res, creado, 201);
+    });
 
-    renombrarEquipo = asyncHandler(async (req, res) => ok(res, await this.dispositivos.renombrar(req.params.empresa_id, req.params.id, req.body.nombre)));
+    renombrarEquipo = asyncHandler(async (req, res) => {
+        const d = await this.dispositivos.renombrar(
+            req.params.empresa_id,
+            req.params.id,
+            req.body.nombre,
+        );
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "equipo.actualizar",
+            objeto_tipo: "equipo",
+            objeto_id: req.params.id,
+            detalle: { campos: ["nombre"], nombre: req.body.nombre },
+        });
+        ok(res, d);
+    });
 
-    codigoNuevo = asyncHandler(async (req, res) => ok(res, await this.dispositivos.nuevoCodigo(req.params.empresa_id, req.params.id)));
+    codigoNuevo = asyncHandler(async (req, res) => {
+        const r = await this.dispositivos.nuevoCodigo(req.params.empresa_id, req.params.id);
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "equipo.codigo_nuevo",
+            objeto_tipo: "equipo",
+            objeto_id: req.params.id,
+        });
+        ok(res, r);
+    });
 
     revocarEquipo = asyncHandler(async (req, res) => {
         const d = await this.dispositivos.revocar(req.params.empresa_id, req.params.id);
         invalidarDispositivo(d.id);
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "equipo.revocar",
+            objeto_tipo: "equipo",
+            objeto_id: d.id,
+        });
         ok(res, d);
     });
 
     definirPin = asyncHandler(async (req, res) => {
         await this.pin.definirPin(req.params.empresa_id, Number(req.params.id), req.body.pin);
+        // El PIN nunca va a la bitácora: solo que se definió y para quién.
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "pin.definir",
+            objeto_tipo: "usuario",
+            objeto_id: req.params.id,
+        });
         ok(res, null);
     });
 
     quitarPin = asyncHandler(async (req, res) => {
         await this.pin.quitarPin(req.params.empresa_id, Number(req.params.id));
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "pin.quitar",
+            objeto_tipo: "usuario",
+            objeto_id: req.params.id,
+        });
         ok(res, null);
     });
 
     desbloquearPin = asyncHandler(async (req, res) => {
         await this.pin.desbloquear(req.params.empresa_id, Number(req.params.id));
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "pin.desbloquear",
+            objeto_tipo: "usuario",
+            objeto_id: req.params.id,
+        });
         ok(res, null);
     });
 }

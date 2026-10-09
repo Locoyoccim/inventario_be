@@ -1,21 +1,25 @@
 import ApiError from "../utils/ApiError.js";
 import { logger } from "../utils/logger.js";
+import { registrarEvento } from "../utils/seguridad.js";
+import { capturarError } from "../utils/sentry.js";
 
 // Mapeo de códigos de error de PostgreSQL a respuestas limpias (sin filtrar SQL).
 const PG_ERRORS = {
-    "23505": [409, "El registro ya existe (dato duplicado)"],
-    "23503": [400, "Referencia inválida: el recurso relacionado no existe"],
-    "23502": [400, "Falta un campo requerido"],
-    "23514": [400, "Un valor no cumple una restricción de la base"],
+    23505: [409, "El registro ya existe (dato duplicado)"],
+    23503: [400, "Referencia inválida: el recurso relacionado no existe"],
+    23502: [400, "Falta un campo requerido"],
+    23514: [400, "Un valor no cumple una restricción de la base"],
     "22P02": [400, "Formato de dato inválido"],
-    "22003": [400, "Un número está fuera de rango"],
-    "22007": [400, "Fecha inválida"],
-    "22008": [400, "Fecha inválida"],
+    22003: [400, "Un número está fuera de rango"],
+    22007: [400, "Fecha inválida"],
+    22008: [400, "Fecha inválida"],
 };
 
 // Middleware central de errores (debe ir DESPUÉS de las rutas).
 export function errorHandler(err, req, res, _next) {
     if (err instanceof ApiError) {
+        if (err.evento)
+            registrarEvento(req, err.evento, { status: err.statusCode, ...err.eventoDatos });
         return res.status(err.statusCode).json({
             success: false,
             error: err.message,
@@ -28,7 +32,9 @@ export function errorHandler(err, req, res, _next) {
             campo: Array.isArray(i.path) ? i.path.join(".") : String(i.path ?? ""),
             mensaje: i.message,
         }));
-        return res.status(400).json({ success: false, error: "Validación fallida", details: issues });
+        return res
+            .status(400)
+            .json({ success: false, error: "Validación fallida", details: issues });
     }
 
     if (err && err.code && PG_ERRORS[err.code]) {
@@ -39,18 +45,34 @@ export function errorHandler(err, req, res, _next) {
 
     // Errores del parser de body: tamaño excedido (413) o JSON malformado (400).
     if (err && err.type === "entity.too.large") {
-        return res.status(413).json({ success: false, error: "El cuerpo de la solicitud es demasiado grande" });
+        return res
+            .status(413)
+            .json({ success: false, error: "El cuerpo de la solicitud es demasiado grande" });
     }
-    if (err && (err.type === "entity.parse.failed" || (err instanceof SyntaxError && "body" in err))) {
-        return res.status(400).json({ success: false, error: "JSON inválido en el cuerpo de la solicitud" });
+    if (
+        err &&
+        (err.type === "entity.parse.failed" || (err instanceof SyntaxError && "body" in err))
+    ) {
+        return res
+            .status(400)
+            .json({ success: false, error: "JSON inválido en el cuerpo de la solicitud" });
     }
 
     // Inesperado: se registra completo, al cliente solo un genérico.
     logger.error("unhandled_error", {
         requestId: req.id,
-        message: err && err.message,
+        error: err && err.message,
         stack: err && err.stack,
     });
-    return res.status(500).json({ success: false, error: "Error interno del servidor" });
+    // Si Sentry está activo recibe el error (sin datos de la petición ni de la persona; solo el id para encontrarlo en el log).
+    capturarError(err, {
+        tipo: "unhandled_error",
+        requestId: req.id,
+        empresa_id: req.user?.empresa_id,
+    });
+    // El id permite buscar este fallo en los logs cuando alguien lo reporta.
+    return res
+        .status(500)
+        .json({ success: false, error: "Error interno del servidor", requestId: req.id });
 }
 export default errorHandler;

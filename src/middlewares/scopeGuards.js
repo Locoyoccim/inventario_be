@@ -8,7 +8,11 @@ export async function recetaEmpresaGuard(req, _res, next, val) {
         const r = await pool.query("SELECT empresa_id FROM recetas WHERE id = $1", [val]);
         if (!r.rows[0]) return next(ApiError.notFound("Receta no encontrada"));
         if (String(r.rows[0].empresa_id) !== String(req.user.empresa_id)) {
-            return next(ApiError.forbidden("No tienes acceso a esta receta"));
+            return next(
+                ApiError.forbidden("No tienes acceso a esta receta").conEvento("recurso_ajeno", {
+                    recurso: "receta",
+                }),
+            );
         }
         next();
     } catch (e) {
@@ -20,7 +24,11 @@ export async function recetaEmpresaGuard(req, _res, next, val) {
 export function empresaSelfGuard(req, _res, next) {
     if (!req.user) return next(ApiError.unauthorized());
     if (String(req.user.empresa_id) !== String(req.params.id)) {
-        return next(ApiError.forbidden("No tienes acceso a esta empresa"));
+        return next(
+            ApiError.forbidden("No tienes acceso a esta empresa").conEvento("empresa_ajena", {
+                empresa_solicitada: String(req.params.id).slice(0, 20),
+            }),
+        );
     }
     next();
 }

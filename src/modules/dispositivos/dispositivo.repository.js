@@ -1,6 +1,13 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
-import { generarCodigo, generarTokenDispositivo, hashCodigo, hashToken, LIMITES, VIGENCIA_CODIGO_MIN } from "../auth/pin.logic.js";
+import {
+    generarCodigo,
+    generarTokenDispositivo,
+    hashCodigo,
+    hashToken,
+    LIMITES,
+    VIGENCIA_CODIGO_MIN,
+} from "../auth/pin.logic.js";
 
 // Estado legible de un equipo a partir de sus columnas.
 const ESTADO_SQL = `CASE
@@ -16,7 +23,10 @@ const COLUMNAS = `d.id, d.nombre, d.activo, d.activado_at, d.ultimo_uso, d.revoc
 /** Equipos registrados (el celular o la tablet desde la que se entra con PIN) y sus códigos de registro. */
 export default class DispositivoRepository {
     async listar(empresa_id) {
-        const r = await pool.query(`SELECT ${COLUMNAS} FROM dispositivos d WHERE d.empresa_id = $1 ORDER BY d.id`, [empresa_id]);
+        const r = await pool.query(
+            `SELECT ${COLUMNAS} FROM dispositivos d WHERE d.empresa_id = $1 ORDER BY d.id`,
+            [empresa_id],
+        );
         return r.rows;
     }
 
@@ -28,7 +38,11 @@ export default class DispositivoRepository {
              VALUES ($1,$2,$3, now() + make_interval(mins => $4), $5) RETURNING id`,
             [empresa_id, nombre, hashCodigo(codigo), VIGENCIA_CODIGO_MIN, creado_por ?? null],
         );
-        return { dispositivo: await this.#uno(empresa_id, r.rows[0].id), codigo, vigencia_min: VIGENCIA_CODIGO_MIN };
+        return {
+            dispositivo: await this.#uno(empresa_id, r.rows[0].id),
+            codigo,
+            vigencia_min: VIGENCIA_CODIGO_MIN,
+        };
     }
 
     // Código nuevo para volver a registrar un equipo (se cambió de teléfono, se borró la cookie). El token vigente sigue
@@ -41,7 +55,11 @@ export default class DispositivoRepository {
             [id, empresa_id, hashCodigo(codigo), VIGENCIA_CODIGO_MIN],
         );
         if (r.rowCount === 0) throw ApiError.notFound("Equipo no encontrado o revocado");
-        return { dispositivo: await this.#uno(empresa_id, id), codigo, vigencia_min: VIGENCIA_CODIGO_MIN };
+        return {
+            dispositivo: await this.#uno(empresa_id, id),
+            codigo,
+            vigencia_min: VIGENCIA_CODIGO_MIN,
+        };
     }
 
     // Revocar no borra el equipo: queda en la lista como revocado y su token deja de valer.
@@ -56,7 +74,10 @@ export default class DispositivoRepository {
     }
 
     async renombrar(empresa_id, id, nombre) {
-        const r = await pool.query("UPDATE dispositivos SET nombre = $3 WHERE id = $1 AND empresa_id = $2 RETURNING id", [id, empresa_id, nombre]);
+        const r = await pool.query(
+            "UPDATE dispositivos SET nombre = $3 WHERE id = $1 AND empresa_id = $2 RETURNING id",
+            [id, empresa_id, nombre],
+        );
         if (r.rowCount === 0) throw ApiError.notFound("Equipo no encontrado");
         return this.#uno(empresa_id, id);
     }
@@ -71,7 +92,10 @@ export default class DispositivoRepository {
              RETURNING d.id, d.empresa_id, d.nombre`,
             [hashCodigo(codigo), hashToken(token)],
         );
-        if (r.rowCount === 0) throw ApiError.badRequest("El código no es válido o ya venció. Pide uno nuevo a un administrador.");
+        if (r.rowCount === 0)
+            throw ApiError.badRequest(
+                "El código no es válido o ya venció. Pide uno nuevo a un administrador.",
+            ).conEvento("equipo_codigo_invalido");
         return { dispositivo: r.rows[0], token };
     }
 
@@ -86,7 +110,10 @@ export default class DispositivoRepository {
     }
 
     async estaActivo(id) {
-        const r = await pool.query("SELECT 1 FROM dispositivos d JOIN empresas e ON e.id = d.empresa_id WHERE d.id = $1 AND d.activo AND e.activo", [id]);
+        const r = await pool.query(
+            "SELECT 1 FROM dispositivos d JOIN empresas e ON e.id = d.empresa_id WHERE d.id = $1 AND d.activo AND e.activo",
+            [id],
+        );
         return r.rowCount > 0;
     }
 
@@ -128,7 +155,10 @@ export default class DispositivoRepository {
             [usuario_id, dispositivo_id, ip ?? null, LIMITES.ventanaMin],
         );
         const f = r.rows[0];
-        const g = (n, ultimo) => ({ n: Number(n), ultimoMs: ultimo == null ? null : Number(ultimo) });
+        const g = (n, ultimo) => ({
+            n: Number(n),
+            ultimoMs: ultimo == null ? null : Number(ultimo),
+        });
         return {
             ahoraMs: Number(f.ahora_ms),
             usuarioDispositivo: g(f.ud_n, f.ud_ultimo),
@@ -139,24 +169,39 @@ export default class DispositivoRepository {
 
     // Registra el fallo y, si el usuario acumula demasiados en la ventana larga, lo bloquea (solo un Admin lo quita).
     async registrarFallo(empresa_id, usuario_id, dispositivo_id, ip) {
-        await pool.query("INSERT INTO pin_fallos (empresa_id, usuario_id, dispositivo_id, ip) VALUES ($1,$2,$3,$4)", [empresa_id, usuario_id, dispositivo_id, ip ?? null]);
+        await pool.query(
+            "INSERT INTO pin_fallos (empresa_id, usuario_id, dispositivo_id, ip) VALUES ($1,$2,$3,$4)",
+            [empresa_id, usuario_id, dispositivo_id, ip ?? null],
+        );
         const r = await pool.query(
             "SELECT COUNT(*)::int AS n FROM pin_fallos WHERE usuario_id = $1 AND created_at > now() - make_interval(mins => $2)",
             [usuario_id, LIMITES.duro.ventanaMin],
         );
-        if (r.rows[0].n >= LIMITES.duro.max) {
-            await pool.query("UPDATE usuarios SET pin_bloqueado_at = COALESCE(pin_bloqueado_at, now()) WHERE id = $1", [usuario_id]);
+        const bloqueado = r.rows[0].n >= LIMITES.duro.max;
+        if (bloqueado) {
+            await pool.query(
+                "UPDATE usuarios SET pin_bloqueado_at = COALESCE(pin_bloqueado_at, now()) WHERE id = $1",
+                [usuario_id],
+            );
         }
         // Limpieza de contadores vencidos (no es historial de negocio): de vez en cuando basta.
-        if (Math.random() < 0.02) await pool.query("DELETE FROM pin_fallos WHERE created_at < now() - interval '1 day'");
+        if (Math.random() < 0.02)
+            await pool.query("DELETE FROM pin_fallos WHERE created_at < now() - interval '1 day'");
+        // Lo usa el log de seguridad: `true` cuando ESTE fallo dejó el PIN bloqueado.
+        return { bloqueado };
     }
 
     async limpiarFallos(usuario_id, dispositivo_id) {
-        await pool.query("DELETE FROM pin_fallos WHERE usuario_id = $1 AND dispositivo_id = $2", [usuario_id, dispositivo_id]);
+        await pool.query("DELETE FROM pin_fallos WHERE usuario_id = $1 AND dispositivo_id = $2", [
+            usuario_id,
+            dispositivo_id,
+        ]);
     }
 
     async marcarUso(dispositivo_id) {
-        await pool.query("UPDATE dispositivos SET ultimo_uso = now() WHERE id = $1", [dispositivo_id]);
+        await pool.query("UPDATE dispositivos SET ultimo_uso = now() WHERE id = $1", [
+            dispositivo_id,
+        ]);
     }
 
     // ---- Administración del PIN de un usuario ----
@@ -166,7 +211,10 @@ export default class DispositivoRepository {
              WHERE id = $1 AND empresa_id = $2 AND NOT is_admin AND NOT is_owner AND NOT is_platform_admin RETURNING id`,
             [usuario_id, empresa_id, pin_hash],
         );
-        if (r.rowCount === 0) throw ApiError.badRequest("Ese usuario no puede usar PIN (los administradores entran con correo y contraseña)");
+        if (r.rowCount === 0)
+            throw ApiError.badRequest(
+                "Ese usuario no puede usar PIN (los administradores entran con correo y contraseña)",
+            );
         await pool.query("DELETE FROM pin_fallos WHERE usuario_id = $1", [usuario_id]);
     }
 
@@ -180,13 +228,19 @@ export default class DispositivoRepository {
     }
 
     async desbloquear(empresa_id, usuario_id) {
-        const r = await pool.query("UPDATE usuarios SET pin_bloqueado_at = NULL WHERE id = $1 AND empresa_id = $2 RETURNING id", [usuario_id, empresa_id]);
+        const r = await pool.query(
+            "UPDATE usuarios SET pin_bloqueado_at = NULL WHERE id = $1 AND empresa_id = $2 RETURNING id",
+            [usuario_id, empresa_id],
+        );
         if (r.rowCount === 0) throw ApiError.notFound("Usuario no encontrado");
         await pool.query("DELETE FROM pin_fallos WHERE usuario_id = $1", [usuario_id]);
     }
 
     async #uno(empresa_id, id) {
-        const r = await pool.query(`SELECT ${COLUMNAS} FROM dispositivos d WHERE d.id = $1 AND d.empresa_id = $2`, [id, empresa_id]);
+        const r = await pool.query(
+            `SELECT ${COLUMNAS} FROM dispositivos d WHERE d.id = $1 AND d.empresa_id = $2`,
+            [id, empresa_id],
+        );
         return r.rows[0];
     }
 }

@@ -27,6 +27,17 @@ export const SIN_FK = [
     { hija: "produccion", col: "usuario_id", padre: "usuarios", colPadre: "id" },
 ];
 
+// Columnas *_id sin FK Y sin comparar a propósito: la bitácora de acciones (admin_actividad) referencia personas, empresas y objetos de
+// cualquier empresa —el maestro o un acceso compartido actúan sobre una empresa distinta a la suya—, y debe sobrevivir a que se borren.
+// Es un registro, no una relación de datos: su `empresa_id` dice qué empresa afecta la acción.
+export const REFERENCIAS_LIBRES = [
+    { hija: "admin_actividad", col: "actor_id" },
+    { hija: "admin_actividad", col: "actor_empresa_id" },
+    { hija: "admin_actividad", col: "objeto_id" },
+    // No referencia a nadie: es el id de la petición HTTP (el mismo de la cabecera X-Request-Id y del log).
+    { hija: "admin_actividad", col: "request_id" },
+];
+
 // Referencias polimórficas: `col` apunta a `padre` solo cuando `tipoCol` vale alguno de `tipos`.
 export const POLIMORFICAS = [
     {

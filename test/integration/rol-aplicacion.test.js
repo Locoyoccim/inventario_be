@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { crearPoolMigrador } from "../helpers/migrador.js";
 import { tomarExclusivo } from "../helpers/exclusion.js";
 import { evaluarRolDeAplicacion, SQL_ROL_ACTUAL } from "../../src/config/rolDb.js";
+import { TABLAS_SOLO_INSERCION } from "../../scripts/db_roles.js";
 
 // ADR-006 / VCA-015: la suite corre con el rol de la APP (TEST_DATABASE_URL), de privilegios mínimos, y las migraciones/DDL con el
 // MIGRADOR (TEST_MIGRATOR_URL). Estas pruebas fijan esa separación: si alguien apunta TEST_DATABASE_URL a un superusuario, fallan.
@@ -168,6 +169,25 @@ describe(
             );
         });
 
+        it("las tablas de SOLO inserción: la app lee e inserta, y no actualiza, borra ni vacía (ni siquiera con GRANT general)", async () => {
+            assert.ok(TABLAS_SOLO_INSERCION.length >= 1);
+            for (const tabla of TABLAS_SOLO_INSERCION) {
+                const p = (
+                    await migrador.query(
+                        `SELECT has_table_privilege($1, $2, 'SELECT') AS lee, has_table_privilege($1, $2, 'INSERT') AS inserta,
+                                has_table_privilege($1, $2, 'UPDATE') AS actualiza, has_table_privilege($1, $2, 'DELETE') AS borra,
+                                has_table_privilege($1, $2, 'TRUNCATE') AS vacia`,
+                        [app, `public.${tabla}`],
+                    )
+                ).rows[0];
+                assert.deepEqual(
+                    p,
+                    { lee: true, inserta: true, actualiza: false, borra: false, vacia: false },
+                    `${tabla}: permisos de la app`,
+                );
+            }
+        });
+
         it("deriva: TODAS las tablas de public son del migrador y la app tiene lectura/escritura en cada una (una migración futura que lo rompa falla aquí)", async () => {
             const ajenas = (
                 await migrador.query(
@@ -184,9 +204,10 @@ describe(
                 await migrador.query(
                     `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+               AND c.relname <> ALL($2::text[])
                AND NOT (has_table_privilege($1, c.oid, 'SELECT') AND has_table_privilege($1, c.oid, 'INSERT')
                         AND has_table_privilege($1, c.oid, 'UPDATE') AND has_table_privilege($1, c.oid, 'DELETE')) ORDER BY 1`,
-                    [app],
+                    [app, TABLAS_SOLO_INSERCION],
                 )
             ).rows.map((r) => r.relname);
             assert.deepEqual(

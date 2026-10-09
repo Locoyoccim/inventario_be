@@ -20,9 +20,16 @@ import pg from "pg";
 
 const IDENT = /^[a-z_][a-z0-9_]{0,62}$/;
 
+// Tablas de solo inserción: la app las lee y escribe filas nuevas, pero NO las actualiza ni las borra (registros que no deben poder
+// reescribirse). La concesión general de abajo les daría UPDATE y DELETE; después se les quitan. Añadir aquí una tabla nueva de este tipo.
+export const TABLAS_SOLO_INSERCION = ["admin_actividad"];
+
 /** Identificador entre comillas, solo si es seguro (minúsculas, números y guion bajo). Lanza si no. */
 export function ident(nombre) {
-    if (!IDENT.test(nombre)) throw new Error(`Nombre de rol o base inválido: «${nombre}» (usa minúsculas, números y guion bajo).`);
+    if (!IDENT.test(nombre))
+        throw new Error(
+            `Nombre de rol o base inválido: «${nombre}» (usa minúsculas, números y guion bajo).`,
+        );
     return `"${nombre}"`;
 }
 
@@ -30,28 +37,66 @@ export function ident(nombre) {
  * Sentencias que dejan la base con el esquema de permisos correcto. Función pura: no se conecta ni lee el entorno.
  * Cada elemento: { paso, sql }. `sql` puede contener una contraseña (CREATE/ALTER ROLE): nunca se imprime, solo `paso`.
  */
-export function construirSentencias({ app, migrador, base, passwordApp, passwordMigrador, existentes = {}, adoptar = false, crearRoles = true, escapeLiteral }) {
-    const A = ident(app), M = ident(migrador), B = ident(base);
-    if (app === migrador) throw new Error("El rol de la app y el del migrador deben ser distintos.");
+export function construirSentencias({
+    app,
+    migrador,
+    base,
+    passwordApp,
+    passwordMigrador,
+    existentes = {},
+    adoptar = false,
+    crearRoles = true,
+    escapeLiteral,
+}) {
+    const A = ident(app),
+        M = ident(migrador),
+        B = ident(base);
+    if (app === migrador)
+        throw new Error("El rol de la app y el del migrador deben ser distintos.");
     const out = [];
     const atributos = "LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS";
 
     if (crearRoles) {
-        for (const [nombre, id, password] of [[app, A, passwordApp], [migrador, M, passwordMigrador]]) {
+        for (const [nombre, id, password] of [
+            [app, A, passwordApp],
+            [migrador, M, passwordMigrador],
+        ]) {
             if (!existentes[nombre]) {
-                if (!password) throw new Error(`Falta la contraseña de ${nombre} (variable de entorno) para crear el rol.`);
-                out.push({ paso: `crear el rol ${nombre}`, sql: `CREATE ROLE ${id} ${atributos} PASSWORD ${escapeLiteral(password)}` });
+                if (!password)
+                    throw new Error(
+                        `Falta la contraseña de ${nombre} (variable de entorno) para crear el rol.`,
+                    );
+                out.push({
+                    paso: `crear el rol ${nombre}`,
+                    sql: `CREATE ROLE ${id} ${atributos} PASSWORD ${escapeLiteral(password)}`,
+                });
             } else {
                 // Aunque ya exista, se garantiza que no tenga privilegios de más.
-                out.push({ paso: `fijar los atributos de ${nombre} (sin superusuario)`, sql: `ALTER ROLE ${id} ${atributos}` });
-                if (password) out.push({ paso: `restablecer la contraseña de ${nombre}`, sql: `ALTER ROLE ${id} PASSWORD ${escapeLiteral(password)}` });
+                out.push({
+                    paso: `fijar los atributos de ${nombre} (sin superusuario)`,
+                    sql: `ALTER ROLE ${id} ${atributos}`,
+                });
+                if (password)
+                    out.push({
+                        paso: `restablecer la contraseña de ${nombre}`,
+                        sql: `ALTER ROLE ${id} PASSWORD ${escapeLiteral(password)}`,
+                    });
             }
         }
     }
 
-    out.push({ paso: "permitir conectar a la base", sql: `GRANT CONNECT ON DATABASE ${B} TO ${A}, ${M}` });
-    out.push({ paso: "quitar CREATE en el esquema public a todos (PostgreSQL ≤ 14 lo permite por defecto)", sql: `REVOKE CREATE ON SCHEMA public FROM PUBLIC` });
-    out.push({ paso: "esquema public: la app solo usa; el migrador también crea", sql: `GRANT USAGE ON SCHEMA public TO ${A}; GRANT USAGE, CREATE ON SCHEMA public TO ${M}` });
+    out.push({
+        paso: "permitir conectar a la base",
+        sql: `GRANT CONNECT ON DATABASE ${B} TO ${A}, ${M}`,
+    });
+    out.push({
+        paso: "quitar CREATE en el esquema public a todos (PostgreSQL ≤ 14 lo permite por defecto)",
+        sql: `REVOKE CREATE ON SCHEMA public FROM PUBLIC`,
+    });
+    out.push({
+        paso: "esquema public: la app solo usa; el migrador también crea",
+        sql: `GRANT USAGE ON SCHEMA public TO ${A}; GRANT USAGE, CREATE ON SCHEMA public TO ${M}`,
+    });
 
     if (adoptar) {
         out.push({
@@ -77,10 +122,36 @@ $adoptar$`,
     }
 
     // Permisos sobre lo que ya existe y, sobre todo, sobre lo que el migrador cree en el futuro (cada migración nueva).
-    out.push({ paso: "app: leer y escribir datos de las tablas existentes (nada de DDL, TRUNCATE ni REFERENCES)", sql: `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${A}` });
-    out.push({ paso: "app: usar las secuencias existentes", sql: `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${A}` });
-    out.push({ paso: "permisos por defecto: tablas que cree el migrador", sql: `ALTER DEFAULT PRIVILEGES FOR ROLE ${M} IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${A}` });
-    out.push({ paso: "permisos por defecto: secuencias que cree el migrador", sql: `ALTER DEFAULT PRIVILEGES FOR ROLE ${M} IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${A}` });
+    out.push({
+        paso: "app: leer y escribir datos de las tablas existentes (nada de DDL, TRUNCATE ni REFERENCES)",
+        sql: `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${A}`,
+    });
+    // Solo si la tabla existe (esta función corre también contra bases anteriores a la migración que la crea).
+    out.push({
+        paso: `app: tablas de solo inserción (${TABLAS_SOLO_INSERCION.join(", ")}) sin UPDATE ni DELETE`,
+        sql: `DO $solo$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[${TABLAS_SOLO_INSERCION.map((x) => escapeLiteral(x)).join(", ")}] LOOP
+    IF to_regclass('public.' || t) IS NOT NULL THEN
+      EXECUTE format('REVOKE UPDATE, DELETE, TRUNCATE ON public.%I FROM ${A}', t);
+    END IF;
+  END LOOP;
+END
+$solo$`,
+    });
+    out.push({
+        paso: "app: usar las secuencias existentes",
+        sql: `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${A}`,
+    });
+    out.push({
+        paso: "permisos por defecto: tablas que cree el migrador",
+        sql: `ALTER DEFAULT PRIVILEGES FOR ROLE ${M} IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${A}`,
+    });
+    out.push({
+        paso: "permisos por defecto: secuencias que cree el migrador",
+        sql: `ALTER DEFAULT PRIVILEGES FOR ROLE ${M} IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${A}`,
+    });
     return out;
 }
 
@@ -93,6 +164,8 @@ SELECT
      WHERE n.nspname = 'public' AND c.relkind IN ('r','p','S','v','m') AND pg_get_userbyid(c.relowner) <> $1) AS objetos_de_otro_dueno,
   (SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+       -- las tablas de solo inserción no tienen UPDATE ni DELETE a propósito
+       AND c.relname <> ALL($3::text[])
        -- has_table_privilege con varios privilegios en una lista es verdadero si tiene ALGUNO: se exigen los cuatro.
        AND NOT (has_table_privilege($2, c.oid, 'SELECT') AND has_table_privilege($2, c.oid, 'INSERT')
                 AND has_table_privilege($2, c.oid, 'UPDATE') AND has_table_privilege($2, c.oid, 'DELETE'))) AS tablas_sin_permiso_para_app`;
@@ -109,7 +182,9 @@ async function main() {
     const migrador = argumento(args, "--migrador") ?? "gh_migrador";
     const url = process.env.ADMIN_DATABASE_URL;
     if (!url) {
-        console.error("Falta ADMIN_DATABASE_URL (conexión de un administrador con CREATEROLE, a la base que se va a provisionar).");
+        console.error(
+            "Falta ADMIN_DATABASE_URL (conexión de un administrador con CREATEROLE, a la base que se va a provisionar).",
+        );
         process.exit(1);
     }
     const u = new URL(url);
@@ -117,18 +192,39 @@ async function main() {
     if (baseArg) u.pathname = `/${baseArg}`;
     const base = decodeURIComponent(u.pathname.replace(/^\//, ""));
 
-    const cliente = new pg.Client({ connectionString: u.toString(), ssl: process.env.DB_SSL === "require" ? { rejectUnauthorized: false } : false });
+    const cliente = new pg.Client({
+        connectionString: u.toString(),
+        ssl: process.env.DB_SSL === "require" ? { rejectUnauthorized: false } : false,
+    });
     await cliente.connect();
     try {
-        const yo = (await cliente.query("SELECT rolsuper, rolcreaterole FROM pg_roles WHERE rolname = current_user")).rows[0];
+        const yo = (
+            await cliente.query(
+                "SELECT rolsuper, rolcreaterole FROM pg_roles WHERE rolname = current_user",
+            )
+        ).rows[0];
         const crearRoles = !args.includes("--sin-crear-roles");
-        if (crearRoles && !yo.rolsuper && !yo.rolcreaterole) throw new Error("El administrador necesita CREATEROLE (o ser superusuario) para crear roles. Si los roles ya existen, usa --sin-crear-roles.");
+        if (crearRoles && !yo.rolsuper && !yo.rolcreaterole)
+            throw new Error(
+                "El administrador necesita CREATEROLE (o ser superusuario) para crear roles. Si los roles ya existen, usa --sin-crear-roles.",
+            );
         const existentes = {};
-        for (const r of (await cliente.query("SELECT rolname FROM pg_roles WHERE rolname = ANY($1)", [[app, migrador]])).rows) existentes[r.rolname] = true;
+        for (const r of (
+            await cliente.query("SELECT rolname FROM pg_roles WHERE rolname = ANY($1)", [
+                [app, migrador],
+            ])
+        ).rows)
+            existentes[r.rolname] = true;
 
         const sentencias = construirSentencias({
-            app, migrador, base, existentes, crearRoles, adoptar: args.includes("--adoptar"),
-            passwordApp: process.env.GH_APP_PASSWORD, passwordMigrador: process.env.GH_MIGRADOR_PASSWORD,
+            app,
+            migrador,
+            base,
+            existentes,
+            crearRoles,
+            adoptar: args.includes("--adoptar"),
+            passwordApp: process.env.GH_APP_PASSWORD,
+            passwordMigrador: process.env.GH_MIGRADOR_PASSWORD,
             escapeLiteral: (s) => cliente.escapeLiteral(s),
         });
         await cliente.query("BEGIN");
@@ -141,12 +237,23 @@ async function main() {
         } catch (e) {
             await cliente.query("ROLLBACK");
             // Solo el mensaje del servidor: la sentencia puede llevar una contraseña y nunca se imprime.
-            throw new Error(`No se aplicaron los cambios (se revirtieron): ${e.message}`, { cause: e });
+            throw new Error(`No se aplicaron los cambios (se revirtieron): ${e.message}`, {
+                cause: e,
+            });
         }
-        const d = (await cliente.query(SQL_DIAGNOSTICO, [migrador, app])).rows[0];
-        console.log(`\nBase «${base}»: ${d.tablas} tablas · ${d.objetos_de_otro_dueno} objetos que no son del migrador · ${d.tablas_sin_permiso_para_app} tablas sin permisos para la app.`);
-        if (d.objetos_de_otro_dueno > 0) console.log("Hay objetos con otro dueño: vuelve a correr con --adoptar (las migraciones nuevas fallarían por permisos).");
-        if (d.tablas_sin_permiso_para_app > 0) { console.error("Hay tablas a las que la app no puede acceder."); process.exitCode = 1; }
+        const d = (await cliente.query(SQL_DIAGNOSTICO, [migrador, app, TABLAS_SOLO_INSERCION]))
+            .rows[0];
+        console.log(
+            `\nBase «${base}»: ${d.tablas} tablas · ${d.objetos_de_otro_dueno} objetos que no son del migrador · ${d.tablas_sin_permiso_para_app} tablas sin permisos para la app.`,
+        );
+        if (d.objetos_de_otro_dueno > 0)
+            console.log(
+                "Hay objetos con otro dueño: vuelve a correr con --adoptar (las migraciones nuevas fallarían por permisos).",
+            );
+        if (d.tablas_sin_permiso_para_app > 0) {
+            console.error("Hay tablas a las que la app no puede acceder.");
+            process.exitCode = 1;
+        }
     } finally {
         await cliente.end();
     }

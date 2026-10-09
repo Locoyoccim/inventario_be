@@ -1,15 +1,16 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
 import routes from "./routes/index.js";
 import authRoutes from "./routes/auth.routes.js";
 import agenteRoutes from "./routes/agente.routes.js";
 import { requireAuth } from "./middlewares/auth.js";
 import { requireActiveUser, requirePasswordCurrent } from "./middlewares/activeUser.js";
 import { requestLogger } from "./middlewares/requestLogger.js";
+import { crearLimite } from "./middlewares/limites.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import pool from "./config/db.js";
+import { manejadorReadiness } from "./utils/readiness.js";
 
 const app = express();
 
@@ -22,38 +23,51 @@ app.use(helmet());
 // CORS con credenciales (la sesión viaja en cookie httpOnly). Con credenciales no se
 // permite "*": se usa la lista CORS_ORIGINS. Sin lista: en desarrollo refleja cualquier
 // origen; en producción solo acepta peticiones del mismo origen.
-const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean);
+const corsOrigins = process.env.CORS_ORIGINS?.split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
 const isProduction = process.env.NODE_ENV === "production";
 if (isProduction && !corsOrigins?.length) {
-    console.warn("[cors] CORS_ORIGINS vacío en producción: solo se aceptan peticiones del mismo origen.");
+    console.warn(
+        "[cors] CORS_ORIGINS vacío en producción: solo se aceptan peticiones del mismo origen.",
+    );
 }
-app.use(cors({ origin: corsOrigins?.length ? corsOrigins : !isProduction, credentials: true }));
+app.use(
+    cors({
+        origin: corsOrigins?.length ? corsOrigins : !isProduction,
+        credentials: true,
+        // El front puede leer el id de la petición para mostrarlo al reportar un fallo.
+        exposedHeaders: ["X-Request-Id"],
+    }),
+);
 
 // Límite de tamaño del body (evita payloads abusivos)
 app.use(express.json({ limit: "100kb" }));
-app.use((req, _res, next) => { if (req.body === undefined || req.body === null) req.body = {}; next(); });
+app.use((req, _res, next) => {
+    if (req.body === undefined || req.body === null) req.body = {};
+    next();
+});
 app.use(requestLogger);
 
 // Healthcheck público (sin auth ni rate limit) — liveness para monitoreo/deploy
-app.get("/health", (_req, res) => res.json({ status: "ok", uptime: process.uptime(), ts: new Date().toISOString() }));
+app.get("/health", (_req, res) =>
+    res.json({ status: "ok", uptime: process.uptime(), ts: new Date().toISOString() }),
+);
 
-// Readiness: verifica la BD (SELECT 1). 503 si no responde. Separado de /health (liveness)
-// para que un parpadeo de la base no provoque reinicios del contenedor.
-app.get("/health/ready", async (_req, res) => {
-    try {
-        await pool.query("SELECT 1");
-        res.json({ status: "ready", ts: new Date().toISOString() });
-    } catch {
-        res.status(503).json({ status: "unavailable" });
-    }
-});
+// Readiness: verifica la BD (SELECT 1). 503 si no responde (o tarda más de 5 s). Separado de /health (liveness)
+// para que un parpadeo de la base no provoque reinicios del contenedor. Solo se registran las transiciones (ver utils/readiness.js).
+app.get("/health/ready", manejadorReadiness({ consulta: () => pool.query("SELECT 1") }));
 
-// Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio.
-const limiter = (max, error) =>
-    rateLimit({ windowMs: 60 * 1000, max, standardHeaders: true, legacyHeaders: false, message: { success: false, error } });
-const authLimiter = limiter(10, "Demasiados intentos de acceso. Espera un minuto.");
-const apiLimiter = rateLimit({
-    windowMs: 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, message: { success: false, error: "Demasiadas solicitudes. Intenta de nuevo en un momento." },
+// Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio. Al excederse dejan el evento
+// `limite_excedido` en el log (ver middlewares/limites.js).
+const ERROR_ACCESO = "Demasiados intentos de acceso. Espera un minuto.";
+// Un solo contador compartido entre las rutas de acceso (login, setup, invitación, registro de equipo, emparejado).
+const authLimiter = crearLimite({ nombre: "auth", max: 10, error: ERROR_ACCESO });
+const pinLimiter = crearLimite({ nombre: "pin", max: 40, error: ERROR_ACCESO });
+const apiLimiter = crearLimite({
+    nombre: "api",
+    max: 300,
+    error: "Demasiadas solicitudes. Intenta de nuevo en un momento.",
     // Las reconexiones automáticas del flujo de avisos (SSE) no son tráfico de uso.
     skip: (req) => req.method === "GET" && req.path.endsWith("/eventos"),
 });
@@ -66,7 +80,7 @@ if (process.env.NODE_ENV !== "test") {
     // El código de un equipo se adivina con 40 bits y vence en 15 min: tope estricto. El PIN lleva además su propio enfriamiento
     // por usuario, equipo e IP en la base; este tope es más amplio porque todo el personal de un local comparte la misma IP.
     app.use("/api/auth/dispositivo/registrar", authLimiter);
-    app.use("/api/auth/pin", limiter(40, "Demasiados intentos de acceso. Espera un minuto."));
+    app.use("/api/auth/pin", pinLimiter);
     app.use("/api/agente/emparejar", authLimiter);
     app.use("/api", apiLimiter);
 }

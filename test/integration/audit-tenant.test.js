@@ -6,7 +6,12 @@ import { iniciarServidor } from "../helpers/servidor.js";
 import { descubrirAlcance, limpiarEmpresas } from "../helpers/alcance.js";
 import { tomarCompartido } from "../helpers/exclusion.js";
 import { EmpresaPrueba } from "../helpers/empresaCompleta.js";
-import { auditarSoloLectura, POLIMORFICAS, SIN_FK } from "../../scripts/audit_tenant.js";
+import {
+    auditarSoloLectura,
+    POLIMORFICAS,
+    REFERENCIAS_LIBRES,
+    SIN_FK,
+} from "../../scripts/audit_tenant.js";
 
 // Fase 5 · npm run audit:tenant — auditoría de datos de solo lectura. Se prueba que (1) una base sana sale limpia, (2) cada tipo de
 // contaminación entre empresas se detecta (inyectándola de verdad y revirtiéndola), (3) solo emite SELECT y (4) no hay columnas
@@ -423,7 +428,7 @@ describe("audit:tenant — contaminación entre empresas (solo lectura)", { skip
         }
     });
 
-    it("no se le escapa ninguna columna *_id sin clave foránea: todas están en SIN_FK o POLIMORFICAS", async () => {
+    it("no se le escapa ninguna columna *_id sin clave foránea: todas están en SIN_FK, POLIMORFICAS o REFERENCIAS_LIBRES", async () => {
         const sinFk = (
             await pool.query(
                 `SELECT c.table_name, c.column_name FROM information_schema.columns c
@@ -434,7 +439,9 @@ describe("audit:tenant — contaminación entre empresas (solo lectura)", { skip
                      WHERE k.contype = 'f' AND k.conrelid = format('public.%I', c.table_name)::regclass AND a.attname = c.column_name)`,
             )
         ).rows.map((x) => `${x.table_name}.${x.column_name}`);
-        const cubiertas = new Set([...SIN_FK, ...POLIMORFICAS].map((r) => `${r.hija}.${r.col}`));
+        const cubiertas = new Set(
+            [...SIN_FK, ...POLIMORFICAS, ...REFERENCIAS_LIBRES].map((r) => `${r.hija}.${r.col}`),
+        );
         const sueltas = sinFk.filter((c) => !cubiertas.has(c));
         assert.deepEqual(
             sueltas,

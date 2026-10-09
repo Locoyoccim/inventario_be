@@ -10,9 +10,9 @@ export default class EmpresaService {
         return await this.empresaRepository.getConfig(id);
     }
 
-    async updateConfig(id, data, aplicarARecetas = false) {
+    async updateConfig(id, data, aplicarARecetas = false, actividad = undefined) {
         if (data.zona_horaria !== undefined && !(await esZonaValida(data.zona_horaria)))
             throw ApiError.badRequest("zona_horaria no es válida (ej. America/Mexico_City)");
-        return await this.empresaRepository.updateConfig(id, data, aplicarARecetas);
+        return await this.empresaRepository.updateConfig(id, data, aplicarARecetas, actividad);
     }
 }

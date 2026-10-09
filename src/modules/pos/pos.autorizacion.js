@@ -10,7 +10,8 @@ import { permisosEfectivos } from "../../middlewares/activeUser.js";
 const HASH_DUMMY = bcrypt.hashSync("sin-usuario", 10);
 
 // Una sesión de PIN no autoriza por sí misma: el supervisor la confirma con su correo y contraseña (credenciales en el cuerpo).
-export const puedeAutorizarUsuario = (u) => Boolean(u && !u.pin && (u.is_admin || u.is_owner || u.permisos?.includes("pos.autorizar")));
+export const puedeAutorizarUsuario = (u) =>
+    Boolean(u && !u.pin && (u.is_admin || u.is_owner || u.permisos?.includes("pos.autorizar")));
 
 // Devuelve el id de quien autoriza o null si nadie autoriza (sin sesión con permiso ni credenciales).
 export async function resolverAutorizador(empresa_id, actor, credenciales) {
@@ -24,18 +25,46 @@ export async function resolverAutorizador(empresa_id, actor, credenciales) {
     );
     const u = r.rows[0];
     const ok = await bcrypt.compare(credenciales.password, u?.password_hash ?? HASH_DUMMY);
-    if (!u || !u.password_hash || !ok || u.activo === false) throw ApiError.forbidden("Credenciales del supervisor no válidas");
+    if (!u || !u.password_hash || !ok || u.activo === false)
+        throw ApiError.forbidden("Credenciales del supervisor no válidas").conEvento(
+            "supervisor_credenciales_invalidas",
+            {
+                motivo: !u
+                    ? "usuario_inexistente"
+                    : u.activo === false
+                      ? "desactivado"
+                      : "clave_incorrecta",
+                supervisor_id: u?.id ?? null,
+            },
+        );
     const permisos = permisosEfectivos(u.role_id, u.permisos);
-    if (!u.is_admin && !u.is_owner && !permisos.includes("pos.autorizar")) throw ApiError.forbidden("Ese usuario no tiene permiso para autorizar");
+    if (!u.is_admin && !u.is_owner && !permisos.includes("pos.autorizar"))
+        throw ApiError.forbidden("Ese usuario no tiene permiso para autorizar").conEvento(
+            "permiso_denegado",
+            { requiere: "pos.autorizar", supervisor_id: u.id },
+        );
     return u.id;
 }
 
 export const exigirAutorizador = (autorizador_id) => {
-    if (!autorizador_id) throw ApiError.forbidden("Esta acción requiere la autorización de un supervisor");
+    if (!autorizador_id)
+        throw ApiError.forbidden("Esta acción requiere la autorización de un supervisor");
     return autorizador_id;
 };
 
-export async function registrarAutorizacion(db, { empresa_id, cuenta_id, item_id = null, tipo, monto = 0, motivo = null, autorizado_por, solicitado_por = null }) {
+export async function registrarAutorizacion(
+    db,
+    {
+        empresa_id,
+        cuenta_id,
+        item_id = null,
+        tipo,
+        monto = 0,
+        motivo = null,
+        autorizado_por,
+        solicitado_por = null,
+    },
+) {
     await db.query(
         `INSERT INTO pos_autorizaciones (empresa_id, cuenta_id, item_id, tipo, monto, motivo, autorizado_por, solicitado_por)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,

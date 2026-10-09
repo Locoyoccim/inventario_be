@@ -13,41 +13,90 @@ export default class PinService {
     }
 
     async personal(dispositivo) {
-        return { dispositivo: { id: dispositivo.id, nombre: dispositivo.nombre }, personal: await this.repo.personal(dispositivo.empresa_id) };
+        return {
+            dispositivo: { id: dispositivo.id, nombre: dispositivo.nombre },
+            personal: await this.repo.personal(dispositivo.empresa_id),
+        };
     }
 
     async entrar(dispositivo, { usuario_id, pin, ip }) {
         const u = await this.repo.usuarioParaPin(dispositivo.empresa_id, usuario_id);
         // Sin PIN, administradores y usuarios desactivados responden igual que un PIN equivocado (y sin registrar fallo).
-        const elegible = Boolean(u && u.activo !== false && u.pin_hash && !u.is_admin && !u.is_owner && !u.is_platform_admin && !u.must_change_password);
+        const elegible = Boolean(
+            u &&
+            u.activo !== false &&
+            u.pin_hash &&
+            !u.is_admin &&
+            !u.is_owner &&
+            !u.is_platform_admin &&
+            !u.must_change_password,
+        );
 
         if (elegible) {
-            if (u.pin_bloqueado_at) throw ApiError.tooMany("PIN bloqueado por demasiados intentos. Pide a un administrador que lo desbloquee.", { bloqueado: true });
+            if (u.pin_bloqueado_at)
+                throw ApiError.tooMany(
+                    "PIN bloqueado por demasiados intentos. Pide a un administrador que lo desbloquee.",
+                    { bloqueado: true },
+                ).conEvento("pin_bloqueado", { usuario_id: u.id, equipo: dispositivo.id });
             const fallos = await this.repo.fallosRecientes(u.id, dispositivo.id, ip);
             const espera = esperaTotalSeg(fallos, fallos.ahoraMs);
-            if (espera > 0) throw ApiError.tooMany(`Demasiados intentos. Espera ${Math.ceil(espera / 60)} min e inténtalo de nuevo.`, { espera_seg: espera });
+            if (espera > 0)
+                throw ApiError.tooMany(
+                    `Demasiados intentos. Espera ${Math.ceil(espera / 60)} min e inténtalo de nuevo.`,
+                    { espera_seg: espera },
+                ).conEvento("pin_en_espera", {
+                    usuario_id: u.id,
+                    equipo: dispositivo.id,
+                    espera_seg: espera,
+                });
         }
 
         // Siempre se compara contra un hash (dummy si no hay PIN) para que el tiempo no delate nada.
         const ok = await verificarPin(u?.id ?? 0, String(pin), elegible ? u.pin_hash : null);
         if (!elegible || !ok) {
-            if (elegible) await this.repo.registrarFallo(dispositivo.empresa_id, u.id, dispositivo.id, ip);
-            throw ApiError.unauthorized("PIN incorrecto");
+            // `motivo` solo se escribe en el log: la respuesta es la misma en todos los casos (no delata nada).
+            let bloqueadoAhora = false;
+            if (elegible)
+                bloqueadoAhora = (
+                    await this.repo.registrarFallo(dispositivo.empresa_id, u.id, dispositivo.id, ip)
+                ).bloqueado;
+            throw ApiError.unauthorized("PIN incorrecto").conEvento("pin_fallido", {
+                usuario_id: u?.id ?? null,
+                equipo: dispositivo.id,
+                motivo: elegible ? "pin_incorrecto" : "no_elegible",
+                bloqueado_ahora: bloqueadoAhora,
+            });
         }
 
         await this.repo.limpiarFallos(u.id, dispositivo.id);
         await this.repo.marcarUso(dispositivo.id);
         const expires = duracionSesionPin();
         const token = signToken(
-            { id: u.id, empresa_id: u.empresa_id, is_admin: false, is_owner: false, is_platform_admin: false, role_id: u.role_id, tv: u.token_version ?? 0, pin: true, disp: dispositivo.id },
+            {
+                id: u.id,
+                empresa_id: u.empresa_id,
+                is_admin: false,
+                is_owner: false,
+                is_platform_admin: false,
+                role_id: u.role_id,
+                tv: u.token_version ?? 0,
+                pin: true,
+                disp: dispositivo.id,
+            },
             expires,
         );
         return {
             token,
             expires,
             user: {
-                id: u.id, nombre: u.nombre, email: u.email, empresa_id: u.empresa_id,
-                is_admin: false, is_owner: false, is_platform_admin: false, must_change_password: false,
+                id: u.id,
+                nombre: u.nombre,
+                email: u.email,
+                empresa_id: u.empresa_id,
+                is_admin: false,
+                is_owner: false,
+                is_platform_admin: false,
+                must_change_password: false,
                 permisos: permisosEfectivos(u.role_id, u.permisos),
             },
         };

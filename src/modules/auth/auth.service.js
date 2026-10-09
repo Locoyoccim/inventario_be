@@ -7,6 +7,7 @@ import {
     perfilActivo,
     permisosEfectivos,
 } from "../../middlewares/activeUser.js";
+import { correoParaLog } from "../../utils/seguridad.js";
 
 // Hash dummy (sin usuario real detrás) para que login() tarde lo mismo cuando el email no
 // existe que cuando existe pero la contraseña es incorrecta — sin esto, la ausencia del
@@ -97,12 +98,27 @@ export default class AuthService {
         // existe" retornara antes de comparar, el tiempo de respuesta delataría qué correos
         // están registrados (mensaje de error genérico a propósito, por la misma razón).
         const ok = await bcrypt.compare(password, u?.password_hash ?? HASH_DUMMY);
-        if (!u || !u.password_hash || !ok) throw ApiError.unauthorized("Credenciales inválidas");
+        if (!u || !u.password_hash || !ok)
+            // El motivo exacto solo se escribe en el log: la respuesta es la misma (no delata qué correos existen).
+            throw ApiError.unauthorized("Credenciales inválidas").conEvento("login_fallido", {
+                correo: correoParaLog(email),
+                usuario_id: u?.id ?? null,
+                motivo: !u
+                    ? "usuario_inexistente"
+                    : !u.password_hash
+                      ? "sin_contrasena"
+                      : "clave_incorrecta",
+            });
         // Solo tras validar la contrasena, para no revelar que correos existen.
         if (u.activo === false)
-            throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
+            throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.").conEvento(
+                "login_bloqueado",
+                { usuario_id: u.id, motivo: "usuario_desactivado" },
+            );
         if (u.empresa_activa === false)
-            throw ApiError.forbidden("La empresa fue desactivada. Contacta al administrador.");
+            throw ApiError.forbidden(
+                "La empresa fue desactivada. Contacta al administrador.",
+            ).conEvento("login_bloqueado", { usuario_id: u.id, motivo: "empresa_desactivada" });
 
         const token = signToken({
             id: u.id,
@@ -128,12 +144,23 @@ export default class AuthService {
     // y la versión de token (cerrar sesiones sigue cortando todo). Una sesión de PIN no puede cambiar de empresa.
     async cambiarEmpresa(user, destino_id) {
         if (user.pin)
-            throw ApiError.forbidden("Esta acción requiere entrar con correo y contraseña");
+            throw ApiError.forbidden(
+                "Esta acción requiere entrar con correo y contraseña",
+            ).conEvento("cambio_empresa_denegado", { motivo: "sesion_pin", destino: destino_id });
         const estado = await perfilActivo(user.id);
         const ctx = estado.activo ? contextoEmpresa(estado, destino_id) : null;
-        if (!ctx) throw ApiError.forbidden("No tienes acceso a esa empresa");
+        if (!ctx)
+            throw ApiError.forbidden("No tienes acceso a esa empresa").conEvento(
+                "cambio_empresa_denegado",
+                { motivo: "sin_acceso", destino: destino_id },
+            );
         if (!ctx.empresa_activa)
-            throw ApiError.forbidden("Esa empresa está desactivada. Contacta al administrador.");
+            throw ApiError.forbidden(
+                "Esa empresa está desactivada. Contacta al administrador.",
+            ).conEvento("cambio_empresa_denegado", {
+                motivo: "empresa_desactivada",
+                destino: destino_id,
+            });
         const base = estado.empresa_id;
         const u = await this.usuarioRepository.findProfile(base, user.id);
         if (!u) throw ApiError.unauthorized("El usuario ya no existe");
@@ -174,7 +201,10 @@ export default class AuthService {
         );
         if (!hashActual) throw ApiError.unauthorized("No se pudo validar la cuenta");
         const ok = await bcrypt.compare(passwordActual, hashActual);
-        if (!ok) throw ApiError.badRequest("La contraseña actual no es correcta");
+        if (!ok)
+            throw ApiError.badRequest("La contraseña actual no es correcta").conEvento(
+                "password_actual_incorrecta",
+            );
 
         const password_hash = await bcrypt.hash(passwordNueva, 12);
         await this.usuarioRepository.updateOwnPassword(
