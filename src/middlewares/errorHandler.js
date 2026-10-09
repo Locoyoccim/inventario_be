@@ -3,14 +3,14 @@ import { logger } from "../utils/logger.js";
 
 // Mapeo de códigos de error de PostgreSQL a respuestas limpias (sin filtrar SQL).
 const PG_ERRORS = {
-    "23505": [409, "El registro ya existe (dato duplicado)"],
-    "23503": [400, "Referencia inválida: el recurso relacionado no existe"],
-    "23502": [400, "Falta un campo requerido"],
-    "23514": [400, "Un valor no cumple una restricción de la base"],
+    23505: [409, "El registro ya existe (dato duplicado)"],
+    23503: [400, "Referencia inválida: el recurso relacionado no existe"],
+    23502: [400, "Falta un campo requerido"],
+    23514: [400, "Un valor no cumple una restricción de la base"],
     "22P02": [400, "Formato de dato inválido"],
-    "22003": [400, "Un número está fuera de rango"],
-    "22007": [400, "Fecha inválida"],
-    "22008": [400, "Fecha inválida"],
+    22003: [400, "Un número está fuera de rango"],
+    22007: [400, "Fecha inválida"],
+    22008: [400, "Fecha inválida"],
 };
 
 // Middleware central de errores (debe ir DESPUÉS de las rutas).
@@ -28,7 +28,9 @@ export function errorHandler(err, req, res, _next) {
             campo: Array.isArray(i.path) ? i.path.join(".") : String(i.path ?? ""),
             mensaje: i.message,
         }));
-        return res.status(400).json({ success: false, error: "Validación fallida", details: issues });
+        return res
+            .status(400)
+            .json({ success: false, error: "Validación fallida", details: issues });
     }
 
     if (err && err.code && PG_ERRORS[err.code]) {
@@ -39,10 +41,17 @@ export function errorHandler(err, req, res, _next) {
 
     // Errores del parser de body: tamaño excedido (413) o JSON malformado (400).
     if (err && err.type === "entity.too.large") {
-        return res.status(413).json({ success: false, error: "El cuerpo de la solicitud es demasiado grande" });
+        return res
+            .status(413)
+            .json({ success: false, error: "El cuerpo de la solicitud es demasiado grande" });
     }
-    if (err && (err.type === "entity.parse.failed" || (err instanceof SyntaxError && "body" in err))) {
-        return res.status(400).json({ success: false, error: "JSON inválido en el cuerpo de la solicitud" });
+    if (
+        err &&
+        (err.type === "entity.parse.failed" || (err instanceof SyntaxError && "body" in err))
+    ) {
+        return res
+            .status(400)
+            .json({ success: false, error: "JSON inválido en el cuerpo de la solicitud" });
     }
 
     // Inesperado: se registra completo, al cliente solo un genérico.

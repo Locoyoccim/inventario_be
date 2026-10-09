@@ -22,20 +22,29 @@ app.use(helmet());
 // CORS con credenciales (la sesión viaja en cookie httpOnly). Con credenciales no se
 // permite "*": se usa la lista CORS_ORIGINS. Sin lista: en desarrollo refleja cualquier
 // origen; en producción solo acepta peticiones del mismo origen.
-const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean);
+const corsOrigins = process.env.CORS_ORIGINS?.split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
 const isProduction = process.env.NODE_ENV === "production";
 if (isProduction && !corsOrigins?.length) {
-    console.warn("[cors] CORS_ORIGINS vacío en producción: solo se aceptan peticiones del mismo origen.");
+    console.warn(
+        "[cors] CORS_ORIGINS vacío en producción: solo se aceptan peticiones del mismo origen.",
+    );
 }
 app.use(cors({ origin: corsOrigins?.length ? corsOrigins : !isProduction, credentials: true }));
 
 // Límite de tamaño del body (evita payloads abusivos)
 app.use(express.json({ limit: "100kb" }));
-app.use((req, _res, next) => { if (req.body === undefined || req.body === null) req.body = {}; next(); });
+app.use((req, _res, next) => {
+    if (req.body === undefined || req.body === null) req.body = {};
+    next();
+});
 app.use(requestLogger);
 
 // Healthcheck público (sin auth ni rate limit) — liveness para monitoreo/deploy
-app.get("/health", (_req, res) => res.json({ status: "ok", uptime: process.uptime(), ts: new Date().toISOString() }));
+app.get("/health", (_req, res) =>
+    res.json({ status: "ok", uptime: process.uptime(), ts: new Date().toISOString() }),
+);
 
 // Readiness: verifica la BD (SELECT 1). 503 si no responde. Separado de /health (liveness)
 // para que un parpadeo de la base no provoque reinicios del contenedor.
@@ -50,10 +59,20 @@ app.get("/health/ready", async (_req, res) => {
 
 // Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio.
 const limiter = (max, error) =>
-    rateLimit({ windowMs: 60 * 1000, max, standardHeaders: true, legacyHeaders: false, message: { success: false, error } });
+    rateLimit({
+        windowMs: 60 * 1000,
+        max,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { success: false, error },
+    });
 const authLimiter = limiter(10, "Demasiados intentos de acceso. Espera un minuto.");
 const apiLimiter = rateLimit({
-    windowMs: 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false, message: { success: false, error: "Demasiadas solicitudes. Intenta de nuevo en un momento." },
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: "Demasiadas solicitudes. Intenta de nuevo en un momento." },
     // Las reconexiones automáticas del flujo de avisos (SSE) no son tráfico de uso.
     skip: (req) => req.method === "GET" && req.path.endsWith("/eventos"),
 });
