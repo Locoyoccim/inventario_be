@@ -49,7 +49,7 @@ MCP devuelve los valores en claro y **no debe usarse**.
 | `TRUST_PROXY_HOPS` | sí | no | `3` (medido en producción el 2026-10-09: el borde de Railway pone dos saltos y Caddy el tercero) |
 | `TZ_NEGOCIO` | opcional | no | `America/Mexico_City` |
 | `BOOTSTRAP_EMAIL`, `BOOTSTRAP_PASSWORD` | no | **solo `provision`** | correo del maestro y contraseña temporal (12+); los escribe quien administra |
-| `BACKUP_UPLOAD_CMD` | no | `respaldo` | `rclone copy {file} r2:<bucket>/ && rclone delete r2:<bucket> --min-age 15d` |
+| `BACKUP_UPLOAD_CMD` | no | `respaldo` | `rclone copyto {file} r2:<bucket>/$(basename {file}) && rclone lsl r2:<bucket> && rclone delete r2:<bucket> --min-age 15d` (el `lsl` deja en el log la lista de copias: es la evidencia de que la subida llegó) |
 | `RCLONE_CONFIG_R2_TYPE` / `_PROVIDER` / `_ENDPOINT` | no | `respaldo` | `s3` / `Cloudflare` / `https://<cuenta>.r2.cloudflarestorage.com` |
 | `RCLONE_CONFIG_R2_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | no | `respaldo` | token de R2 limitado a ESE bucket, solo escritura/lectura de objetos |
 | `RCLONE_CONFIG_R2_NO_CHECK_BUCKET` | no | `respaldo` | `true` (el token no puede crear buckets) |
@@ -126,6 +126,7 @@ Con 5 minutos, «2 fallos seguidos» son ≈ 10 minutos hasta el aviso: aceptabl
 ## 6. Límites conocidos del piloto
 
 - **Los `Dockerfile` y el `Caddyfile` no se han construido localmente** (no hay Docker en el equipo de desarrollo): la primera construcción en Railway es la prueba real. Se esperan ajustes en esa primera vuelta.
+- **rclone viejo con R2:** el de Debian (1.60) daba `501 NotImplemented` en la primera subida y «directory not found» al limpiar, lo que dejaba la corrida como fallida. El `Dockerfile` instala rclone 1.75.2 fijo y verificado por SHA-256.
 - **Docker Hub limita las descargas de los constructores de Railway** (429 Too Many Requests): el 2026-10-09 tumbó tres despliegues con «Failed to build an image» y sin log de build útil (la causa se ve en el log de build: `load metadata for docker.io/...`). Por eso los `FROM` usan el espejo de AWS ECR Public (`public.ecr.aws/docker/library/...`). Mientras un despliegue falla, el anterior sigue sirviendo.
 - **Una sola instancia de API** (ADR-003). No subir réplicas sin revisar el SSE y los cachés en memoria.
 - Las migraciones corren como pre-deploy del mismo servicio, así que la URL del migrador queda en el entorno de `api` ([DB_ROLES.md](DB_ROLES.md) §7).

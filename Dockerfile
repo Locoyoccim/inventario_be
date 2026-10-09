@@ -10,11 +10,25 @@ FROM public.ecr.aws/docker/library/node:22-bookworm-slim
 
 ENV NODE_ENV=production
 
+# rclone se instala fijo y verificado, no el de Debian (1.60): con Cloudflare R2 esa versión daba 501 NotImplemented en la primera subida
+# y «directory not found» al limpiar copias viejas. Los hashes salen de https://downloads.rclone.org/v1.75.2/SHA256SUMS.
+ARG TARGETARCH=amd64
+ARG RCLONE_VERSION=v1.75.2
+ARG RCLONE_SHA256_AMD64=349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702
+ARG RCLONE_SHA256_ARM64=7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10
+
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl postgresql-common rclone \
+ && apt-get install -y --no-install-recommends ca-certificates curl unzip postgresql-common \
  && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
  && apt-get install -y --no-install-recommends postgresql-client-18 \
- && apt-get purge -y --auto-remove curl \
+ && case "$TARGETARCH" in arm64) SHA="$RCLONE_SHA256_ARM64" ;; *) SHA="$RCLONE_SHA256_AMD64"; TARGETARCH=amd64 ;; esac \
+ && curl -fsSL -o /tmp/rclone.zip "https://downloads.rclone.org/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-${TARGETARCH}.zip" \
+ && echo "${SHA}  /tmp/rclone.zip" | sha256sum -c - \
+ && unzip -j -q /tmp/rclone.zip "*/rclone" -d /usr/local/bin \
+ && chmod 0755 /usr/local/bin/rclone \
+ && rclone version | head -1 \
+ && rm -f /tmp/rclone.zip \
+ && apt-get purge -y --auto-remove curl unzip \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
