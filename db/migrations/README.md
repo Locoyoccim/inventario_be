@@ -2,8 +2,10 @@
 
 Runner: `db/migrate.js`. Tabla de control: `schema_migrations`.
 
-Los archivos se aplican en orden alfabético (`001_...`, `002_...`), cada uno en su transacción.
+Los archivos se aplican en orden alfabético (`001_...`, `002_...`), cada uno en una única transacción que también registra la fila en `schema_migrations`.
 Solo se ejecutan los que no estén registrados en `schema_migrations`.
+
+El runner es el único dueño de la transacción. Por compatibilidad, al ejecutar migraciones antiguas elimina un `BEGIN;` inicial y un `COMMIT;` final (si existen) para evitar transacciones anidadas. Los archivos nuevos no deben incluir `BEGIN`/`COMMIT` propios.
 
 ## Comandos
 - `npm run migrate` — aplica las migraciones pendientes.
