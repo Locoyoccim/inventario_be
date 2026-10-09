@@ -126,6 +126,7 @@ Con 5 minutos, «2 fallos seguidos» son ≈ 10 minutos hasta el aviso: aceptabl
 ## 6. Límites conocidos del piloto
 
 - **Los `Dockerfile` y el `Caddyfile` no se han construido localmente** (no hay Docker en el equipo de desarrollo): la primera construcción en Railway es la prueba real. Se esperan ajustes en esa primera vuelta.
+- **Docker Hub limita las descargas de los constructores de Railway** (429 Too Many Requests): el 2026-10-09 tumbó tres despliegues con «Failed to build an image» y sin log de build útil (la causa se ve en el log de build: `load metadata for docker.io/...`). Por eso los `FROM` usan el espejo de AWS ECR Public (`public.ecr.aws/docker/library/...`). Mientras un despliegue falla, el anterior sigue sirviendo.
 - **Una sola instancia de API** (ADR-003). No subir réplicas sin revisar el SSE y los cachés en memoria.
 - Las migraciones corren como pre-deploy del mismo servicio, así que la URL del migrador queda en el entorno de `api` ([DB_ROLES.md](DB_ROLES.md) §7).
 - Sin dominio propio no hay correo transaccional: los enlaces de activación se entregan a mano.

@@ -4,7 +4,9 @@
 # Por qué un Dockerfile y no el builder automático: `npm run backup` necesita pg_dump/pg_restore de la MISMA versión mayor que el servidor
 # (o más nueva), y la plantilla de PostgreSQL de Railway es la 18, que no está en los repositorios de Debian. Se instala desde el
 # repositorio oficial de PostgreSQL (PGDG). rclone sube el respaldo a Cloudflare R2 (BACKUP_UPLOAD_CMD).
-FROM node:22-bookworm-slim
+# Imagen base desde el espejo oficial de AWS ECR Public, no desde Docker Hub: los constructores de Railway comparten IP y Docker Hub
+# les responde 429 (Too Many Requests) de vez en cuando, lo que tumbó tres despliegues el 2026-10-09 (no era un fallo del código).
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim
 
 ENV NODE_ENV=production
 
