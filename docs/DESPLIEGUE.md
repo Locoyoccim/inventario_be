@@ -86,7 +86,7 @@ Cada fila se marca con fecha y qué se vio. Nada se da por hecho por haber confi
 | CORS | Una petición con `Origin` ajeno no recibe `Access-Control-Allow-Origin` | AUD-007 |
 | Migraciones | `npm run migrate:status` (servicio de una sola vez) → todas `[x]`, última 054 | AUD-007 |
 | Variables presentes | Por nombre, en el panel: las de §2 y ninguna `PERMITIR_DB_SUPERUSUARIO` | AUD-007 |
-| `req.ip` correcto | Un login fallido deja en el log `ip` = la IP de quien probó, no la de Railway | AUD-007 / AUD-011 |
+| `req.ip` correcto | Un login fallido deja en el log `ip` = la IP de quien probó, no la de Railway. Si sale la de Railway: probar `TRUST_PROXY_HOPS=1` o 3; si el borde no pone la IP en `X-Forwarded-For`, en el Caddyfile del front añadir `header_up X-Forwarded-For {header.X-Real-IP}` (Railway documenta `X-Real-IP`) y dejar `TRUST_PROXY_HOPS=1` | AUD-007 / AUD-011 |
 | Tiempo real | Con el front, el SSE de cocina recibe un evento | AUD-007 |
 | El monitor alerta | Pausar `api` unos minutos con aviso previo; llega el correo | AUD-007 |
 | Sin contaminación | `npm run audit:tenant` y `npm run audit:correos` limpios (servicio de una sola vez) | AUD-003 |
@@ -102,6 +102,7 @@ Con 5 minutos, «2 fallos seguidos» son ≈ 10 minutos hasta el aviso: aceptabl
 
 ## 6. Límites conocidos del piloto
 
+- **Los `Dockerfile` y el `Caddyfile` no se han construido localmente** (no hay Docker en el equipo de desarrollo): la primera construcción en Railway es la prueba real. Se esperan ajustes en esa primera vuelta.
 - **Una sola instancia de API** (ADR-003). No subir réplicas sin revisar el SSE y los cachés en memoria.
 - Las migraciones corren como pre-deploy del mismo servicio, así que la URL del migrador queda en el entorno de `api` ([DB_ROLES.md](DB_ROLES.md) §7).
 - Sin dominio propio no hay correo transaccional: los enlaces de activación se entregan a mano.
