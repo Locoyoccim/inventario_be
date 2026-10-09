@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { logger } from "../utils/logger.js";
+import { rutaSegura } from "../utils/redactar.js";
 
 // Un id entrante solo se acepta con una forma conocida: sin saltos de línea ni texto libre que ensucie o falsifique los logs.
 const ID_VALIDO = /^[A-Za-z0-9._-]{8,64}$/;
@@ -21,10 +22,11 @@ export function requestLogger(req, res, next) {
     const start = Date.now();
     res.on("finish", () => {
         if (res.statusCode < 400 && ES_SALUD.test(req.originalUrl.split("?")[0])) return;
+        // La ruta se registra sin la query y con los tokens enmascarados (p. ej. el de una invitación): el log no guarda secretos.
         logger[nivelPorStatus(res.statusCode)]("request", {
             requestId: req.id,
             method: req.method,
-            path: req.originalUrl,
+            ...rutaSegura(req.originalUrl),
             status: res.statusCode,
             ms: Date.now() - start,
             // `req.user` lo pone la autenticación; en rutas públicas (login, salud) no hay nadie identificado.

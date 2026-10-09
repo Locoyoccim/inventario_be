@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import logger from "./logger.js";
+import { enmascararCorreo } from "./redactar.js";
 
 // Envío de correo por SMTP (cualquier proveedor: Resend, SendGrid, Postmark, Gmail, el del hosting...).
 //   SMTP_URL=smtps://usuario:clave@smtp.proveedor.com        (o bien)
@@ -55,7 +56,10 @@ export async function enviarCorreo({ to, subject, text, html }) {
         if (process.env.NODE_ENV === "test") correosDePrueba.push(info.message);
         return { enviado: true };
     } catch (error) {
-        logger.error("No se pudo enviar el correo", { to, error: error.message });
+        logger.error("No se pudo enviar el correo", {
+            to: enmascararCorreo(to),
+            error: error.message,
+        });
         return {
             enviado: false,
             motivo: "No se pudo enviar el correo. Revisa la configuración SMTP.",
