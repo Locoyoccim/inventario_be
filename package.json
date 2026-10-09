@@ -18,6 +18,7 @@
         "audit:tenant": "node scripts/audit_tenant.js",
         "audit:correos": "node scripts/audit_correos.js",
         "purgar:ips": "node scripts/purgar_ips.js",
+        "bootstrap:plataforma": "node scripts/bootstrap_plataforma.js",
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",
         "migrate:mark": "node db/migrate.js mark",

@@ -176,7 +176,7 @@ día; **media** = revisar en el resumen diario.
 ### 4.1 Monitor externo (obligatorio, el primero que hay que poner)
 
 Railway **no vigila el healthcheck de forma continua**: lo consulta solo al desplegar. Hace falta un monitor externo que consulte
-`https://<tu-api>/health/ready` cada minuto y avise por correo tras 2 fallos seguidos. Opciones: cualquier servicio de uptime con plan
+`https://<tu-api>/health/ready` cada minuto y avise por correo tras 2 fallos seguidos (el plan gratis de UptimeRobot comprueba cada 5 minutos: el aviso tarda ≈ 10; ver [DESPLIEGUE.md](DESPLIEGUE.md) §5). Opciones: cualquier servicio de uptime con plan
 gratuito, o la plantilla **Uptime Kuma** del marketplace de Railway (la que su propia documentación recomienda para esto). Conviene vigilar
 también `/health` (liveness) para distinguir «el proceso no responde» de «la base no responde».
 

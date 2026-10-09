@@ -45,7 +45,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # Espejo oficial de AWS ECR Public: Docker Hub limita las descargas de los runners ("Docker pull failed", 429).
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

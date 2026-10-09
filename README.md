@@ -2,31 +2,31 @@
 
 Sistema de control de inventario, recetas y costos **multiempresa** para negocios de alimentos y bebidas (cafeterías, restaurantes). API REST en Node.js + Express 5 sobre PostgreSQL, por capas (`routes → controller → service → repository/logic`), con inyección de dependencias centralizada (`src/container.js`).
 
-> **Estado:** backend funcional y probado (unitarias + integración HTTP). Autenticación JWT, roles, costeo con cascada, compras, producción, conteos, ventas y reportes están implementados. Pendiente: frontend (se desarrolla aparte) y despliegue en Railway.
+> **Estado:** backend funcional y probado (unitarias + integración HTTP). Autenticación JWT, roles, costeo con cascada, compras, producción, conteos, ventas y reportes están implementados. El front vive en su propio repositorio; el despliegue en Railway está descrito en [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md).
 
 ---
 
 ## 1. Alcance real (qué existe hoy)
 
-| Módulo / Capacidad | Estado | Nota |
-| --- | --- | --- |
-| Autenticación (JWT + cookie httpOnly) | ✅ | `login`/`setup`/`logout`/`me`; token 7 días; anti-CSRF con cookie |
-| Roles y permisos | ✅ | Admin (`is_admin`/`is_owner`) = acceso total. Operativo acota por **rol** (`roles.permisos`, catálogo fijo): Operativo completo, Compras y almacén, Producción, Finanzas, y Mesero (reservado, sin permisos — para un futuro POS propio) |
-| Revocación de sesión | ✅ | `token_version` en el JWT: `logout-all` y cierre forzado por admin |
-| Plataforma (multiempresa) | ✅ | `is_platform_admin`: crea empresas, activa/desactiva tenants, resetea la contraseña del dueño — fuera del scope de `:empresa_id` |
-| Empresas (CRUD) | ✅ | `POST` protegido con `PLATFORM_TOKEN`; `DELETE` solo dueño |
-| Usuarios (CRUD) | ✅ | Soft-delete (`activo`); `codigo_ingreso` único **por empresa**; `role_id` opcional (Operativo) |
-| Proveedores (CRUD) | ✅ | Soft-delete (`activo`); no se puede referenciar uno inactivo |
-| Categorías (CRUD) | ✅ | Lista compartida por empresa (productos + recetas); **integridad referencial** a nivel BD (trigger): no se puede guardar una categoría que no exista en el catálogo |
-| Productos (CRUD) | ✅ | Crea/edita con su fila de `inventario`; soft-delete; filtros y paginación; `stock_maximo` y `precio_venta` opcionales |
-| Inventario | ✅ (lectura) | El stock solo cambia por movimientos/compras/producción/conteos |
-| Movimientos (kardex) | ✅ | Compra, venta, merma, ajuste, devolución, producción; costo a 4 decimales |
-| Recetas y preparaciones | ✅ | `costo_total` recalculado; sub-recetas (elaborados) y **cascada de costos**; `rendimiento` editable con recosteo en cascada |
-| Producción | ✅ | Consume insumos y produce elaborados en una transacción; rendimiento real vs. teórico; **planificación con subrecetas** (cascada de lotes previos a producir); anulación |
-| Compras | ✅ | Último costo; actualiza costo y dispara la cascada de recetas; flujo en dos fases **pedido → recepción** (`estado`), anulación |
-| Conteo físico | ✅ | Varianza teórico vs. real, reconciliación con ajustes, anulación |
-| PosMap + Ventas (importación diaria) | ✅ | Mapea el POS a recetas/insumos; importa/rev­ierte; listado y preview |
-| Reportes | ✅ | Estado del día, valorización, alertas, actividad, **historial** (feed de compras/conteos/producción), consumo |
+| Módulo / Capacidad                    | Estado       | Nota                                                                                                                                                                                                                                     |
+| ------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Autenticación (JWT + cookie httpOnly) | ✅           | `login`/`setup`/`logout`/`me`; token 7 días; anti-CSRF con cookie                                                                                                                                                                        |
+| Roles y permisos                      | ✅           | Admin (`is_admin`/`is_owner`) = acceso total. Operativo acota por **rol** (`roles.permisos`, catálogo fijo): Operativo completo, Compras y almacén, Producción, Finanzas, y Mesero (reservado, sin permisos — para un futuro POS propio) |
+| Revocación de sesión                  | ✅           | `token_version` en el JWT: `logout-all` y cierre forzado por admin                                                                                                                                                                       |
+| Plataforma (multiempresa)             | ✅           | `is_platform_admin`: crea empresas, activa/desactiva tenants, resetea la contraseña del dueño — fuera del scope de `:empresa_id`                                                                                                         |
+| Empresas                              | ✅           | Las crea el usuario maestro de plataforma (`POST /api/platform/empresas`); `DELETE` solo dueño. No existe `PLATFORM_TOKEN`                                                                                                               |
+| Usuarios (CRUD)                       | ✅           | Soft-delete (`activo`); `codigo_ingreso` único **por empresa**; `role_id` opcional (Operativo)                                                                                                                                           |
+| Proveedores (CRUD)                    | ✅           | Soft-delete (`activo`); no se puede referenciar uno inactivo                                                                                                                                                                             |
+| Categorías (CRUD)                     | ✅           | Lista compartida por empresa (productos + recetas); **integridad referencial** a nivel BD (trigger): no se puede guardar una categoría que no exista en el catálogo                                                                      |
+| Productos (CRUD)                      | ✅           | Crea/edita con su fila de `inventario`; soft-delete; filtros y paginación; `stock_maximo` y `precio_venta` opcionales                                                                                                                    |
+| Inventario                            | ✅ (lectura) | El stock solo cambia por movimientos/compras/producción/conteos                                                                                                                                                                          |
+| Movimientos (kardex)                  | ✅           | Compra, venta, merma, ajuste, devolución, producción; costo a 4 decimales                                                                                                                                                                |
+| Recetas y preparaciones               | ✅           | `costo_total` recalculado; sub-recetas (elaborados) y **cascada de costos**; `rendimiento` editable con recosteo en cascada                                                                                                              |
+| Producción                            | ✅           | Consume insumos y produce elaborados en una transacción; rendimiento real vs. teórico; **planificación con subrecetas** (cascada de lotes previos a producir); anulación                                                                 |
+| Compras                               | ✅           | Último costo; actualiza costo y dispara la cascada de recetas; flujo en dos fases **pedido → recepción** (`estado`), anulación                                                                                                           |
+| Conteo físico                         | ✅           | Varianza teórico vs. real, reconciliación con ajustes, anulación                                                                                                                                                                         |
+| PosMap + Ventas (importación diaria)  | ✅           | Mapea el POS a recetas/insumos; importa/rev­ierte; listado y preview                                                                                                                                                                     |
+| Reportes                              | ✅           | Estado del día, valorización, alertas, actividad, **historial** (feed de compras/conteos/producción), consumo                                                                                                                            |
 
 Aislamiento multiempresa: cada recurso lleva `:empresa_id` en la URL y se valida contra el token; los repositories filtran por empresa (directo o vía `JOIN`). Un `id` de otra empresa responde `403`/`404`, nunca datos ajenos.
 
@@ -34,7 +34,7 @@ Aislamiento multiempresa: cada recurso lleva `:empresa_id` en la URL y se valida
 
 ## 2. Stack
 
-- **Runtime:** Node.js 18+ (probado en 22)
+- **Runtime:** Node.js 20.19+ (`engines`; probado en 22, la imagen de Railway usa 22)
 - **Framework:** Express 5
 - **Base de datos:** PostgreSQL 14+ (`pg`, SQL crudo — sin ORM). Migraciones propias en `db/migrations` (`npm run migrate`).
 - **Auth:** `jsonwebtoken` (JWT) + `bcryptjs`; cookie httpOnly de sesión.
@@ -71,7 +71,8 @@ PORT=4000
 # CORS_ORIGINS=https://app.tu-dominio.mx
 # SETUP_TOKEN=...          # exige header x-setup-token en /setup (24+ caracteres)
 # PIN_PEPPER=...           # pimienta del hash de los PIN (32+), distinta de JWT_SECRET
-# PLATFORM_TOKEN=...       # exige header x-platform-token en POST /empresas
+# TRUST_PROXY_HOPS=3       # cuántos proxies hay delante de la API (por defecto 1; con el front de Railway delante, 3)
+# NODE_ENV=production      # literal: otros valores (p. ej. staging) se tratan como producción en unas partes y no en otras
 ```
 
 Aplica migraciones y levanta:
@@ -87,23 +88,27 @@ La configuración crítica se valida al arrancar (`src/config/env.js`): si falta
 
 ### Primer usuario
 
-Con la BD migrada, crea el dueño con `POST /api/auth/setup` (solo funciona si no existe ningún usuario). Después, entra con `POST /api/auth/login`.
+- **Base nueva en producción:** `npm run bootstrap:plataforma` crea el primer **maestro de plataforma** (y su empresa «Plataforma»); desde Plataforma → Empresas ese maestro da de alta a los clientes. Detalle en [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md).
+- **Desarrollo:** con la BD migrada y una empresa creada, `POST /api/auth/setup` crea el dueño (solo funciona si no existe ningún usuario). Después, entra con `POST /api/auth/login`.
 
 ### Variables de entorno
 
-| Variable | Requerida | Default | Descripción |
-| --- | --- | --- | --- |
-| `DATABASE_URL` | Sí* | — | Cadena de conexión (o usa `DB_*`) |
-| `DB_USER/DB_HOST/DB_NAME/DB_PASSWORD/DB_PORT` | Sí* | — | Alternativa a `DATABASE_URL` |
-| `MIGRATE_DATABASE_URL` | Para migrar | — | Rol **migrador** (`gh_migrador`, dueño de las tablas). `DATABASE_URL`/`DB_*` deben ser el rol **`gh_app`** (privilegios mínimos); en producción la app aborta si es superusuario o dueño. Ver [docs/DB_ROLES.md](docs/DB_ROLES.md) |
-| `JWT_SECRET` | Sí | — | 32+ caracteres |
-| `JWT_EXPIRES` | No | `7d` | Vigencia del token |
-| `PORT` | No | `4000` | Puerto del servidor |
-| `CORS_ORIGINS` | Prod | — | Lista separada por comas |
-| `SETUP_TOKEN` | Prod | — | Protege `/auth/setup` (24+ caracteres) |
-| `PIN_PEPPER` | Prod | `JWT_SECRET` (solo desarrollo) | Pimienta del hash de los PIN; distinta de `JWT_SECRET` (32+) |
-| `PLATFORM_TOKEN` | Prod | — | Protege `POST /empresas` |
-| `DB_SSL` | No | — | `require` para SSL sin verificar cert |
+| Variable                                      | Requerida   | Default                        | Descripción                                                                                                                                                                                                                        |
+| --------------------------------------------- | ----------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                | Sí*         | —                              | Cadena de conexión (o usa `DB_*`)                                                                                                                                                                                                  |
+| `DB_USER/DB_HOST/DB_NAME/DB_PASSWORD/DB_PORT` | Sí*         | —                              | Alternativa a `DATABASE_URL`                                                                                                                                                                                                       |
+| `MIGRATE_DATABASE_URL`                        | Para migrar | —                              | Rol **migrador** (`gh_migrador`, dueño de las tablas). `DATABASE_URL`/`DB_*` deben ser el rol **`gh_app`** (privilegios mínimos); en producción la app aborta si es superusuario o dueño. Ver [docs/DB_ROLES.md](docs/DB_ROLES.md) |
+| `JWT_SECRET`                                  | Sí          | —                              | 32+ caracteres                                                                                                                                                                                                                     |
+| `JWT_EXPIRES`                                 | No          | `7d`                           | Vigencia del token                                                                                                                                                                                                                 |
+| `PORT`                                        | No          | `4000`                         | Puerto del servidor                                                                                                                                                                                                                |
+| `CORS_ORIGINS`                                | Prod        | —                              | Lista separada por comas                                                                                                                                                                                                           |
+| `SETUP_TOKEN`                                 | Prod        | —                              | Protege `/auth/setup` (24+ caracteres)                                                                                                                                                                                             |
+| `PIN_PEPPER`                                  | Prod        | `JWT_SECRET` (solo desarrollo) | Pimienta del hash de los PIN; distinta de `JWT_SECRET` (32+)                                                                                                                                                                       |
+| `NODE_ENV`                                    | Prod        | desarrollo                     | Poner `production` literal (la cookie `Secure` y el CORS dependen de ese valor exacto)                                                                                                                                             |
+| `TRUST_PROXY_HOPS`                            | No          | `1`                            | Proxies delante de la API (0 a 5): de él depende `req.ip` (límite por IP, eventos de seguridad, bitácora)                                                                                                                          |
+| `TZ_NEGOCIO`                                  | No          | `America/Mexico_City`          | Zona horaria de respaldo cuando una empresa no tiene la suya                                                                                                                                                                       |
+| `DB_POOL_MAX`                                 | No          | `10`                           | Conexiones máximas del pool                                                                                                                                                                                                        |
+| `DB_SSL`                                      | No          | —                              | `require` para SSL sin verificar cert                                                                                                                                                                                              |
 
 \* Se requiere `DATABASE_URL` **o** el conjunto `DB_*`.
 
@@ -154,12 +159,12 @@ inventario_BE/
 
 ## 7. Modelo de datos (calculadas por PostgreSQL)
 
-| Tabla | Columna | Fórmula |
-| --- | --- | --- |
-| `productos` | `costo_unitario` `numeric(10,4)` | `costo_presentacion / cantidad_presentacion` |
-| `recetas` | `margen` | `(precio_venta - costo_total) / precio_venta * 100` |
-| `receta_detalle` | `costo_final` | `cantidad * costo_unitario` |
-| `conteo_detalle` | `variacion`, `valor_variacion` | derivadas del conteo |
+| Tabla            | Columna                          | Fórmula                                             |
+| ---------------- | -------------------------------- | --------------------------------------------------- |
+| `productos`      | `costo_unitario` `numeric(10,4)` | `costo_presentacion / cantidad_presentacion`        |
+| `recetas`        | `margen`                         | `(precio_venta - costo_total) / precio_venta * 100` |
+| `receta_detalle` | `costo_final`                    | `cantidad * costo_unitario`                         |
+| `conteo_detalle` | `variacion`, `valor_variacion`   | derivadas del conteo                                |
 
 `costo_presentacion` es `numeric(12,4)` (insumos de presentación chica conservan el costo real, ej. `0.0123`). `recetas.costo_total` la recalcula el backend a partir de sus `receta_detalle`, y con **cascada**: al cambiar el costo de un insumo (compra o edición) o de una preparación, se refrescan todas las recetas que lo usan.
 
@@ -195,12 +200,12 @@ Referencia por endpoint con cuerpos y ejemplos: **[docs/API.md](docs/API.md)**. 
 
 ## 11. Deuda técnica pendiente (por prioridad)
 
-| Tema | Nota |
-| --- | --- |
-| Costeo multinivel de preparaciones | Las preparaciones mantienen `costo_total` a 2 decimales (la precisión por unidad se preserva vía `costo_unitario`). |
-| Fechas a `timestamptz` | Hoy las columnas de fecha/hora son `timestamp`/`date` sin zona. Migración planeada aparte. |
-| Revocación por sesión | `token_version` revoca **todas** las sesiones del usuario; no hay revocación de un solo dispositivo (requeriría lista de tokens). |
-| Reportes avanzados | Ampliar más allá de estado/inventario/alertas/actividad/consumo según lo pida el front. |
+| Tema                               | Nota                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Costeo multinivel de preparaciones | Las preparaciones mantienen `costo_total` a 2 decimales (la precisión por unidad se preserva vía `costo_unitario`).               |
+| Fechas a `timestamptz`             | Hoy las columnas de fecha/hora son `timestamp`/`date` sin zona. Migración planeada aparte.                                        |
+| Revocación por sesión              | `token_version` revoca **todas** las sesiones del usuario; no hay revocación de un solo dispositivo (requeriría lista de tokens). |
+| Reportes avanzados                 | Ampliar más allá de estado/inventario/alertas/actividad/consumo según lo pida el front.                                           |
 
 ---
 

@@ -11,11 +11,13 @@ import { crearLimite } from "./middlewares/limites.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import pool from "./config/db.js";
 import { manejadorReadiness } from "./utils/readiness.js";
+import { saltosDeProxy } from "./config/env.js";
 
 const app = express();
 
-// Detrás de proxy (Railway) para que req.ip sea la IP real del cliente (rate limit correcto).
-app.set("trust proxy", 1);
+// Detrás de proxy (Railway; y el del front si la API va por él) para que req.ip sea la IP real del cliente (rate limit correcto).
+// Cuántos saltos hay lo dice TRUST_PROXY_HOPS (por defecto 1); ver saltosDeProxy.
+app.set("trust proxy", saltosDeProxy());
 
 // Cabeceras de seguridad
 app.use(helmet());
