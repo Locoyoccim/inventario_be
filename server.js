@@ -7,18 +7,31 @@ import app from "./src/app.js";
 import pool from "./src/config/db.js";
 import { cerrarEventos } from "./src/realtime/eventosPos.js";
 import { verificarRolDeAplicacion } from "./src/config/rolDb.js";
+import { crearManejadoresFatales } from "./src/utils/procesoFatal.js";
+
+let server;
+
+// Cierra lo que esté abierto, en orden: los flujos de avisos (SSE) no terminan solos y bloquearían server.close(); después la base.
+async function cerrarTodo() {
+    await cerrarEventos();
+    if (server?.listening) await new Promise((resolver) => server.close(resolver));
+    await pool.end().catch(() => {});
+}
+
+// Un error que nadie capturó (promesa rechazada sin catch o excepción suelta) deja el proceso en un estado desconocido: se registra
+// y se cierra en orden para que el orquestador levante uno limpio. Se instala ANTES de arrancar para cubrir también el arranque.
+crearManejadoresFatales({ cerrar: cerrarTodo }).instalar();
 
 // La app no debe conectarse como superusuario ni como dueña de las tablas (aborta en producción; avisa en desarrollo).
 await verificarRolDeAplicacion(pool);
 
 const PORT = process.env.PORT || 4000;
 
-const server = app.listen(PORT, () => {
+server = app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
 
-// Cierre ordenado: deja de aceptar conexiones, espera a las peticiones en curso
-// (máximo 10s) y cierra el pool de la base.
+// Cierre ordenado ante SIGTERM/SIGINT: deja de aceptar conexiones, espera a las peticiones en curso (máximo 10s) y cierra la base.
 let cerrando = false;
 async function shutdown(signal) {
     if (cerrando) return;
@@ -29,18 +42,10 @@ async function shutdown(signal) {
         process.exit(1);
     }, 10000);
     forzar.unref();
-    // Los flujos SSE no terminan solos: se cierran para que server.close() no espere.
-    await cerrarEventos();
-    server.close(async () => {
-        try {
-            await pool.end();
-        } catch {
-            /* noop */
-        }
-        clearTimeout(forzar);
-        console.log("Servidor y base de datos cerrados correctamente.");
-        process.exit(0);
-    });
+    await cerrarTodo();
+    clearTimeout(forzar);
+    console.log("Servidor y base de datos cerrados correctamente.");
+    process.exit(0);
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
