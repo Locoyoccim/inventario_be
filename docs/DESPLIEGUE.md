@@ -153,3 +153,21 @@ Con 5 minutos, «2 fallos seguidos» son ≈ 10 minutos hasta el aviso: aceptabl
 3. Correo: verificar el dominio en el proveedor SMTP (SPF/DKIM), cargar `SMTP_*` y `MAIL_FROM`, probar una invitación real.
 4. Actualizar los monitores, el aviso de privacidad (proveedor de correo) y emparejar el agente de impresión con la URL nueva.
 5. La URL `up.railway.app` sigue funcionando mientras no se quite; retirarla cuando todo use el dominio.
+
+## 8. Llevar el catálogo de otra instalación (p. ej. de tu base local a producción)
+
+`npm run migrar:catalogo` copia **proveedores, categorías y productos** de una empresa de tu base local a una empresa de otra instalación, **por la API** de esa
+instalación (pasa por sus validaciones y su bitácora; no hace falta abrir la base de producción a internet). Por defecto solo simula.
+
+1. **Crear la empresa en el destino.** Con el usuario maestro: Plataforma → Empresas → nueva empresa, con el correo de su Owner (el correo es único en toda la
+   plataforma: no puede ser el del maestro). Sin dominio no hay correo: la contraseña temporal se entrega a mano. Anota el **id** de la empresa nueva.
+2. **Simular** (no escribe nada ni contacta el destino; valida todo con los esquemas reales de la app):
+   `npm run migrar:catalogo -- --origen <id de la empresa en tu base local>`
+3. **Aplicar** (te pide la contraseña sin mostrarla; sirve la del Owner, o la del maestro si tiene acceso compartido a esa empresa):
+   `npm run migrar:catalogo -- --origen <id> --destino https://<web>.up.railway.app --destino-empresa <id nuevo> --email <correo> --aplicar`
+
+Qué hace y qué no: el stock inicial es **0** (se conservan el mínimo y el máximo; `--stock-actual` copia el stock del origen); omite los productos **inactivos**
+(`--incluir-inactivos` los lleva y los deja inactivos) y los **elaborados**, que nacen de recetas; lleva solo los proveedores que algún producto necesita; no
+lleva recetas, mesas, usuarios, ventas, compras ni movimientos. Es **repetible**: antes de crear consulta lo que ya hay y omite lo que existe con el mismo
+nombre. Al terminar imprime cuántos creó, cuántos ya existían y los errores, sin datos sensibles. Primera migración real (Café Aroma, empresa 4 → producción):
+ver el registro de abajo cuando se haga.
