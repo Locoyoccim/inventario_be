@@ -1,6 +1,6 @@
 # Despliegue a producción (Railway) y lista de salida
 
-Estado: **diseño aprobado el 2026-10-09 (ADR-012); aún sin desplegar.** Este documento es a la vez la receta y el checklist con evidencia
+Estado: **desplegado en producción el 2026-10-09 (ADR-012)**; quedan por comprobar la cookie del login y el tiempo real (SSE), que exigen una sesión, y el dominio propio (§7). Este documento es a la vez la receta y el checklist con evidencia
 (cierra AUD-007 y AUD-004). Lo que dice de Railway está contrastado con su documentación oficial el 2026-10-09; donde no se pudo comprobar se
 marca **«verificar»**. Si este documento y el código discrepan, gana el código.
 
@@ -50,7 +50,7 @@ MCP devuelve los valores en claro y **no debe usarse**.
 | `TZ_NEGOCIO` | opcional | no | `America/Mexico_City` |
 | `BOOTSTRAP_EMAIL`, `BOOTSTRAP_PASSWORD` | no | **solo `provision`** | correo del maestro y contraseña temporal (12+); los escribe quien administra |
 | `BACKUP_UPLOAD_CMD` | no | `respaldo` | `rclone copyto {file} r2:<bucket>/$(basename {file}) && rclone lsl r2:<bucket> && rclone delete r2:<bucket> --min-age 15d` (el `lsl` deja en el log la lista de copias: es la evidencia de que la subida llegó) |
-| `RCLONE_CONFIG_R2_TYPE` / `_PROVIDER` / `_ENDPOINT` | no | `respaldo` | `s3` / `Cloudflare` / `https://<cuenta>.r2.cloudflarestorage.com` |
+| `RCLONE_CONFIG_R2_TYPE` / `_PROVIDER` / `_ENDPOINT` | no | `respaldo` | `s3` / `Cloudflare` / `https://<cuenta>.r2.cloudflarestorage.com` (**sin** `/<bucket>`: la URL «S3 API» del panel de Cloudflare lo trae y hay que quitárselo) |
 | `RCLONE_CONFIG_R2_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | no | `respaldo` | token de R2 limitado a ESE bucket, solo escritura/lectura de objetos |
 | `RCLONE_CONFIG_R2_NO_CHECK_BUCKET` | no | `respaldo` | `true` (el token no puede crear buckets) |
 | `SMTP_*`, `MAIL_FROM` | opcional | no | vacías hasta tener dominio (§7); sin ellas el alta de empresa devuelve el enlace de activación |
@@ -82,7 +82,7 @@ Cada fila se marca con fecha y qué se vio. Nada se da por hecho por haber confi
 |---|---|---|
 | Arranque limpio | El log del primer arranque no trae «AVISO» ni «Configuración insegura» | AUD-007 |
 | API sana por la URL pública | `GET https://<web>/health/ready` → 200 `ready`; `/health` → 200 | AUD-007 |
-| Cookie correcta | `curl -i` del login: `Set-Cookie: gh_session=…; HttpOnly; Secure; SameSite=Lax` | AUD-007 |
+| Cookie correcta | `read -rs P; curl -si https://<web>/api/auth/login -H 'Content-Type: application/json' -d "{\"email\":\"<correo>\",\"password\":\"$P\"}" \| grep -i '^set-cookie' \| sed -E 's/(gh_session=)[^;]+/\1<oculto>/'; unset P` → `HttpOnly; Secure; SameSite=Lax` (pendiente de comprobar) | AUD-007 |
 | CORS | Una petición con `Origin` ajeno no recibe `Access-Control-Allow-Origin` | AUD-007 |
 | Migraciones | `npm run migrate:status` (servicio de una sola vez) → todas `[x]`, última 054 | AUD-007 |
 | Variables presentes | Por nombre, en el panel: las de §2 y ninguna `PERMITIR_DB_SUPERUSUARIO` | AUD-007 |
@@ -96,12 +96,13 @@ Cada fila se marca con fecha y qué se vio. Nada se da por hecho por haber confi
 
 ### Registro de la primera puesta (2026-10-09)
 
-Proyecto `NexoMesa` en Railway (plan Hobby), URL pública `https://web-production-3f7840.up.railway.app`. `api` y los crons construyen desde la rama
-`feat/despliegue-produccion` y `web` desde `feat/despliegue-railway` **hasta fusionarlas**; después hay que apuntar los servicios a `main`.
+Proyecto `NexoMesa` en Railway (plan Hobby), URL pública `https://web-production-3f7840.up.railway.app`. Los servicios `api`, `purga` y `respaldo`
+construyen desde `main` del repositorio del backend, y `web` desde `main` del front (fusionados los PR #15 y #20; se reapuntaron desde las ramas `feat/…`
+el 2026-10-09). Un push a `main` los redespliega.
 
 | Comprobación | Resultado |
 |---|---|
-| Imagen del backend (Node 22, `pg_dump` 18.6, rclone 1.60) | construye a la primera en Railway |
+| Imagen del backend (Node 22, `pg_dump` 18.6, rclone 1.75.2) | construye en Railway (con rclone 1.60 de Debian la subida a R2 fallaba: ver §6) |
 | Roles + migraciones 001–054 + primer maestro (`provision`) | OK; `audit:correos` limpio; `migrate:status` todas `[x]`; la pre-deploy de `api` dijo «Sin migraciones pendientes» |
 | `${{ secret() }}` en variables de un servicio común | funciona y el valor es **estable** entre despliegues (huella igual en dos arranques) |
 | Arranque de `api` | sin «AVISO» ni «Configuración insegura»; el guardia de rol de la base no abortó |
@@ -111,12 +112,21 @@ Proyecto `NexoMesa` en Railway (plan Hobby), URL pública `https://web-productio
 | CORS con `Origin` ajeno | sin `Access-Control-Allow-Origin` |
 | `req.ip` | con `TRUST_PROXY_HOPS=2` el log traía una IP del borde; con **3** trae la del cliente, y un `X-Forwarded-For`/`X-Real-IP` falsos no la alteran |
 | Cron `purga` | corrió: «0 fila(s) … 0 intento(s)» |
-| Cron `respaldo` | `pg_dump` 18 OK; la subida falló como debe (aún sin endpoint ni llaves de R2) y el script lo reportó |
+| Cron `respaldo` | `pg_dump` 18 OK y subida a R2 OK (ver abajo); con llaves de R2 **rotadas** (las primeras se pegaron en un chat) volvió a subir sin error |
 | Monitores UptimeRobot (cada 5 min, alerta a carlos_360@outlook.es) | creados sobre `/health/ready` y `/health` |
+| El monitor alerta | un monitor de prueba contra una URL que responde 404 cayó a los ≈ 5 min y UptimeRobot envió el correo (estado `SUCCESS`, 2 s después de detectar la caída); se borró. No se pausó producción para probarlo |
+| Servicios en `main` | tras fusionar #15 (backend, `a5d81e4`) y #20 (front, `a31ec07`), `api`, `web`, `purga` y `respaldo` quedaron en `SUCCESS` construyendo desde `main` |
+| Migraciones 053 y 054 en la base de desarrollo | aplicadas por el propietario (confirmado el 2026-10-09); producción las recibió con el aprovisionamiento |
+| Servicio `provision` | borrado tras cambiar la contraseña temporal del maestro (guardaba la contraseña y las credenciales de administrador) |
 
 **Respaldo y restauración (AUD-004), 2026-10-09:** el cron `respaldo` hizo `pg_dump` 18 de la base de producción y subió `railway-20261009-221503.dump` (188,817 bytes) a Cloudflare R2 (`nexomesa-respaldos`); `rclone lsl` lo listó en la raíz del bucket y la limpieza de copias de más de 15 días terminó sin error. Después se **descargó ese mismo archivo de R2** y `npm run backup:verify` lo restauró en una base temporal separada (`respaldo_verif_…`, ya borrada) con los conteos iguales a producción (empresas 1, usuarios 1, migraciones 54, el resto 0: base recién montada). Lección: la URL «S3 API» que muestra Cloudflare **incluye** `/<bucket>`; en `RCLONE_CONFIG_R2_ENDPOINT` va solo `https://<cuenta>.r2.cloudflarestorage.com`, sin el bucket. Con el bucket en el endpoint rclone sube a un prefijo equivocado y el listado da «directory not found».
 
-Pendiente de esta puesta: cookie del login (`HttpOnly; Secure; SameSite=Lax`) y SSE (requieren iniciar sesión), prueba de que el monitor alerta y pasar los servicios a `main` tras fusionar. Hecho: servicio `provision` borrado, respaldo subido a R2 y restauración ensayada (AUD-004).
+**Pendiente de esta puesta:**
+
+- Cookie del login (`HttpOnly; Secure; SameSite=Lax`) y SSE de cocina por los dos proxies: exigen iniciar sesión y las comprueba quien tenga la contraseña del maestro (comando en §4).
+- Dominio propio y correo transaccional (§7).
+- Aviso de privacidad: PR #21 del front con los proveedores reales; **no fusionar** hasta la revisión del abogado (la app lo publica en `/legal/privacidad`).
+- Un código de salida distinto de 0 no marca el servicio de una sola vez como fallido en Railway (`provision` salió con `SUCCESS` aunque `db:roles` falló): leer su log, no su estado.
 
 ## 5. Monitor externo
 
