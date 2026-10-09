@@ -19,6 +19,7 @@
         "audit:correos": "node scripts/audit_correos.js",
         "purgar:ips": "node scripts/purgar_ips.js",
         "bootstrap:plataforma": "node scripts/bootstrap_plataforma.js",
+        "migrar:catalogo": "node scripts/migrar_catalogo.js",
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",
         "migrate:mark": "node db/migrate.js mark",
