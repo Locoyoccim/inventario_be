@@ -6,11 +6,15 @@ import { aplicarMigracion, normalizarSqlMigracion } from "../db/migrate.js";
 
 test("normalizarSqlMigracion retira solo los delimitadores transaccionales heredados", () => {
     assert.equal(
-        normalizarSqlMigracion("-- migración histórica\nBEGIN;\nCREATE TABLE ejemplo (id integer);\nCOMMIT;\n-- fin\n"),
+        normalizarSqlMigracion(
+            "-- migración histórica\nBEGIN;\nCREATE TABLE ejemplo (id integer);\nCOMMIT;\n-- fin\n",
+        ),
         "-- migración histórica\nCREATE TABLE ejemplo (id integer);\n-- fin",
     );
     assert.equal(
-        normalizarSqlMigracion("-- migración nueva\nALTER TABLE ejemplo ADD COLUMN activo boolean;\n"),
+        normalizarSqlMigracion(
+            "-- migración nueva\nALTER TABLE ejemplo ADD COLUMN activo boolean;\n",
+        ),
         "-- migración nueva\nALTER TABLE ejemplo ADD COLUMN activo boolean;",
     );
 });
@@ -34,8 +38,14 @@ test("si falla el registro, revierte también el DDL de una migración con BEGIN
             /duplicate key value violates unique constraint/,
         );
 
-        const estado = await client.query("SELECT to_regclass($1) IS NOT NULL AS existe", [`public.${table}`]);
-        assert.equal(estado.rows[0].existe, false, "el DDL debe revertirse si no puede registrarse la migración");
+        const estado = await client.query("SELECT to_regclass($1) IS NOT NULL AS existe", [
+            `public.${table}`,
+        ]);
+        assert.equal(
+            estado.rows[0].existe,
+            false,
+            "el DDL debe revertirse si no puede registrarse la migración",
+        );
     } finally {
         await client.query(`DROP TABLE IF EXISTS public.${table}`);
         if (registroPreparado) {

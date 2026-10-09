@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(__dirname, "migrations");
 
 // Las migraciones las corre el rol MIGRADOR (dueño de los objetos): MIGRATE_DATABASE_URL. Sin ella se usa la conexión normal
-// (DATABASE_URL o DB_*), que solo sirve si ese rol es dueño de las tablas (desarrollo sin roles). Ver docs/DB_ROLES.md.
+// (DATABASE_URL o DB_*) del .env, que solo sirve si ese rol es dueño de las tablas (desarrollo sin roles). Ver docs/DB_ROLES.md.
 function makePool() {
     const url = process.env.MIGRATE_DATABASE_URL || process.env.DATABASE_URL;
     if (url) {
@@ -39,7 +39,10 @@ async function ensureTable(client) {
 
 function migrationFiles() {
     if (!fs.existsSync(DIR)) return [];
-    return fs.readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
+    return fs
+        .readdirSync(DIR)
+        .filter((f) => f.endsWith(".sql"))
+        .sort();
 }
 
 async function appliedSet(client) {
@@ -104,7 +107,10 @@ async function run() {
         await ensureTable(client);
         const done = await appliedSet(client);
         const pend = migrationFiles().filter((f) => !done.has(f));
-        if (pend.length === 0) { console.log("Sin migraciones pendientes."); return; }
+        if (pend.length === 0) {
+            console.log("Sin migraciones pendientes.");
+            return;
+        }
         for (const f of pend) {
             const sql = fs.readFileSync(path.join(DIR, f), "utf8");
             console.log("Aplicando", f, "...");
@@ -116,7 +122,10 @@ async function run() {
                 throw e;
             }
         }
-    } finally { client.release(); await pool.end(); }
+    } finally {
+        client.release();
+        await pool.end();
+    }
 }
 
 async function mark(f) {
@@ -126,10 +135,13 @@ async function mark(f) {
         await ensureTable(client);
         await client.query(
             "INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING",
-            [f]
+            [f],
         );
         console.log("Marcada como aplicada (sin ejecutar):", f);
-    } finally { client.release(); await pool.end(); }
+    } finally {
+        client.release();
+        await pool.end();
+    }
 }
 
 async function status() {
@@ -141,7 +153,10 @@ async function status() {
         const all = migrationFiles();
         if (all.length === 0) console.log("(no hay archivos en db/migrations)");
         for (const f of all) console.log((done.has(f) ? "[x] " : "[ ] ") + f);
-    } finally { client.release(); await pool.end(); }
+    } finally {
+        client.release();
+        await pool.end();
+    }
 }
 
 // Permite importar las funciones de transacción en pruebas sin ejecutar el CLI como efecto secundario.
@@ -149,7 +164,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     const [cmd, arg] = process.argv.slice(2);
     try {
         if (cmd === "mark") {
-            if (!arg) { console.error("uso: node db/migrate.js mark <archivo.sql>"); process.exit(1); }
+            if (!arg) {
+                console.error("uso: node db/migrate.js mark <archivo.sql>");
+                process.exit(1);
+            }
             await mark(arg);
         } else if (cmd === "status") {
             await status();
@@ -160,7 +178,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         console.error("Error de migración:", e.message);
         // 42501 = privilegios insuficientes: casi siempre es correr las migraciones con el rol de la app en vez del migrador.
         if (e.code === "42501" || /must be owner|permission denied/i.test(e.message)) {
-            console.error("Pista: las migraciones necesitan el rol migrador. Define MIGRATE_DATABASE_URL (ver docs/DB_ROLES.md).");
+            console.error(
+                "Pista: las migraciones necesitan el rol migrador. Define MIGRATE_DATABASE_URL (ver docs/DB_ROLES.md).",
+            );
         }
         process.exit(1);
     }
