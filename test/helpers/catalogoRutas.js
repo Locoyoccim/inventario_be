@@ -92,6 +92,11 @@ export const EXCEPCIONES = {
         "requireAuth",
         "requireActiveUser",
     ]),
+    "POST /api/auth/empresa-activa": R(
+        "solo-sesion",
+        "Cambia la empresa activa de la sesión: solo la base o un acceso compartido vigente (lo valida el servicio contra la BD).",
+        ["requireAuth", "requireActiveUser"],
+    ),
 
     "POST /api/agente/emparejar": R(
         "agente",
@@ -132,6 +137,22 @@ export const EXCEPCIONES = {
     "POST /api/platform/empresas/:id/resetear-password": R(
         "plataforma",
         "Restablece la contraseña del Owner.",
+        ["requirePlatformAdmin"],
+    ),
+
+    "GET /api/platform/accesos": R(
+        "plataforma",
+        "Owner/Admin que pueden recibir acceso a otras empresas, con los que ya tienen.",
+        ["requirePlatformAdmin"],
+    ),
+    "PUT /api/platform/usuarios/:id/empresas/:destino": R(
+        "plataforma",
+        "Concede (o actualiza) el acceso de un Owner/Admin a otra empresa.",
+        ["requirePlatformAdmin"],
+    ),
+    "DELETE /api/platform/usuarios/:id/empresas/:destino": R(
+        "plataforma",
+        "Retira el acceso de un usuario a otra empresa.",
         ["requirePlatformAdmin"],
     ),
 

@@ -52,6 +52,12 @@ export function requireOwnerOrAdmin(req, _res, next) {
     );
 }
 
+// Solo el Owner (dueño) de la empresa del token. En una empresa a la que la persona tiene acceso compartido nunca es Owner.
+export function requireOwner(req, _res, next) {
+    if (req.user && !req.user.pin && req.user.is_owner) return next();
+    next(ApiError.forbidden("Requiere ser el dueño de la empresa"));
+}
+
 // Exige el usuario maestro de plataforma (usuarios.is_platform_admin). A diferencia de
 // el token de plataforma que existió antes, se apoya en req.user.is_platform_admin, refrescado desde la BD en
 // cada petición por requireActiveUser (mismo mecanismo que is_admin/is_owner) — nunca confía

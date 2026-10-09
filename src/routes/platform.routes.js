@@ -1,6 +1,7 @@
 import { validate } from "../middlewares/validate.js";
 import { requirePlatformAdmin } from "../middlewares/auth.js";
-import { platformController } from "../container.js";
+import { platformController, accesoController } from "../container.js";
+import { concederAccesoSchema } from "../modules/accesos/acceso.schema.js";
 import {
     crearEmpresaSchema,
     cambiarEstadoEmpresaSchema,
@@ -35,5 +36,18 @@ export default function registerPlatform(router) {
         requirePlatformAdmin,
         validate(resetearPasswordOwnerSchema),
         platformController.resetearPasswordOwner,
+    );
+    // Acceso de un Owner/Admin a OTRAS empresas (solo desde aquí se concede). La empresa destino es un dato, no el tenant: el parámetro se llama :destino para que empresaGuard no se aplique.
+    router.get("/platform/accesos", requirePlatformAdmin, accesoController.listar);
+    router.put(
+        "/platform/usuarios/:id/empresas/:destino",
+        requirePlatformAdmin,
+        validate(concederAccesoSchema),
+        accesoController.conceder,
+    );
+    router.delete(
+        "/platform/usuarios/:id/empresas/:destino",
+        requirePlatformAdmin,
+        accesoController.retirar,
     );
 }

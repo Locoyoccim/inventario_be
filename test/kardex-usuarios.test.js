@@ -80,7 +80,9 @@ test("usuarios: inexistente devuelve null", async () => {
 test("usuario activo: cachea y se invalida", async () => {
     let consultas = 0;
     let activo = true;
-    const query = async () => {
+    // Cada carga hace además la consulta de accesos compartidos (usuario_empresas); aquí solo se cuentan las cargas del usuario.
+    const query = async (sql) => {
+        if (/usuario_empresas/.test(sql)) return { rows: [] };
         consultas++;
         return { rows: [{ activo }] };
     };

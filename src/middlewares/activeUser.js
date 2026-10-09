@@ -7,7 +7,9 @@ import ApiError from "../utils/ApiError.js";
 // revocado pierde acceso sin esperar a que el JWT expire.
 // Caché breve en memoria para no consultar la BD en cada petición.
 const TTL_MS = 60 * 1000;
-const cache = new Map(); // id -> { activo, empresa_activa, is_admin, is_owner, is_platform_admin, must_change_password, tv, at }
+// id -> { activo, empresa_id (base), empresa_activa (de la base), is_admin, is_owner, is_platform_admin, must_change_password, permisos, tv,
+//         accesos: Map<empresa_id, { is_admin, permisos, empresa_activa }> (accesos compartidos VIGENTES), at }
+const cache = new Map();
 
 export function invalidarUsuarioActivo(id) {
     cache.delete(Number(id));
@@ -59,6 +61,25 @@ async function cargar(id, query) {
         [key],
     );
     const row = res.rows[0];
+    // Accesos compartidos vigentes (Owner/Admin al que el maestro dio otra empresa): cada uno con SU rol. Sin la fila no hay acceso.
+    const accesos = new Map();
+    if (row) {
+        const acc = await query(
+            `SELECT ue.empresa_id, ue.is_admin, ue.role_id, r.permisos, e.activo AS empresa_activa
+             FROM usuario_empresas ue
+             JOIN empresas e ON e.id = ue.empresa_id
+             LEFT JOIN roles r ON r.id = ue.role_id
+             WHERE ue.usuario_id = $1 AND ue.activo`,
+            [key],
+        );
+        for (const a of acc.rows) {
+            accesos.set(Number(a.empresa_id), {
+                is_admin: !!a.is_admin,
+                permisos: permisosEfectivos(a.role_id, a.permisos),
+                empresa_activa: a.empresa_activa !== false,
+            });
+        }
+    }
     const estado = row
         ? {
               empresa_id: Number(row.empresa_id),
@@ -70,6 +91,7 @@ async function cargar(id, query) {
               must_change_password: !!row.must_change_password,
               permisos: permisosEfectivos(row.role_id, row.permisos),
               tv: Number(row.token_version ?? 0),
+              accesos,
               at: Date.now(),
           }
         : {
@@ -82,10 +104,35 @@ async function cargar(id, query) {
               must_change_password: false,
               permisos: [],
               tv: 0,
+              accesos,
               at: Date.now(),
           };
     cache.set(key, estado);
     return estado;
+}
+
+// Lo que `estado` dice de la persona EN la empresa `empresa_id`: la base (su fila) o un acceso compartido vigente. null = no le
+// corresponde esa empresa. En un acceso compartido nunca es Owner y su rol es el del acceso, no el de su fila base.
+export function contextoEmpresa(estado, empresa_id) {
+    const id = Number(empresa_id);
+    if (id === estado.empresa_id) {
+        return {
+            base: true,
+            empresa_activa: estado.empresa_activa,
+            is_admin: estado.is_admin,
+            is_owner: estado.is_owner,
+            permisos: estado.permisos,
+        };
+    }
+    const acceso = estado.accesos?.get(id);
+    if (!acceso) return null;
+    return {
+        base: false,
+        empresa_activa: acceso.empresa_activa,
+        is_admin: acceso.is_admin,
+        is_owner: false,
+        permisos: acceso.permisos,
+    };
 }
 
 export async function estaActivo(id, query = (sql, params) => pool.query(sql, params)) {
@@ -103,18 +150,20 @@ export async function requireActiveUser(req, _res, next) {
         if (!req.user?.id) return next(ApiError.unauthorized());
         const estado = await perfilActivo(req.user.id);
         if (!estado.activo) return next(ApiError.unauthorized("Usuario desactivado"));
-        if (!estado.empresa_activa)
-            return next(
-                ApiError.unauthorized("La empresa fue desactivada. Contacta al administrador."),
-            );
-        // El tenant del token debe ser el de la fila del usuario: el aislamiento no puede descansar solo en un claim del JWT.
-        if (Number(req.user.empresa_id) !== estado.empresa_id) {
+        // El tenant del token debe ser el de la fila del usuario (su empresa base) o un acceso compartido VIGENTE: el aislamiento no puede
+        // descansar solo en un claim del JWT. Un acceso retirado o una empresa que ya no le corresponde pierde la sesión (401).
+        const ctx = contextoEmpresa(estado, req.user.empresa_id);
+        if (!ctx) {
             return next(
                 ApiError.unauthorized(
                     "La sesión no corresponde a tu empresa. Vuelve a iniciar sesión.",
                 ),
             );
         }
+        if (!ctx.empresa_activa)
+            return next(
+                ApiError.unauthorized("La empresa fue desactivada. Contacta al administrador."),
+            );
         // Revocación: si la versión del token no coincide con la de la BD, la sesión fue cerrada.
         if (Number(req.user.tv ?? 0) !== estado.tv) {
             return next(ApiError.unauthorized("Sesión finalizada. Vuelve a iniciar sesión."));
@@ -122,6 +171,14 @@ export async function requireActiveUser(req, _res, next) {
         // Sesión de PIN: solo vale mientras el equipo siga autorizado y la persona no sea administradora (si la ascendieron,
         // vuelve a entrar con correo y contraseña; una sesión de PIN nunca hereda poderes de Admin).
         if (req.user.pin) {
+            // Un equipo y su PIN son de la empresa base: nunca valen en una empresa compartida.
+            if (!ctx.base) {
+                return next(
+                    ApiError.unauthorized(
+                        "Esta sesión ya no es válida. Entra con tu correo y contraseña.",
+                    ),
+                );
+            }
             if (estado.is_admin || estado.is_owner || estado.is_platform_admin) {
                 return next(
                     ApiError.unauthorized(
@@ -138,11 +195,13 @@ export async function requireActiveUser(req, _res, next) {
             }
         }
         // Rol fresco desde BD: un token viejo de un admin degradado ya no manda.
-        req.user.is_admin = estado.is_admin;
-        req.user.is_owner = estado.is_owner;
+        req.user.is_admin = ctx.is_admin;
+        req.user.is_owner = ctx.is_owner;
         req.user.is_platform_admin = estado.is_platform_admin;
         req.user.must_change_password = estado.must_change_password;
-        req.user.permisos = estado.permisos;
+        req.user.permisos = ctx.permisos;
+        // Empresa base de la persona (la de su fila): lo que depende de SU cuenta —contraseña, cierre de sesiones— no sigue a la empresa activa.
+        req.user.empresa_base = estado.empresa_id;
         next();
     } catch (error) {
         next(error);

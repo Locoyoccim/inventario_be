@@ -44,6 +44,9 @@ import CategoriaController from "./modules/categorias/categoria.controller.js";
 import CategoriaService from "./modules/categorias/categoria.service.js";
 import CategoriaRepository from "./modules/categorias/categoria.repository.js";
 import PlatformController from "./modules/platform/platform.controller.js";
+import AccesoController from "./modules/accesos/acceso.controller.js";
+import AccesoService from "./modules/accesos/acceso.service.js";
+import AccesoRepository from "./modules/accesos/acceso.repository.js";
 import PlatformService from "./modules/platform/platform.service.js";
 import PlatformRepository from "./modules/platform/platform.repository.js";
 import RolController from "./modules/roles/rol.controller.js";
@@ -72,9 +75,11 @@ const recetaRepo = new RecetaRepository();
 // Controllers (lo que consumen las rutas)
 export const empresaController = new EmpresaController(new EmpresaService(empresaRepo));
 const usuarioRepo = new UsuarioRepository();
+const accesoRepo = new AccesoRepository();
 export const usuarioController = new UsuarioController(
-    new UsuarioService(usuarioRepo, empresaRepo),
+    new UsuarioService(usuarioRepo, empresaRepo, accesoRepo),
 );
+export const accesoController = new AccesoController(new AccesoService(accesoRepo));
 const dispositivoRepo = new DispositivoRepository();
 export const pinController = new PinController(
     new PinService(dispositivoRepo, usuarioRepo),

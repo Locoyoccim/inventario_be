@@ -21,8 +21,9 @@ const QUERIES = {
     `,
     SELECT_PROFILE: `
         SELECT u.id, u.nombre, u.email, u.is_admin, u.is_owner, u.is_platform_admin, u.must_change_password,
-               u.empresa_id, u.activo, u.role_id, r.permisos
+               u.empresa_id, u.activo, u.role_id, r.permisos, e.nombre AS empresa_nombre
         FROM usuarios u
+        JOIN empresas e ON e.id = u.empresa_id
         LEFT JOIN roles r ON r.id = u.role_id
         WHERE u.empresa_id = $1 AND u.id = $2
     `,
@@ -30,7 +31,7 @@ const QUERIES = {
     SELECT_BY_EMAIL: `
         SELECT u.id, u.nombre, u.email, u.password_hash, u.is_admin, u.is_owner, u.is_platform_admin,
                u.must_change_password, u.role_id, u.empresa_id, u.activo, u.token_version,
-               e.activo AS empresa_activa, r.permisos
+               e.activo AS empresa_activa, e.nombre AS empresa_nombre, r.permisos
         FROM usuarios u
         JOIN empresas e ON e.id = u.empresa_id
         LEFT JOIN roles r ON r.id = u.role_id

@@ -1709,6 +1709,18 @@
             "guardia": "No aplica: purga global por antigüedad (created_at), sin leer ni devolver datos de empresas",
             "lineas_al_revisar": [76],
             "sql": "DELETE FROM pos_idempotencia WHERE created_at < now() - interval '48 hours'"
+        },
+        {
+            "archivo": "src/modules/accesos/acceso.repository.js",
+            "huella": "1b3d67574068",
+            "ocurrencias": 1,
+            "metodo": "<null>",
+            "tablas": ["usuarios"],
+            "categoria": "mantenimiento-o-global",
+            "motivo": "Ámbito de PLATAFORMA, no de una empresa: lo llama solo el maestro (PUT/DELETE /platform/usuarios/:id/empresas/:destino, requirePlatformAdmin) con el id de un usuario; el servicio exige que sea Owner/Admin activo y que la empresa destino exista, esté activa y no sea su base.",
+            "guardia": "requirePlatformAdmin (src/routes/platform.routes.js) + AccesoService.conceder",
+            "lineas_al_revisar": [7],
+            "sql": "SELECT id, nombre, email, empresa_id, activo, is_admin, is_owner FROM usuarios WHERE id = $1"
         }
     ]
 }
