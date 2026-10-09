@@ -217,11 +217,24 @@ una prueba contra el SDK real comprueba el envelope que sale.
 
 **Probarlo:** con el DSN puesto, provocar un error (p. ej. un despliegue de prueba) y comprobar que llega. Para apagarlo: quitar `SENTRY_DSN`.
 
-## 6. Privacidad
+## 6. Privacidad y retención
 
-- La **IP** (en `request` y en los eventos de seguridad) y el `usuario_id` son datos personales. Hay que mencionarlos en el aviso de privacidad de la
-  aplicación (existe el módulo `legal` en el front) y entender que viven en los logs de Railway durante el plazo de retención de su plan.
-- Los correos nunca salen completos; las contraseñas, PIN y tokens, jamás.
+Dónde queda cada dato personal y por cuánto tiempo. **El aviso de privacidad (`GastronyHub/legal/aviso-de-privacidad.md`) debe decir esto mismo**;
+si cambia algo de aquí, cambia el aviso (AUD-011).
+
+| Dato | Dónde vive | Retención real | Cómo se cumple |
+|---|---|---|---|
+| IP, `usuario_id`, `empresa_id`, `requestId` en cada petición y en los eventos de seguridad | Log de Railway | Según el plan de Railway: 3 días (Free), 7 (Hobby), 30 (Pro), hasta 90 (Enterprise) | Lo hace Railway; no hay copia nuestra |
+| IP de la bitácora de acciones administrativas (`admin_actividad.ip`) | Base de datos | **12 meses**; después la fila se conserva y la IP se pone en NULL | `npm run purgar:ips` (migración 054) |
+| El resto de `admin_actividad` (quién, qué, sobre qué, cuándo) | Base de datos | Sin plazo: es el registro de auditoría de la empresa | — |
+| IP de los intentos fallidos de PIN (`pin_fallos.ip`) | Base de datos | **Hasta 2 días** (se borran los de más de 1 día; solo sirven para contar en ventanas de minutos) | `npm run purgar:ips` |
+| Respaldos de la base (contienen todo lo anterior) | Fuera del servidor (destino externo) | Los últimos 14 (`BACKUP_KEEP`) | [RESPALDOS.md](RESPALDOS.md) |
+
+- **Programar la purga.** `npm run purgar:ips` corre con el rol de la app (`gh_app`; no necesita credenciales de dueño) y es idempotente. Debe correr
+  **a diario**: en Railway, un servicio *cron* aparte con `DATABASE_URL` y `npm run purgar:ips`. Hasta que esté programado, la promesa de 12 meses no se cumple:
+  verificarlo es parte de la lista de salida a producción.
+- Las IP de los respaldos conservan lo que había en el momento del respaldo; caducan al rotar los 14 respaldos (con el respaldo diario, ~2 semanas).
+- Los correos nunca salen completos en el log; las contraseñas, PIN y tokens, jamás.
 - Sentry (si se enciende) es otro tratamiento de datos y otro proveedor: reflejarlo también en el aviso. Solo recibe errores y ids técnicos.
 
 ## 7. Qué hacer cuando suena
