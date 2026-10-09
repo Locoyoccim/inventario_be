@@ -8,10 +8,22 @@ export default class ApiError extends Error {
         this.isOperational = true;
         if (Error.captureStackTrace) Error.captureStackTrace(this, ApiError);
     }
-    static badRequest(msg, details = null) { return new ApiError(400, msg, details); }
-    static unauthorized(msg = "No autorizado") { return new ApiError(401, msg); }
-    static forbidden(msg = "Sin permisos") { return new ApiError(403, msg); }
-    static notFound(msg = "Recurso no encontrado") { return new ApiError(404, msg); }
-    static conflict(msg, details = null) { return new ApiError(409, msg, details); }
-    static tooMany(msg, details = null) { return new ApiError(429, msg, details); }
+    static badRequest(msg, details = null) {
+        return new ApiError(400, msg, details);
+    }
+    static unauthorized(msg = "No autorizado") {
+        return new ApiError(401, msg);
+    }
+    static forbidden(msg = "Sin permisos") {
+        return new ApiError(403, msg);
+    }
+    static notFound(msg = "Recurso no encontrado") {
+        return new ApiError(404, msg);
+    }
+    static conflict(msg, details = null) {
+        return new ApiError(409, msg, details);
+    }
+    static tooMany(msg, details = null) {
+        return new ApiError(429, msg, details);
+    }
 }

@@ -12,7 +12,10 @@ const escapar = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").re
 // Enlace de un solo uso para que el usuario defina su contraseña. Un enlace nuevo anula los anteriores sin usar.
 export async function crearInvitacion(usuario_id, db = pool) {
     const token = randomBytes(32).toString("base64url");
-    await db.query("DELETE FROM usuario_tokens WHERE usuario_id = $1 AND tipo = 'INVITACION' AND usado_at IS NULL", [usuario_id]);
+    await db.query(
+        "DELETE FROM usuario_tokens WHERE usuario_id = $1 AND tipo = 'INVITACION' AND usado_at IS NULL",
+        [usuario_id],
+    );
     const r = await db.query(
         `INSERT INTO usuario_tokens (usuario_id, tipo, token_hash, expira_at)
          VALUES ($1, 'INVITACION', $2, now() + make_interval(days => $3)) RETURNING expira_at`,
@@ -27,9 +30,10 @@ export async function invitarUsuario({ usuario_id, nombre, email, empresa }) {
     const dias = VIGENCIA_DIAS;
     const asunto = "Activa tu cuenta de Gastronomy Hub";
     const texto = `Hola ${nombre},\n\nTu cuenta de Gastronomy Hub para ${empresa} está lista. Define tu contraseña aquí (el enlace funciona una sola vez y vence en ${dias} días):\n\n${inv.url}\n\nSi no esperabas este correo, ignóralo.`;
-    const html = `<p>Hola ${escapar(nombre)},</p><p>Tu cuenta de <strong>Gastronomy Hub</strong> para <strong>${escapar(empresa)}</strong> está lista.</p>`
-        + `<p><a href="${inv.url}" style="display:inline-block;padding:12px 20px;background:#2a2622;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold">Definir mi contraseña</a></p>`
-        + `<p style="color:#666;font-size:13px">El enlace funciona una sola vez y vence en ${dias} días. Si no esperabas este correo, ignóralo.</p>`;
+    const html =
+        `<p>Hola ${escapar(nombre)},</p><p>Tu cuenta de <strong>Gastronomy Hub</strong> para <strong>${escapar(empresa)}</strong> está lista.</p>` +
+        `<p><a href="${inv.url}" style="display:inline-block;padding:12px 20px;background:#2a2622;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold">Definir mi contraseña</a></p>` +
+        `<p style="color:#666;font-size:13px">El enlace funciona una sola vez y vence en ${dias} días. Si no esperabas este correo, ignóralo.</p>`;
     const envio = await enviarCorreo({ to: email, subject: asunto, text: texto, html });
     return {
         enviada: envio.enviado,
