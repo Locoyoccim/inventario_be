@@ -17,14 +17,16 @@ export function requireAuth(req, _res, next) {
     if (!token) return next(ApiError.unauthorized("Falta el token de autenticación"));
 
     if (cookieToken && !SAFE_METHODS.has(req.method) && !req.headers[CSRF_HEADER]) {
-        return next(ApiError.forbidden("Falta el header X-Requested-With"));
+        return next(
+            ApiError.forbidden("Falta el header X-Requested-With").conEvento("csrf_faltante"),
+        );
     }
 
     try {
         req.user = verifyToken(token);
         next();
     } catch {
-        next(ApiError.unauthorized("Token inválido o expirado"));
+        next(ApiError.unauthorized("Token inválido o expirado").conEvento("token_invalido"));
     }
 }
 
@@ -32,7 +34,14 @@ export function requireAuth(req, _res, next) {
 export function empresaGuard(req, _res, next, val) {
     if (!req.user) return next(ApiError.unauthorized());
     if (String(req.user.empresa_id) !== String(val)) {
-        return next(ApiError.forbidden("No tienes acceso a los datos de esta empresa"));
+        return next(
+            ApiError.forbidden("No tienes acceso a los datos de esta empresa").conEvento(
+                "empresa_ajena",
+                {
+                    empresa_solicitada: String(val).slice(0, 20),
+                },
+            ),
+        );
     }
     next();
 }
@@ -48,14 +57,21 @@ export function requireOwnerOrAdmin(req, _res, next) {
             req.user?.pin
                 ? "Esta acción requiere entrar con correo y contraseña"
                 : "Requiere permisos de administrador",
-        ),
+        ).conEvento("permiso_denegado", {
+            requiere: "admin",
+            sesion: req.user?.pin ? "pin" : "correo",
+        }),
     );
 }
 
 // Solo el Owner (dueño) de la empresa del token. En una empresa a la que la persona tiene acceso compartido nunca es Owner.
 export function requireOwner(req, _res, next) {
     if (req.user && !req.user.pin && req.user.is_owner) return next();
-    next(ApiError.forbidden("Requiere ser el dueño de la empresa"));
+    next(
+        ApiError.forbidden("Requiere ser el dueño de la empresa").conEvento("permiso_denegado", {
+            requiere: "owner",
+        }),
+    );
 }
 
 // Exige el usuario maestro de plataforma (usuarios.is_platform_admin). A diferencia de
@@ -64,7 +80,14 @@ export function requireOwner(req, _res, next) {
 // solo en lo que diga el JWT.
 export function requirePlatformAdmin(req, _res, next) {
     if (req.user && !req.user.pin && req.user.is_platform_admin) return next();
-    next(ApiError.forbidden("Requiere ser administrador de la plataforma"));
+    next(
+        ApiError.forbidden("Requiere ser administrador de la plataforma").conEvento(
+            "permiso_denegado",
+            {
+                requiere: "plataforma",
+            },
+        ),
+    );
 }
 
 // Rol Admin = dueño o administrador. El resto de usuarios son "Operativo".
@@ -76,6 +99,13 @@ export function requirePermiso(clave) {
     return (req, _res, next) => {
         if (esAdmin(req.user)) return next();
         if (req.user?.permisos?.includes(clave)) return next();
-        next(ApiError.forbidden("Tu rol no tiene permiso para esta acción"));
+        next(
+            ApiError.forbidden("Tu rol no tiene permiso para esta acción").conEvento(
+                "permiso_denegado",
+                {
+                    requiere: clave,
+                },
+            ),
+        );
     };
 }

@@ -52,7 +52,7 @@ export async function consultarInvitacion(token) {
          WHERE t.token_hash = $1 AND t.tipo = 'INVITACION' AND t.usado_at IS NULL AND t.expira_at > now() AND u.activo`,
         [hashToken(token)],
     );
-    if (!r.rows[0]) throw ApiError.notFound(INVALIDA);
+    if (!r.rows[0]) throw ApiError.notFound(INVALIDA).conEvento("invitacion_invalida");
     return r.rows[0];
 }
 
@@ -66,7 +66,7 @@ export async function aceptarInvitacion(token, password) {
              WHERE token_hash = $1 AND tipo = 'INVITACION' AND usado_at IS NULL AND expira_at > now() RETURNING usuario_id`,
             [hashToken(token)],
         );
-        if (!t.rows[0]) throw ApiError.notFound(INVALIDA);
+        if (!t.rows[0]) throw ApiError.notFound(INVALIDA).conEvento("invitacion_invalida");
         const usuario_id = t.rows[0].usuario_id;
         const password_hash = await bcrypt.hash(password, 12);
         const u = await client.query(
@@ -74,7 +74,7 @@ export async function aceptarInvitacion(token, password) {
              WHERE id = $1 AND activo RETURNING id, email`,
             [usuario_id, password_hash],
         );
-        if (!u.rows[0]) throw ApiError.notFound(INVALIDA);
+        if (!u.rows[0]) throw ApiError.notFound(INVALIDA).conEvento("invitacion_invalida");
         await client.query("COMMIT");
         invalidarUsuarioActivo(usuario_id);
         return { email: u.rows[0].email };

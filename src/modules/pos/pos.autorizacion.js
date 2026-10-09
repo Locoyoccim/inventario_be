@@ -26,10 +26,23 @@ export async function resolverAutorizador(empresa_id, actor, credenciales) {
     const u = r.rows[0];
     const ok = await bcrypt.compare(credenciales.password, u?.password_hash ?? HASH_DUMMY);
     if (!u || !u.password_hash || !ok || u.activo === false)
-        throw ApiError.forbidden("Credenciales del supervisor no válidas");
+        throw ApiError.forbidden("Credenciales del supervisor no válidas").conEvento(
+            "supervisor_credenciales_invalidas",
+            {
+                motivo: !u
+                    ? "usuario_inexistente"
+                    : u.activo === false
+                      ? "desactivado"
+                      : "clave_incorrecta",
+                supervisor_id: u?.id ?? null,
+            },
+        );
     const permisos = permisosEfectivos(u.role_id, u.permisos);
     if (!u.is_admin && !u.is_owner && !permisos.includes("pos.autorizar"))
-        throw ApiError.forbidden("Ese usuario no tiene permiso para autorizar");
+        throw ApiError.forbidden("Ese usuario no tiene permiso para autorizar").conEvento(
+            "permiso_denegado",
+            { requiere: "pos.autorizar", supervisor_id: u.id },
+        );
     return u.id;
 }
 

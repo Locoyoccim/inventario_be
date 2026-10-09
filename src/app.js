@@ -1,13 +1,13 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
 import routes from "./routes/index.js";
 import authRoutes from "./routes/auth.routes.js";
 import agenteRoutes from "./routes/agente.routes.js";
 import { requireAuth } from "./middlewares/auth.js";
 import { requireActiveUser, requirePasswordCurrent } from "./middlewares/activeUser.js";
 import { requestLogger } from "./middlewares/requestLogger.js";
+import { crearLimite } from "./middlewares/limites.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import pool from "./config/db.js";
 
@@ -64,22 +64,16 @@ app.get("/health/ready", async (_req, res) => {
     }
 });
 
-// Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio.
-const limiter = (max, error) =>
-    rateLimit({
-        windowMs: 60 * 1000,
-        max,
-        standardHeaders: true,
-        legacyHeaders: false,
-        message: { success: false, error },
-    });
-const authLimiter = limiter(10, "Demasiados intentos de acceso. Espera un minuto.");
-const apiLimiter = rateLimit({
-    windowMs: 60 * 1000,
+// Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio. Al excederse dejan el evento
+// `limite_excedido` en el log (ver middlewares/limites.js).
+const ERROR_ACCESO = "Demasiados intentos de acceso. Espera un minuto.";
+// Un solo contador compartido entre las rutas de acceso (login, setup, invitación, registro de equipo, emparejado).
+const authLimiter = crearLimite({ nombre: "auth", max: 10, error: ERROR_ACCESO });
+const pinLimiter = crearLimite({ nombre: "pin", max: 40, error: ERROR_ACCESO });
+const apiLimiter = crearLimite({
+    nombre: "api",
     max: 300,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, error: "Demasiadas solicitudes. Intenta de nuevo en un momento." },
+    error: "Demasiadas solicitudes. Intenta de nuevo en un momento.",
     // Las reconexiones automáticas del flujo de avisos (SSE) no son tráfico de uso.
     skip: (req) => req.method === "GET" && req.path.endsWith("/eventos"),
 });
@@ -92,7 +86,7 @@ if (process.env.NODE_ENV !== "test") {
     // El código de un equipo se adivina con 40 bits y vence en 15 min: tope estricto. El PIN lleva además su propio enfriamiento
     // por usuario, equipo e IP en la base; este tope es más amplio porque todo el personal de un local comparte la misma IP.
     app.use("/api/auth/dispositivo/registrar", authLimiter);
-    app.use("/api/auth/pin", limiter(40, "Demasiados intentos de acceso. Espera un minuto."));
+    app.use("/api/auth/pin", pinLimiter);
     app.use("/api/agente/emparejar", authLimiter);
     app.use("/api", apiLimiter);
 }

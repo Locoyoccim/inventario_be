@@ -1,5 +1,6 @@
 import ApiError from "../utils/ApiError.js";
 import { logger } from "../utils/logger.js";
+import { registrarEvento } from "../utils/seguridad.js";
 
 // Mapeo de códigos de error de PostgreSQL a respuestas limpias (sin filtrar SQL).
 const PG_ERRORS = {
@@ -16,6 +17,8 @@ const PG_ERRORS = {
 // Middleware central de errores (debe ir DESPUÉS de las rutas).
 export function errorHandler(err, req, res, _next) {
     if (err instanceof ApiError) {
+        if (err.evento)
+            registrarEvento(req, err.evento, { status: err.statusCode, ...err.eventoDatos });
         return res.status(err.statusCode).json({
             success: false,
             error: err.message,

@@ -22,7 +22,7 @@ export default class AuthController {
         // Si SETUP_TOKEN está definido en el entorno, exígelo por header (blindaje en producción)
         if (process.env.SETUP_TOKEN) {
             if (req.headers["x-setup-token"] !== process.env.SETUP_TOKEN) {
-                throw ApiError.forbidden("SETUP_TOKEN inválido");
+                throw ApiError.forbidden("SETUP_TOKEN inválido").conEvento("setup_token_invalido");
             }
         }
         const { token, ...data } = await this.authService.setup(req.body);

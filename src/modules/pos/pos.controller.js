@@ -226,7 +226,10 @@ export default class PosController {
                 ? !(tiene("pos.preparar") || tiene("pos.ordenar"))
                 : !tiene("pos.preparar")
         )
-            throw ApiError.forbidden("Tu rol no tiene permiso para esta acción");
+            throw ApiError.forbidden("Tu rol no tiene permiso para esta acción").conEvento(
+                "permiso_denegado",
+                { requiere: "pos.preparar" },
+            );
         ok(res, await this.comandas.cambiarEstado(req.params.empresa_id, req.params.id, estado));
     });
 
@@ -388,7 +391,10 @@ export default class PosController {
             job.tipo === "CORTE" &&
             !(u?.is_owner || u?.is_admin || u?.permisos?.includes("pos.cobrar"))
         )
-            throw ApiError.forbidden("Tu rol no tiene permiso para esta acción");
+            throw ApiError.forbidden("Tu rol no tiene permiso para esta acción").conEvento(
+                "permiso_denegado",
+                { requiere: "pos.cobrar" },
+            );
         return job;
     }
     impresion_ = asyncHandler(async (req, res) => ok(res, await this.#jobPermitido(req)));
@@ -415,9 +421,19 @@ export default class PosController {
     requireAgente = asyncHandler(async (req, _res, next) => {
         const header = req.headers.authorization || "";
         const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-        if (!token) throw ApiError.unauthorized("Falta el token del agente");
+        if (!token)
+            throw ApiError.unauthorized("Falta el token del agente").conEvento(
+                "agente_token_invalido",
+                {
+                    motivo: "sin_token",
+                },
+            );
         const agente = await this.impresion.autenticarAgente(token);
-        if (!agente) throw ApiError.unauthorized("Token de agente inválido o desactivado");
+        if (!agente)
+            throw ApiError.unauthorized("Token de agente inválido o desactivado").conEvento(
+                "agente_token_invalido",
+                { motivo: "invalido_o_desactivado" },
+            );
         req.agente = agente;
         next();
     });

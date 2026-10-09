@@ -95,7 +95,7 @@ export default class DispositivoRepository {
         if (r.rowCount === 0)
             throw ApiError.badRequest(
                 "El código no es válido o ya venció. Pide uno nuevo a un administrador.",
-            );
+            ).conEvento("equipo_codigo_invalido");
         return { dispositivo: r.rows[0], token };
     }
 
@@ -177,7 +177,8 @@ export default class DispositivoRepository {
             "SELECT COUNT(*)::int AS n FROM pin_fallos WHERE usuario_id = $1 AND created_at > now() - make_interval(mins => $2)",
             [usuario_id, LIMITES.duro.ventanaMin],
         );
-        if (r.rows[0].n >= LIMITES.duro.max) {
+        const bloqueado = r.rows[0].n >= LIMITES.duro.max;
+        if (bloqueado) {
             await pool.query(
                 "UPDATE usuarios SET pin_bloqueado_at = COALESCE(pin_bloqueado_at, now()) WHERE id = $1",
                 [usuario_id],
@@ -186,6 +187,8 @@ export default class DispositivoRepository {
         // Limpieza de contadores vencidos (no es historial de negocio): de vez en cuando basta.
         if (Math.random() < 0.02)
             await pool.query("DELETE FROM pin_fallos WHERE created_at < now() - interval '1 day'");
+        // Lo usa el log de seguridad: `true` cuando ESTE fallo dejó el PIN bloqueado.
+        return { bloqueado };
     }
 
     async limpiarFallos(usuario_id, dispositivo_id) {

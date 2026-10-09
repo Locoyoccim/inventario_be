@@ -17,7 +17,9 @@ const ok = (res, data, status = 200) => res.status(status).json({ success: true,
 // «a ciegas» en el navegador de la persona con un PIN que conozca.
 export function exigirCabeceraCsrf(req, _res, next) {
     if (!req.headers[CSRF_HEADER])
-        return next(ApiError.forbidden("Falta el header X-Requested-With"));
+        return next(
+            ApiError.forbidden("Falta el header X-Requested-With").conEvento("csrf_faltante"),
+        );
     next();
 }
 
@@ -34,7 +36,10 @@ export default class PinController {
         const d = token ? await this.dispositivos.porToken(token) : null;
         if (!d) {
             if (token) res.clearCookie(DEVICE_COOKIE, clearDeviceCookieOptions());
-            throw ApiError.unauthorized("Este equipo no está registrado");
+            throw ApiError.unauthorized("Este equipo no está registrado").conEvento(
+                "equipo_no_registrado",
+                { motivo: token ? "revocado_o_desconocido" : "sin_cookie" },
+            );
         }
         return d;
     }

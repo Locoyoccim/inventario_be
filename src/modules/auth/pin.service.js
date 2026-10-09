@@ -37,22 +37,35 @@ export default class PinService {
                 throw ApiError.tooMany(
                     "PIN bloqueado por demasiados intentos. Pide a un administrador que lo desbloquee.",
                     { bloqueado: true },
-                );
+                ).conEvento("pin_bloqueado", { usuario_id: u.id, equipo: dispositivo.id });
             const fallos = await this.repo.fallosRecientes(u.id, dispositivo.id, ip);
             const espera = esperaTotalSeg(fallos, fallos.ahoraMs);
             if (espera > 0)
                 throw ApiError.tooMany(
                     `Demasiados intentos. Espera ${Math.ceil(espera / 60)} min e inténtalo de nuevo.`,
                     { espera_seg: espera },
-                );
+                ).conEvento("pin_en_espera", {
+                    usuario_id: u.id,
+                    equipo: dispositivo.id,
+                    espera_seg: espera,
+                });
         }
 
         // Siempre se compara contra un hash (dummy si no hay PIN) para que el tiempo no delate nada.
         const ok = await verificarPin(u?.id ?? 0, String(pin), elegible ? u.pin_hash : null);
         if (!elegible || !ok) {
+            // `motivo` solo se escribe en el log: la respuesta es la misma en todos los casos (no delata nada).
+            let bloqueadoAhora = false;
             if (elegible)
-                await this.repo.registrarFallo(dispositivo.empresa_id, u.id, dispositivo.id, ip);
-            throw ApiError.unauthorized("PIN incorrecto");
+                bloqueadoAhora = (
+                    await this.repo.registrarFallo(dispositivo.empresa_id, u.id, dispositivo.id, ip)
+                ).bloqueado;
+            throw ApiError.unauthorized("PIN incorrecto").conEvento("pin_fallido", {
+                usuario_id: u?.id ?? null,
+                equipo: dispositivo.id,
+                motivo: elegible ? "pin_incorrecto" : "no_elegible",
+                bloqueado_ahora: bloqueadoAhora,
+            });
         }
 
         await this.repo.limpiarFallos(u.id, dispositivo.id);

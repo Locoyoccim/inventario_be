@@ -189,7 +189,7 @@ export default class PosImpresionRepository {
         if (r.rowCount === 0)
             throw ApiError.badRequest(
                 "El código no es válido o ya venció. Genera uno nuevo en Impresoras → Agentes.",
-            );
+            ).conEvento("agente_codigo_invalido");
         return {
             agente: { id: r.rows[0].id, nombre: r.rows[0].nombre },
             token,
