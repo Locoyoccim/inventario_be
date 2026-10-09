@@ -8,19 +8,29 @@ import pool from "./src/config/db.js";
 import { cerrarEventos } from "./src/realtime/eventosPos.js";
 import { verificarRolDeAplicacion } from "./src/config/rolDb.js";
 import { crearManejadoresFatales } from "./src/utils/procesoFatal.js";
+import { iniciarSentry, capturarError, vaciarSentry } from "./src/utils/sentry.js";
 
 let server;
 
 // Cierra lo que esté abierto, en orden: los flujos de avisos (SSE) no terminan solos y bloquearían server.close(); después la base.
 async function cerrarTodo() {
+    // Los eventos pendientes de Sentry salen en paralelo al cierre, con su propio tope (no alargan el plazo del cierre).
+    const envioPendiente = vaciarSentry(1500);
     await cerrarEventos();
     if (server?.listening) await new Promise((resolver) => server.close(resolver));
     await pool.end().catch(() => {});
+    await envioPendiente;
 }
 
 // Un error que nadie capturó (promesa rechazada sin catch o excepción suelta) deja el proceso en un estado desconocido: se registra
 // y se cierra en orden para que el orquestador levante uno limpio. Se instala ANTES de arrancar para cubrir también el arranque.
-crearManejadoresFatales({ cerrar: cerrarTodo }).instalar();
+crearManejadoresFatales({
+    cerrar: cerrarTodo,
+    reportar: (tipo, error) => capturarError(error, { tipo }),
+}).instalar();
+
+// Sentry solo se enciende si hay SENTRY_DSN (ver utils/sentry.js); nunca impide arrancar.
+await iniciarSentry();
 
 // La app no debe conectarse como superusuario ni como dueña de las tablas (aborta en producción; avisa en desarrollo).
 await verificarRolDeAplicacion(pool);

@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import http from "node:http";
 import { fileURLToPath } from "node:url";
 
 // El server.js REAL (no un doble): arranca contra la base de pruebas y se le provoca un error que nadie captura. Comprueba el cableado
@@ -63,6 +64,25 @@ const lineasJson = (salida) =>
         .filter((l) => l.startsWith("{"))
         .map((l) => JSON.parse(l));
 
+/** Servidor local que hace de «Sentry»: guarda lo que le llega. */
+async function sentryLocal() {
+    const recibidos = [];
+    const srv = http.createServer((req, res) => {
+        let b = "";
+        req.on("data", (d) => (b += d));
+        req.on("end", () => {
+            recibidos.push(b);
+            res.end("{}");
+        });
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    return {
+        recibidos,
+        dsn: `http://clavePublica@127.0.0.1:${srv.address().port}/1`,
+        cerrar: () => new Promise((r) => srv.close(r)),
+    };
+}
+
 describe("server.js real", { skip: SKIP }, () => {
     it("un rechazo sin catch con el servidor en marcha: queda en el log, cierra en orden y sale con código 1", async () => {
         const s = arrancar({ precarga: true });
@@ -105,6 +125,55 @@ describe("server.js real", { skip: SKIP }, () => {
         assert.match(s.estado.salida, /cerrados correctamente/);
         assert.equal(
             lineasJson(s.estado.salida).some((l) => l.message === "unhandled_rejection"),
+            false,
+        );
+    });
+
+    it("con SENTRY_DSN, un fallo fatal llega a Sentry ANTES de salir (código 1) y sin datos de personas", async () => {
+        const sentry = await sentryLocal();
+        try {
+            const s = arrancar({ precarga: true, extraEnv: { SENTRY_DSN: sentry.dsn } });
+            const { codigo } = await s.terminado;
+            assert.equal(codigo, 1, s.estado.salida);
+            const lineas = lineasJson(s.estado.salida);
+            assert.ok(
+                lineas.some((l) => l.message === "sentry_activo"),
+                "Sentry se encendió",
+            );
+            assert.ok(lineas.some((l) => l.message === "cierre_ordenado"));
+            assert.equal(sentry.recibidos.length, 1, "llegó el evento antes de salir");
+            const cuerpo = sentry.recibidos[0];
+            assert.match(cuerpo, /fallo-provocado-por-la-prueba/);
+            assert.match(cuerpo, /"tipo":"unhandled_rejection"/);
+            assert.equal(JSON.parse(cuerpo.split("\n")[2]).server_name, "api");
+        } finally {
+            await sentry.cerrar();
+        }
+    });
+
+    it("con SENTRY_DSN pero sin fallos, SIGTERM sigue siendo un cierre limpio (código 0) y no envía nada", async () => {
+        const sentry = await sentryLocal();
+        try {
+            const s = arrancar({ extraEnv: { SENTRY_DSN: sentry.dsn } });
+            await s.listo;
+            s.hijo.kill("SIGTERM");
+            const { codigo } = await s.terminado;
+            assert.equal(codigo, 0, s.estado.salida);
+            assert.equal(sentry.recibidos.length, 0);
+        } finally {
+            await sentry.cerrar();
+        }
+    });
+
+    it("un SENTRY_DSN inválido no impide arrancar: queda registrado y el servidor funciona", async () => {
+        const s = arrancar({ extraEnv: { SENTRY_DSN: "esto-no-es-un-dsn" } });
+        await s.listo;
+        s.hijo.kill("SIGTERM");
+        const { codigo } = await s.terminado;
+        assert.equal(codigo, 0, s.estado.salida);
+        const lineas = lineasJson(s.estado.salida);
+        assert.equal(
+            lineas.some((l) => l.message === "sentry_activo"),
             false,
         );
     });

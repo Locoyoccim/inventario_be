@@ -1,6 +1,7 @@
 import ApiError from "../utils/ApiError.js";
 import { logger } from "../utils/logger.js";
 import { registrarEvento } from "../utils/seguridad.js";
+import { capturarError } from "../utils/sentry.js";
 
 // Mapeo de códigos de error de PostgreSQL a respuestas limpias (sin filtrar SQL).
 const PG_ERRORS = {
@@ -62,6 +63,12 @@ export function errorHandler(err, req, res, _next) {
         requestId: req.id,
         error: err && err.message,
         stack: err && err.stack,
+    });
+    // Si Sentry está activo recibe el error (sin datos de la petición ni de la persona; solo el id para encontrarlo en el log).
+    capturarError(err, {
+        tipo: "unhandled_error",
+        requestId: req.id,
+        empresa_id: req.user?.empresa_id,
     });
     // El id permite buscar este fallo en los logs cuando alguien lo reporta.
     return res

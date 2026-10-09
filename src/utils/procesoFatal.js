@@ -11,6 +11,7 @@ export const PLAZO_CIERRE_MS = 3000;
  * @param {Function} o.cerrar   cierra lo que esté abierto (servidor, avisos, base); puede tardar o fallar
  * @param {Function} [o.salir]  termina el proceso con un código (inyectable en pruebas)
  * @param {number}   [o.plazoMs] tope para el cierre ordenado; pasado el plazo se sale igual
+ * @param {Function} [o.reportar] recibe (tipo, error) para avisar a un servicio externo (Sentry); si falla se ignora
  * @param {object}   [o.log]    logger (inyectable en pruebas)
  * @returns {{ fatal: Function, instalar: Function }}
  */
@@ -18,6 +19,7 @@ export function crearManejadoresFatales({
     cerrar,
     salir = (codigo) => process.exit(codigo),
     plazoMs = PLAZO_CIERRE_MS,
+    reportar = () => {},
     log = logger,
 }) {
     let cerrando = false;
@@ -30,6 +32,11 @@ export function crearManejadoresFatales({
             stack: esError ? error.stack : undefined,
             plazo_cierre_ms: plazoMs,
         });
+        try {
+            reportar(tipo, error);
+        } catch {
+            /* un fallo al reportar nunca debe impedir el cierre */
+        }
         // Un segundo error mientras se cierra: el estado ya es peor, no se espera más.
         if (cerrando) {
             log.error("fatal_repetido", { tipo });
