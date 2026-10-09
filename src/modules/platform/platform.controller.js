@@ -26,7 +26,10 @@ export default class PlatformController {
     });
 
     resetearPasswordOwner = asyncHandler(async (req, res) => {
-        const data = await this.platformService.resetearPasswordOwner(req.params.id, req.body.password);
+        const data = await this.platformService.resetearPasswordOwner(
+            req.params.id,
+            req.body.password,
+        );
         res.json({ success: true, data });
     });
 }

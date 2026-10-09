@@ -61,7 +61,11 @@ export default class PlatformRepository {
 
             const { nombre, titular, telefono, email, domicilio } = empresaData;
             const empresaRes = await client.query(QUERIES.INSERT_EMPRESA, [
-                nombre, titular ?? null, telefono ?? null, email ?? null, domicilio ?? null,
+                nombre,
+                titular ?? null,
+                telefono ?? null,
+                email ?? null,
+                domicilio ?? null,
             ]);
             const empresa = empresaRes.rows[0];
 
@@ -69,8 +73,13 @@ export default class PlatformRepository {
 
             const password_hash = ownerData.password_hash;
             const ownerRes = await client.query(QUERIES.INSERT_OWNER, [
-                ownerData.nombre, ownerData.codigo_ingreso, ownerData.puesto ?? null,
-                ROLE_ID_OWNER, empresa.id, ownerData.email, password_hash,
+                ownerData.nombre,
+                ownerData.codigo_ingreso,
+                ownerData.puesto ?? null,
+                ROLE_ID_OWNER,
+                empresa.id,
+                ownerData.email,
+                password_hash,
             ]);
             const owner = ownerRes.rows[0];
 

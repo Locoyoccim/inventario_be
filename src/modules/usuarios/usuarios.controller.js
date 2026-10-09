@@ -23,7 +23,12 @@ export default class UsuarioController {
 
     actualizar = asyncHandler(async (req, res) => {
         const { empresa_id, id } = req.params;
-        const actualizado = await this.usuarioService.updateUsuario(empresa_id, id, req.body, req.user);
+        const actualizado = await this.usuarioService.updateUsuario(
+            empresa_id,
+            id,
+            req.body,
+            req.user,
+        );
         if (!actualizado) throw ApiError.notFound("Usuario no encontrado");
         res.json({ success: true, data: actualizado });
     });
