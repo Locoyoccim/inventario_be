@@ -20,6 +20,14 @@ export const EMAILS = {
     maestro: "maestro.e2e@gastronomyhub.test",
     admin: "admin.e2e@gastronomyhub.test",
     operativo: "operativo.e2e@gastronomyhub.test",
+    // Owner de la segunda empresa (la que se comparte con el Admin): nadie entra con él, solo existe para dar de alta la empresa.
+    duena: "duena.e2e@gastronomyhub.test",
+};
+
+/** Segunda empresa de la siembra: el Admin E2E tiene acceso compartido a ella (lo concede el maestro). */
+export const EMPRESA_COMPARTIDA = {
+    nombre: "Empresa E2E Compartida",
+    producto: "Producto Compartido E2E",
 };
 
 function exigir(env, nombre, minimo = 1) {
@@ -57,6 +65,16 @@ export function crearCliente(base, token) {
         post: (ruta, cuerpo) => llamar("POST", ruta, cuerpo ?? {}),
         put: (ruta, cuerpo) => llamar("PUT", ruta, cuerpo),
     };
+}
+
+/** Cambia la empresa activa de la sesión del cliente `api` (cookie re-firmada) y devuelve el JWT resultante. */
+async function jwtDeEmpresa(api, apiUrl, empresa_id) {
+    const r = await api.post("/api/auth/empresa-activa", { empresa_id });
+    const jwt = decodeURIComponent(
+        /gh_session=([^;]+)/.exec(r.headers.get("set-cookie") ?? "")?.[1] ?? "",
+    );
+    if (!jwt) throw new Error("empresa-activa no devolvió la cookie de sesión.");
+    return jwt;
 }
 
 export async function sembrar(env = process.env, log = console.log) {
@@ -201,6 +219,41 @@ export async function sembrar(env = process.env, log = console.log) {
         role_id: 1,
     });
     log("✔ Operativo");
+
+    // --- Segunda empresa compartida: el maestro da acceso al Admin; el Admin cambia a ella y siembra un dato propio de esa empresa ---
+    const altaB = (
+        await plataforma.post("/api/platform/empresas", {
+            empresa: { nombre: EMPRESA_COMPARTIDA.nombre },
+            owner: {
+                nombre: "Dueña E2E",
+                email: EMAILS.duena,
+                codigo_ingreso: "E2E-DUENA",
+                password: randomBytes(12).toString("hex"),
+            },
+        })
+    ).json.data;
+    const EB = altaB.empresa.id;
+    await plataforma.put(`/api/platform/usuarios/${alta.owner.id}/empresas/${EB}`, {
+        is_admin: true,
+    });
+    const enB = crearCliente(apiUrl, await jwtDeEmpresa(api, apiUrl, EB));
+    await enB.post(`/api/categorias/${EB}`, { nombre: "Insumos compartidos", tipo: "PRODUCTO" });
+    const proveedorB = (
+        await enB.post(`/api/proveedores/${EB}`, { nombre: "Proveedor compartido E2E" })
+    ).json.data;
+    await enB.post(`/api/productos/${EB}`, {
+        producto: EMPRESA_COMPARTIDA.producto,
+        unidad_medida: "g",
+        proveedor_id: proveedorB.id,
+        categoria: "Insumos compartidos",
+        cantidad_presentacion: 1000,
+        costo_presentacion: 100,
+        stock_actual: 1000,
+        stock_minimo: 10,
+    });
+    log(
+        `✔ empresa «${EMPRESA_COMPARTIDA.nombre}» (id ${EB}) con acceso compartido para el Admin y un producto propio`,
+    );
     return { empresa_id: E, emails: { admin: EMAILS.admin, operativo: EMAILS.operativo } };
 }
 
