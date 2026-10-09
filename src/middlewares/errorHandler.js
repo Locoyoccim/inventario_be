@@ -60,7 +60,7 @@ export function errorHandler(err, req, res, _next) {
     // Inesperado: se registra completo, al cliente solo un genérico.
     logger.error("unhandled_error", {
         requestId: req.id,
-        message: err && err.message,
+        error: err && err.message,
         stack: err && err.stack,
     });
     // El id permite buscar este fallo en los logs cuando alguien lo reporta.
