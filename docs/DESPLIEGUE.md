@@ -114,8 +114,9 @@ Proyecto `NexoMesa` en Railway (plan Hobby), URL pública `https://web-productio
 | Cron `respaldo` | `pg_dump` 18 OK; la subida falló como debe (aún sin endpoint ni llaves de R2) y el script lo reportó |
 | Monitores UptimeRobot (cada 5 min, alerta a carlos_360@outlook.es) | creados sobre `/health/ready` y `/health` |
 
-Pendiente de esta puesta: cookie del login (`HttpOnly; Secure; SameSite=Lax`) y SSE (requieren iniciar sesión), prueba de que el monitor alerta,
-respaldo subido a R2 y restauración ensayada (AUD-004), borrar el servicio `provision` (guarda la contraseña temporal del maestro) y pasar los servicios a `main`.
+**Respaldo y restauración (AUD-004), 2026-10-09:** el cron `respaldo` hizo `pg_dump` 18 de la base de producción y subió `railway-20261009-221503.dump` (188,817 bytes) a Cloudflare R2 (`nexomesa-respaldos`); `rclone lsl` lo listó en la raíz del bucket y la limpieza de copias de más de 15 días terminó sin error. Después se **descargó ese mismo archivo de R2** y `npm run backup:verify` lo restauró en una base temporal separada (`respaldo_verif_…`, ya borrada) con los conteos iguales a producción (empresas 1, usuarios 1, migraciones 54, el resto 0: base recién montada). Lección: la URL «S3 API» que muestra Cloudflare **incluye** `/<bucket>`; en `RCLONE_CONFIG_R2_ENDPOINT` va solo `https://<cuenta>.r2.cloudflarestorage.com`, sin el bucket. Con el bucket en el endpoint rclone sube a un prefijo equivocado y el listado da «directory not found».
+
+Pendiente de esta puesta: cookie del login (`HttpOnly; Secure; SameSite=Lax`) y SSE (requieren iniciar sesión), prueba de que el monitor alerta y pasar los servicios a `main` tras fusionar. Hecho: servicio `provision` borrado, respaldo subido a R2 y restauración ensayada (AUD-004).
 
 ## 5. Monitor externo
 
