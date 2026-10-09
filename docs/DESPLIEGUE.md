@@ -94,6 +94,29 @@ Cada fila se marca con fecha y qué se vio. Nada se da por hecho por haber confi
 | Restauración ensayada | Descargar ese archivo y restaurarlo en una base **separada** (`npm run backup:restore`, luego `backup:verify`); conteos iguales. Anotar fecha, archivo y conteos en [RESPALDOS.md](RESPALDOS.md) | AUD-004 |
 | El cron corre solo | Al día siguiente hay un archivo nuevo en R2 y `purga` terminó sin error | AUD-004 / AUD-011 |
 
+### Registro de la primera puesta (2026-10-09)
+
+Proyecto `NexoMesa` en Railway (plan Hobby), URL pública `https://web-production-3f7840.up.railway.app`. `api` y los crons construyen desde la rama
+`feat/despliegue-produccion` y `web` desde `feat/despliegue-railway` **hasta fusionarlas**; después hay que apuntar los servicios a `main`.
+
+| Comprobación | Resultado |
+|---|---|
+| Imagen del backend (Node 22, `pg_dump` 18.6, rclone 1.60) | construye a la primera en Railway |
+| Roles + migraciones 001–054 + primer maestro (`provision`) | OK; `audit:correos` limpio; `migrate:status` todas `[x]`; la pre-deploy de `api` dijo «Sin migraciones pendientes» |
+| `${{ secret() }}` en variables de un servicio común | funciona y el valor es **estable** entre despliegues (huella igual en dos arranques) |
+| Arranque de `api` | sin «AVISO» ni «Configuración insegura»; el guardia de rol de la base no abortó |
+| `/health`, `/health/ready` por la URL pública | 200 / 200 (`ready`: la base responde) |
+| SPA, ruta profunda, `sw.js` | 200; `sw.js` con `no-cache`; HSTS, `nosniff`, `Referrer-Policy` presentes |
+| `/api/auth/me` sin sesión | 401 (el proxy a la API privada funciona) |
+| CORS con `Origin` ajeno | sin `Access-Control-Allow-Origin` |
+| `req.ip` | con `TRUST_PROXY_HOPS=2` el log traía una IP del borde; con **3** trae la del cliente, y un `X-Forwarded-For`/`X-Real-IP` falsos no la alteran |
+| Cron `purga` | corrió: «0 fila(s) … 0 intento(s)» |
+| Cron `respaldo` | `pg_dump` 18 OK; la subida falló como debe (aún sin endpoint ni llaves de R2) y el script lo reportó |
+| Monitores UptimeRobot (cada 5 min, alerta a carlos_360@outlook.es) | creados sobre `/health/ready` y `/health` |
+
+Pendiente de esta puesta: cookie del login (`HttpOnly; Secure; SameSite=Lax`) y SSE (requieren iniciar sesión), prueba de que el monitor alerta,
+respaldo subido a R2 y restauración ensayada (AUD-004), borrar el servicio `provision` (guarda la contraseña temporal del maestro) y pasar los servicios a `main`.
+
 ## 5. Monitor externo
 
 UptimeRobot (plan gratis: comprobación **cada 5 minutos**, no cada minuto como supone el ideal de [OBSERVABILIDAD.md](OBSERVABILIDAD.md) §4.1).
