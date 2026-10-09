@@ -55,7 +55,10 @@ export default class PlatformRepository {
 
     // Crea la empresa y su primer Owner en una sola transacción: si el usuario falla
     // (p. ej. email ya usado en otra empresa), la empresa tampoco queda creada.
-    async crearEmpresaConOwner(empresaData, ownerData, actividad = null) {
+    // `actividad` (contexto de la bitácora) es OBLIGATORIO: sin él no se abre ni la transacción (nada se crea sin quedar registrado).
+    async crearEmpresaConOwner(empresaData, ownerData, actividad = undefined) {
+        if (!actividad)
+            throw new Error("crearEmpresaConOwner exige el contexto de la bitácora (actividad)");
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -85,15 +88,13 @@ export default class PlatformRepository {
             const owner = ownerRes.rows[0];
 
             // La bitácora entra en la MISMA transacción: si no se puede escribir, la empresa no se crea (nada queda sin registrar).
-            if (actividad) {
-                await registrarActividad(client, actividad, {
-                    empresa_id: empresa.id,
-                    accion: "plataforma.empresa_crear",
-                    objeto_tipo: "empresa",
-                    objeto_id: empresa.id,
-                    detalle: { owner_id: owner.id, invitacion: !password_hash },
-                });
-            }
+            await registrarActividad(client, actividad, {
+                empresa_id: empresa.id,
+                accion: "plataforma.empresa_crear",
+                objeto_tipo: "empresa",
+                objeto_id: empresa.id,
+                detalle: { owner_id: owner.id, invitacion: !password_hash },
+            });
 
             await client.query("COMMIT");
             return { empresa, owner };

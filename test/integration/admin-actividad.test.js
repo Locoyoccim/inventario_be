@@ -124,6 +124,38 @@ describe("bitácora de acciones administrativas (API real)", { skip: SKIP }, () 
 
     beforeEach(() => mock.restoreAll());
 
+    /**
+     * Hace fallar el INSERT en la bitácora SOLO cuando ocurre DENTRO de una transacción abierta (entre BEGIN y COMMIT/ROLLBACK) en un
+     * cliente del pool. Así comprueba justo lo que importa: que la fila se escriba por la misma conexión que la acción. Una escritura por
+     * otra conexión (pool.query, sin BEGIN) NO se rompe, y la prueba lo notaría porque la acción terminaría con éxito.
+     * El cliente se restaura al liberarlo (si no, el siguiente que lo reciba seguiría fallando).
+     */
+    function romperBitacoraEnTransacciones() {
+        const original = pool.connect.bind(pool);
+        mock.method(pool, "connect", async (...args) => {
+            const cliente = await original(...args);
+            if (typeof args[0] === "function") return cliente; // forma con callback (la usa pool.query por dentro): se deja intacta
+            const q = cliente.query.bind(cliente);
+            const liberar = cliente.release.bind(cliente);
+            let abierta = false;
+            cliente.query = (sql, ...resto) => {
+                if (typeof sql === "string") {
+                    if (sql === "BEGIN") abierta = true;
+                    else if (/^(COMMIT|ROLLBACK)/.test(sql)) abierta = false;
+                    else if (abierta && sql.includes("INSERT INTO admin_actividad"))
+                        return Promise.reject(new Error("bitácora caída"));
+                }
+                return q(sql, ...resto);
+            };
+            cliente.release = (...a) => {
+                delete cliente.query;
+                delete cliente.release;
+                return liberar(...a);
+            };
+            return cliente;
+        });
+    }
+
     describe("usuarios", () => {
         it("usuario.crear: una fila con quién, qué, la ip y el MISMO id de petición; sin la contraseña", async () => {
             const r = await http("POST", `/api/usuarios/${A}`, {
@@ -353,7 +385,11 @@ describe("bitácora de acciones administrativas (API real)", { skip: SKIP }, () 
                 objetoTipo: "empresa",
             });
             assert.equal(f.objeto_id, A);
-            assert.deepEqual(f.detalle, { campos: ["iva_pct"], aplicar_a_recetas: false });
+            assert.deepEqual(f.detalle, {
+                campos: ["iva_pct"],
+                aplicar_a_recetas: false,
+                recetas_actualizadas: 0,
+            });
             const lectura = await http("GET", `/api/empresas/${A}/configuracion`, { token: t });
             assert.equal(lectura.status, 200);
             assert.equal(
@@ -363,6 +399,122 @@ describe("bitácora de acciones administrativas (API real)", { skip: SKIP }, () 
             );
             const lista = await http("GET", `/api/usuarios/${A}`, { token: t });
             assert.equal((await filas(lista.requestId)).length, 0);
+        });
+    });
+
+    describe("configuración de la empresa: la bitácora entra en la misma transacción", () => {
+        let receta;
+        const iva = async () => ({
+            empresa: Number(
+                (await pool.query("SELECT iva_pct FROM empresas WHERE id = $1", [A])).rows[0]
+                    .iva_pct,
+            ),
+            receta: Number(
+                (await pool.query("SELECT iva_pct FROM recetas WHERE id = $1", [receta])).rows[0]
+                    .iva_pct,
+            ),
+        });
+
+        before(async () => {
+            await pool.query(
+                "INSERT INTO categorias (empresa_id, nombre, tipo) VALUES ($1, 'Platos', 'RECETA')",
+                [A],
+            );
+            receta = (
+                await pool.query(
+                    "INSERT INTO recetas (nombre, categoria, empresa_id, iva_pct) VALUES ('Receta de A', 'Platos', $1, 0) RETURNING id",
+                    [A],
+                )
+            ).rows[0].id;
+            await pool.query("UPDATE empresas SET iva_pct = 0 WHERE id = $1", [A]);
+        });
+
+        it("con la bitácora disponible: cambia la configuración, propaga el IVA a las recetas y la fila dice cuántas se tocaron", async () => {
+            const r = await http("PUT", `/api/empresas/${A}/configuracion?aplicar_a_recetas=1`, {
+                token: tok(ownerA, A),
+                body: { iva_pct: 8 },
+            });
+            const f = await unaFila(r, {
+                accion: "empresa.configuracion_actualizar",
+                empresa: A,
+                actor: ownerA,
+                objetoTipo: "empresa",
+            });
+            assert.deepEqual(f.detalle, {
+                campos: ["iva_pct"],
+                aplicar_a_recetas: true,
+                recetas_actualizadas: 1,
+            });
+            assert.deepEqual(await iva(), { empresa: 8, receta: 8 });
+        });
+
+        it("si la bitácora NO se puede escribir, NADA cambia: ni la configuración ni el IVA de las recetas (500, sin fila)", async () => {
+            const antes = await iva();
+            romperBitacoraEnTransacciones();
+            mock.method(console, "error", () => {});
+            const r = await http("PUT", `/api/empresas/${A}/configuracion?aplicar_a_recetas=1`, {
+                token: tok(ownerA, A),
+                body: { iva_pct: 3 },
+            });
+            mock.restoreAll();
+            assert.equal(r.status, 500);
+            assert.deepEqual(
+                await iva(),
+                antes,
+                "el IVA de la empresa y el de las recetas siguen como estaban",
+            );
+            assert.equal((await filas(r.requestId)).length, 0);
+        });
+
+        it("una configuración rechazada (zona horaria inválida, 400) no deja fila", async () => {
+            const r = await http("PUT", `/api/empresas/${A}/configuracion`, {
+                token: tok(ownerA, A),
+                body: { zona_horaria: "No/Existe" },
+            });
+            assert.equal(r.status, 400, "zona inválida: se rechaza antes de abrir la transacción");
+            assert.equal((await filas(r.requestId)).length, 0);
+        });
+    });
+
+    describe("el contexto de la bitácora es obligatorio en las operaciones transaccionales", () => {
+        it("sin él no se abre la transacción: no cambia la configuración y no se crea la empresa", async () => {
+            const { default: EmpresaRepository } =
+                await import("../../src/modules/empresas/empresa.repository.js");
+            const { default: PlatformRepository } =
+                await import("../../src/modules/platform/platform.repository.js");
+            const antes = (await pool.query("SELECT iva_pct FROM empresas WHERE id = $1", [A]))
+                .rows[0].iva_pct;
+            await assert.rejects(
+                new EmpresaRepository().updateConfig(A, { iva_pct: 1 }, true),
+                /bitácora/,
+            );
+            assert.equal(
+                (await pool.query("SELECT iva_pct FROM empresas WHERE id = $1", [A])).rows[0]
+                    .iva_pct,
+                antes,
+            );
+            const nombre = `Sin contexto ${sufijo}`;
+            await assert.rejects(
+                new PlatformRepository().crearEmpresaConOwner(
+                    { nombre },
+                    {
+                        nombre: "x",
+                        email: correo("sinctx"),
+                        codigo_ingreso: "SINCTX",
+                        password_hash: null,
+                    },
+                ),
+                /bitácora/,
+            );
+            assert.equal(
+                (await pool.query("SELECT 1 FROM empresas WHERE nombre = $1", [nombre])).rowCount,
+                0,
+            );
+            assert.equal(
+                (await pool.query("SELECT 1 FROM usuarios WHERE email = $1", [correo("sinctx")]))
+                    .rowCount,
+                0,
+            );
         });
     });
 
@@ -483,23 +635,7 @@ describe("bitácora de acciones administrativas (API real)", { skip: SKIP }, () 
         });
 
         it("si la bitácora no se puede escribir, la empresa NO se crea (misma transacción: nada queda sin registrar)", async () => {
-            const original = pool.connect.bind(pool);
-            mock.method(pool, "connect", async () => {
-                const cliente = await original();
-                const q = cliente.query.bind(cliente);
-                const liberar = cliente.release.bind(cliente);
-                cliente.query = (sql, ...resto) =>
-                    typeof sql === "string" && sql.includes("INSERT INTO admin_actividad")
-                        ? Promise.reject(new Error("bitácora caída"))
-                        : q(sql, ...resto);
-                // El cliente vuelve al pool: hay que quitarle la sustitución o seguiría fallando para quien lo reciba después.
-                cliente.release = (...args) => {
-                    delete cliente.query;
-                    delete cliente.release;
-                    return liberar(...args);
-                };
-                return cliente;
-            });
+            romperBitacoraEnTransacciones();
             const nombre = `No debe existir ${sufijo}`;
             mock.method(console, "error", () => {});
             const r = await http("POST", "/api/platform/empresas", {

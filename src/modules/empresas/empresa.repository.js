@@ -1,5 +1,6 @@
 import pool from "../../config/db.js";
 import { notificar } from "../../realtime/eventosPos.js";
+import { registrarActividad } from "../actividad/actividad.js";
 
 const QUERIES = {
     SELECT_BY_ID: `SELECT * FROM empresas WHERE id = $1`,
@@ -28,11 +29,18 @@ export default class EmpresaRepository {
 
     // Actualiza la configuración (campos opcionales). Con aplicarARecetas=true, propaga el
     // IVA de la empresa a TODAS sus recetas (por defecto solo aplica a las nuevas).
-    async updateConfig(
-        id,
-        { iva_pct, precios_incluyen_iva, food_cost_objetivo, zona_horaria, usa_pantalla_cocina },
-        aplicarARecetas = false,
-    ) {
+    // `actividad` (contexto de la bitácora) es OBLIGATORIO: la fila de admin_actividad entra en la MISMA transacción, así que si no se puede
+    // registrar, la configuración (y el IVA de las recetas, si se propaga) no cambia. Sin él no se abre ni la transacción.
+    async updateConfig(id, data, aplicarARecetas = false, actividad = undefined) {
+        if (!actividad)
+            throw new Error("updateConfig exige el contexto de la bitácora (actividad)");
+        const {
+            iva_pct,
+            precios_incluyen_iva,
+            food_cost_objetivo,
+            zona_horaria,
+            usa_pantalla_cocina,
+        } = data;
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -76,6 +84,19 @@ export default class EmpresaRepository {
                     [id, cfg.iva_pct, cfg.precios_incluyen_iva],
                 );
                 recetas_actualizadas = r.rowCount;
+            }
+            if (cfg) {
+                await registrarActividad(client, actividad, {
+                    empresa_id: id,
+                    accion: "empresa.configuracion_actualizar",
+                    objeto_tipo: "empresa",
+                    objeto_id: id,
+                    detalle: {
+                        campos: Object.keys(data),
+                        aplicar_a_recetas: aplicarARecetas,
+                        recetas_actualizadas,
+                    },
+                });
             }
             await client.query("COMMIT");
             return cfg ? { ...cfg, recetas_actualizadas } : null;

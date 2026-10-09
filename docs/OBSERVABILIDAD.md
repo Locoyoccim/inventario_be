@@ -113,8 +113,11 @@ desde dónde. A diferencia del log, no caduca con la retención de Railway y se 
   actúa el maestro o alguien con acceso compartido), `accion`, `objeto_tipo`, `objeto_id`, `detalle` (json), `ip`, `request_id`.
 - **El `detalle` nunca lleva secretos**: ni contraseñas, ni PIN, ni tokens, ni códigos; solo ids, nombres de campos y banderas (p. ej.
   `contrasena_cambiada: true`). Además pasa por el saneador del log.
-- **Cuándo se escribe**: la creación de una empresa entra en **la misma transacción** que la crea (si no se puede registrar, no se crea). Las demás
-  acciones se registran justo **después** de tener éxito; si la bitácora falla, la acción no se deshace y queda `admin_actividad_fallida` en el log.
+- **Cuándo se escribe**: las dos acciones que ya tienen una transacción propia registran **dentro de ella**: `plataforma.empresa_crear` (si no se
+  puede registrar, no se crea la empresa ni su Owner) y `empresa.configuracion_actualizar` (si no se puede registrar, no cambia ni la
+  configuración ni el IVA de las recetas). Las demás acciones se registran justo **después** de tener éxito; si la bitácora falla, la acción no se
+  deshace y queda `admin_actividad_fallida` en el log. Las funciones transaccionales **exigen** el contexto de la bitácora: sin él ni abren la
+  transacción.
 - Con el `request_id` de una fila se encuentran en el log todas las líneas de esa petición, y al revés.
 
 Consulta de ejemplo (con un usuario que pueda leer la tabla; hoy no hay pantalla ni endpoint, ver la sección 8):
@@ -150,7 +153,7 @@ Nombres estables: se pueden añadir, **no renombrar**. El catálogo vive en `src
 | `plataforma.empresa_estado` | El maestro activó o desactivó una empresa |
 | `plataforma.invitacion_reenviar` | El maestro reenvió la invitación de un Owner |
 | `plataforma.owner_password_resetear` | El maestro restableció la contraseña de un Owner |
-| `empresa.configuracion_actualizar` | Se cambió la configuración de la empresa |
+| `empresa.configuracion_actualizar` | Se cambió la configuración de la empresa (en la misma transacción; `detalle.recetas_actualizadas` dice cuántas recetas tocó el IVA) |
 
 ## 4. Qué debe alertar
 
@@ -241,6 +244,10 @@ una prueba contra el SDK real comprueba el envelope que sale.
   menos eventos `sesion_*` de los que cabría esperar.
 - La bitácora `admin_actividad` se escribe pero **aún no se puede ver desde la aplicación** (ni endpoint ni pantalla): se consulta con SQL. Un
   endpoint de lectura para el Owner y una pantalla quedan para después de ver cómo se llena.
+- Algunas acciones son **varias consultas sueltas, sin transacción** (ya era así antes de la bitácora): `usuario.actualizar` (cambia el usuario y
+  luego renueva su `token_version`), `agente.crear` (crea el agente y luego su código) y `equipo.crear` (crea y luego lee). Si falla a medias,
+  queda el efecto parcial y **no** hay fila de bitácora (el usuario recibe un 500). Pendiente de una mejora aparte: envolver `usuario.actualizar`
+  en una transacción.
 - La bitácora cubre las acciones listadas en la sección 3 bis. Los cambios de datos de negocio (productos, compras, ventas…) tienen su propio historial
   en sus tablas y no pasan por aquí.
 - Las alertas por contenido de log dependen de reenviar los logs a un agregador (4.2) o de que el panel de Railway ofrezca alguna; mientras no exista, se revisa a mano.
