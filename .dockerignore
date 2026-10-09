@@ -1,0 +1,17 @@
+node_modules
+.git
+.github
+.env
+.env.*
+!.env.example
+backups
+dist
+test
+test-aux
+docs
+*.seed
+*.dump
+*.zip
+*.log
+.vscode
+.prettier-ratchet
