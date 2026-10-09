@@ -145,7 +145,7 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
         await candado?.liberar();
     });
 
-    it("todas las rutas del router real están clasificadas, con sus guardias puestas (172 + salud)", (t) => {
+    it("todas las rutas del router real están clasificadas, con sus guardias puestas (177 + salud)", (t) => {
         const problemas = [...catalogo.problemas, ...validarClasificacion(catalogo)];
         assert.deepEqual(problemas, [], `\n${problemas.join("\n")}`);
         const cuenta = resumen(catalogo.rutas);
@@ -153,8 +153,8 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
         assert.equal(cuenta["SIN CLASIFICAR"], undefined);
         assert.equal(
             catalogo.rutas.filter((r) => r.router !== "app").length,
-            172,
-            "el catálogo debía cubrir las 172 rutas conocidas; si cambió a propósito, actualiza este número",
+            177,
+            "el catálogo debía cubrir las 177 rutas conocidas; si cambió a propósito, actualiza este número",
         );
         assert.equal(catalogo.rutas.filter((r) => r.router === "app").length, 2);
     });
@@ -224,7 +224,7 @@ describe("Aislamiento multiempresa — catálogo de rutas (prueba A)", { skip: S
 
     it("plataforma: un Admin de empresa (aunque sea dueño) no puede usarla → 403 y nada cambia", async () => {
         const rutas = catalogo.rutas.filter((r) => clasificar(r)?.categoria === "plataforma");
-        assert.equal(rutas.length, 5);
+        assert.equal(rutas.length, 8);
         const antes = await huellaEmpresas(pool, [A], alcance);
         const empresasAntes = (
             await pool.query("SELECT count(*)::int n FROM empresas WHERE id = ANY($1)", [[A, B]])

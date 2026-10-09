@@ -3,13 +3,20 @@ import ApiError from "../../utils/ApiError.js";
 import { invalidarUsuarioActivo } from "../../middlewares/activeUser.js";
 
 export default class UsuarioService {
-    constructor(usuarioRepository, empresaRepository) {
+    constructor(usuarioRepository, empresaRepository, accesoRepository = null) {
         this.usuarioRepository = usuarioRepository;
         this.empresaRepository = empresaRepository;
+        this.accesoRepository = accesoRepository;
     }
 
+    // Las personas de la empresa y, aparte y marcadas `compartido`, las de OTRA empresa a las que el maestro dio acceso a ésta.
+    // Los compartidos son de solo lectura aquí: PUT /usuarios/:e/:id solo toca filas cuya empresa base es :e.
     async getAllUsuarios(empresa_id) {
-        return await this.usuarioRepository.findAll(empresa_id);
+        const propios = await this.usuarioRepository.findAll(empresa_id);
+        const compartidos = this.accesoRepository
+            ? await this.accesoRepository.compartidosEn(empresa_id)
+            : [];
+        return [...propios.map((u) => ({ ...u, compartido: false })), ...compartidos];
     }
 
     async createUsuario(empresa_id, data) {
@@ -32,7 +39,9 @@ export default class UsuarioService {
             throw ApiError.badRequest("No puedes desactivarte ni quitarte el rol Admin a ti mismo");
         }
         if (pierdeAcceso && actual.is_owner) {
-            throw ApiError.badRequest("El dueño de la empresa no se puede desactivar ni perder el rol Admin");
+            throw ApiError.badRequest(
+                "El dueño de la empresa no se puede desactivar ni perder el rol Admin",
+            );
         }
         if (
             actual.is_owner &&

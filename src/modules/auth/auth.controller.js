@@ -52,6 +52,20 @@ export default class AuthController {
         res.json({ success: true, data: null });
     });
 
+    // Cambio de empresa ACTIVA de la sesión (la base o un acceso compartido vigente): re-firma la cookie con esa empresa y la misma caducidad.
+    empresaActiva = asyncHandler(async (req, res) => {
+        const { token, expiresIn, user } = await this.authService.cambiarEmpresa(
+            req.user,
+            req.body.empresa_id,
+        );
+        res.cookie(
+            AUTH_COOKIE,
+            token,
+            authCookieOptions(process.env, expiresIn ? String(expiresIn) : undefined),
+        );
+        res.json({ success: true, data: user });
+    });
+
     // Perfil actual (mismo formato que user en login). Lo usa el front al recargar.
     me = asyncHandler(async (req, res) => {
         const user = await this.authService.profile(req.user);

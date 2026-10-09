@@ -9,7 +9,9 @@ function secret() {
 }
 
 // `expiresIn` opcional: la sesión de PIN dura un turno, no los 7 días de la de correo y contraseña.
+// Si el payload ya trae `exp` (re-firmar una sesión viva, p. ej. al cambiar de empresa) se conserva tal cual: no se extiende la caducidad.
 export function signToken(payload, expiresIn = process.env.JWT_EXPIRES || "7d") {
+    if (payload.exp) return jwt.sign(payload, secret());
     return jwt.sign(payload, secret(), { expiresIn });
 }
 

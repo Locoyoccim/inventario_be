@@ -57,7 +57,7 @@ describe("audit:tenant — contaminación entre empresas (solo lectura)", { skip
         assert.deepEqual(r.hallazgos, []);
         assert.ok(r.revisadas >= 100, `se esperaban ≥100 relaciones y se revisaron ${r.revisadas}`);
         assert.ok(
-            r.omitidas.length <= 3,
+            r.omitidas.length <= 4, // roles (usuarios y usuario_empresas) + las dos claves del acceso compartido (cruzan empresas por diseño)
             `demasiadas relaciones omitidas: ${r.omitidas.join(", ")}`,
         );
     });
@@ -237,6 +237,89 @@ describe("audit:tenant — contaminación entre empresas (solo lectura)", { skip
             },
         },
     ];
+
+    // Acceso compartido (usuario_empresas): quien tiene —o tuvo— acceso a una empresa es un autor válido de sus filas.
+    it("un autor con acceso compartido a la empresa NO es contaminación (vigente ni retirado); sin acceso, sí", async () => {
+        const p = await A.nuevo("producto");
+        await A.crear("POST", `/api/productos/${A.id}/${p.id}/movimientos`, {
+            tipo_movimiento: "MERMA",
+            cantidad: 1,
+            motivo: "autor compartido",
+        });
+        const m = (
+            await pool.query(
+                "SELECT id, usuario_id FROM movimientosinventario WHERE producto_id = $1 ORDER BY id DESC LIMIT 1",
+                [p.id],
+            )
+        ).rows[0];
+        const usuarioDeMov = /movimientosinventario\.usuario_id → usuarios\.id/;
+        await pool.query("UPDATE movimientosinventario SET usuario_id = $1 WHERE id = $2", [
+            B.adminId,
+            m.id,
+        ]);
+        try {
+            assert.ok(
+                relaciones(await auditoria()).some((x) => usuarioDeMov.test(x)),
+                "sin acceso: contaminación",
+            );
+            await pool.query(
+                "INSERT INTO usuario_empresas (usuario_id, empresa_id) VALUES ($1, $2)",
+                [B.adminId, A.id],
+            );
+            assert.ok(
+                !relaciones(await auditoria()).some((x) => usuarioDeMov.test(x)),
+                "con acceso vigente: autor válido",
+            );
+            await pool.query(
+                "UPDATE usuario_empresas SET activo = false WHERE usuario_id = $1 AND empresa_id = $2",
+                [B.adminId, A.id],
+            );
+            assert.ok(
+                !relaciones(await auditoria()).some((x) => usuarioDeMov.test(x)),
+                "con acceso retirado: lo que hizo sigue teniendo autor válido",
+            );
+        } finally {
+            await pool.query(
+                "DELETE FROM usuario_empresas WHERE usuario_id = $1 AND empresa_id = $2",
+                [B.adminId, A.id],
+            );
+            await pool.query("UPDATE movimientosinventario SET usuario_id = $1 WHERE id = $2", [
+                m.usuario_id,
+                m.id,
+            ]);
+        }
+        assert.deepEqual((await auditoria()).hallazgos, []);
+    });
+
+    it("las claves del acceso compartido (persona y quien lo otorgó) no cuentan como cruce de empresas, y un acceso a la empresa base sí se detecta", async () => {
+        await pool.query(
+            "INSERT INTO usuario_empresas (usuario_id, empresa_id, otorgado_por) VALUES ($1, $2, $3)",
+            [B.adminId, A.id, A.adminId],
+        );
+        try {
+            const r = await auditoria();
+            assert.deepEqual(r.hallazgos, [], "un acceso legítimo no es hallazgo");
+            assert.ok(r.omitidas.some((x) => /usuario_empresas\.usuario_id/.test(x)));
+            // La persona se muda a la empresa del acceso (su base pasa a ser A): ese acceso ya no es «adicional».
+            await pool.query("UPDATE usuarios SET empresa_id = $1 WHERE id = $2", [
+                A.id,
+                B.adminId,
+            ]);
+            assert.ok(
+                relaciones(await auditoria()).some((x) =>
+                    /usuario_empresas .*base de la persona/.test(x),
+                ),
+                "no se detectó el acceso a la empresa base",
+            );
+        } finally {
+            await pool.query("UPDATE usuarios SET empresa_id = $1 WHERE id = $2", [
+                B.id,
+                B.adminId,
+            ]);
+            await pool.query("DELETE FROM usuario_empresas WHERE usuario_id = $1", [B.adminId]);
+        }
+        assert.deepEqual((await auditoria()).hallazgos, []);
+    });
 
     for (const esc of ESCENARIOS) {
         it(`detecta: ${esc.nombre}`, async () => {

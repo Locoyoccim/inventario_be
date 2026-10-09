@@ -11,6 +11,9 @@
 //   2. Columnas *_id que no tienen FK en la base (item de una autorización, usuario de una llave de idempotencia...).
 //   3. Referencias polimórficas (kardex.referencia_id según referencia_tipo; impresiones.referencia_id según tipo).
 //   4. Categorías por nombre: producto o receta cuya categoría solo existe en OTRA empresa.
+//   5. Accesos compartidos (usuario_empresas): ninguno puede apuntar a la empresa base de la persona. Y una persona con (o que tuvo) un
+//      acceso a una empresa es un autor VÁLIDO de filas de esa empresa: el punto 1 no lo cuenta como contaminación. Un acceso retirado
+//      se desactiva, no se borra, justamente para que lo que esa persona dejó siga teniendo un autor válido.
 //
 // Códigos de salida: 0 limpio · 1 contaminación encontrada · 2 error al auditar.
 import { pathToFileURL } from "node:url";
@@ -151,12 +154,28 @@ export function sqlRelacion({ hija, col, padre, colPadre, cuando = "" }, esq, co
     const eH = empresaDe(hija, "c", esq);
     const eP = empresaDe(padre, "p", esq);
     if (!eH || !eP) return null;
+    // Autor de otra empresa base pero con acceso compartido (vigente o retirado) a la empresa de la fila: es válido.
+    const autorConAcceso =
+        padre === "usuarios" && esq.tablas.has("usuario_empresas")
+            ? `AND NOT EXISTS (SELECT 1 FROM usuario_empresas ue WHERE ue.usuario_id = p.${q(colPadre)} AND ue.empresa_id = ${eH})`
+            : "";
     const ejemplo = esq.conId.has(hija) ? `to_jsonb(c)->>'id'` : `c.${q(col)}::text`;
     return `SELECT count(*)::int AS n, (array_agg(${ejemplo}))[1:5] AS ejemplos
             FROM ${q(hija)} c JOIN ${q(padre)} p ON p.${q(colPadre)} = c.${q(col)}
             WHERE c.${q(col)} IS NOT NULL ${cuando} AND ${eH} IS NOT NULL AND ${eP} IS NOT NULL AND ${eH} <> ${eP}
+              ${autorConAcceso}
               ${conFiltro ? `AND (${eH} = ANY($1::int[]) OR ${eP} = ANY($1::int[]))` : ""}`;
 }
+
+// Un acceso compartido es, por definición, una persona de una empresa en OTRA: sus dos claves (la persona y quién lo otorgó, del lado del
+// maestro) cruzan empresas por diseño. Se omiten de la comparación genérica y se vigilan con su propia regla (accesoABase).
+const CRUZAN_POR_DISENO = new Set(["usuario_empresas.usuario_id", "usuario_empresas.otorgado_por"]);
+
+const sqlAccesoABase = (conFiltro) => `
+    SELECT count(*)::int AS n, (array_agg(ue.usuario_id::text || ':' || ue.empresa_id::text))[1:5] AS ejemplos
+    FROM usuario_empresas ue JOIN usuarios u ON u.id = ue.usuario_id
+    WHERE u.empresa_id = ue.empresa_id
+      ${conFiltro ? "AND ue.empresa_id = ANY($1::int[])" : ""}`;
 
 /** Categorías por nombre que solo existen en OTRA empresa (28 exige que existan en la propia). */
 const sqlCategorias = (tabla, conFiltro) => `
@@ -189,6 +208,10 @@ export async function auditar(db, { empresas = null } = {}) {
     let revisadas = 0;
     for (const r of relaciones) {
         const nombre = `${r.hija}.${r.col} → ${r.padre}.${r.colPadre}${r.tipos ? ` [${r.tipoCol} = ${r.tipos.join("|")}]` : ""}`;
+        if (CRUZAN_POR_DISENO.has(`${r.hija}.${r.col}`)) {
+            omitidas.push(`${nombre} (acceso compartido: cruza empresas por diseño)`);
+            continue;
+        }
         const sql = sqlRelacion(r, esq, conFiltro);
         if (!sql) {
             omitidas.push(nombre); // un lado es un catálogo global (p. ej. roles): no hay empresa que comparar
@@ -197,6 +220,18 @@ export async function auditar(db, { empresas = null } = {}) {
         revisadas++;
         const { n, ejemplos } = (await db.query(sql, params)).rows[0];
         if (n > 0) hallazgos.push({ tipo: r.tipo, relacion: nombre, filas: n, ejemplos });
+    }
+    if (esq.tablas.has("usuario_empresas")) {
+        revisadas++;
+        const { n, ejemplos } = (await db.query(sqlAccesoABase(conFiltro), params)).rows[0];
+        if (n > 0)
+            hallazgos.push({
+                tipo: "acceso-a-empresa-base",
+                relacion:
+                    "usuario_empresas (usuario, empresa) → la empresa es la base de la persona",
+                filas: n,
+                ejemplos,
+            });
     }
     for (const tabla of ["productos", "recetas"]) {
         revisadas++;

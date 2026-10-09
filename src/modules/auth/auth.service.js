@@ -1,7 +1,12 @@
 import bcrypt from "bcryptjs";
 import { signToken } from "../../utils/jwt.js";
 import ApiError from "../../utils/ApiError.js";
-import { invalidarUsuarioActivo, permisosEfectivos } from "../../middlewares/activeUser.js";
+import {
+    contextoEmpresa,
+    invalidarUsuarioActivo,
+    perfilActivo,
+    permisosEfectivos,
+} from "../../middlewares/activeUser.js";
 
 // Hash dummy (sin usuario real detrás) para que login() tarde lo mismo cuando el email no
 // existe que cuando existe pero la contraseña es incorrecta — sin esto, la ausencia del
@@ -12,8 +17,21 @@ import { invalidarUsuarioActivo, permisosEfectivos } from "../../middlewares/act
 const HASH_DUMMY = "$2b$10$c/FzyZ996ndTpNk0UdNRnelYmxARV.QBfT.9gCgJs/1gjT1Vj6ZW2";
 
 export default class AuthService {
-    constructor(usuarioRepository) {
+    constructor(usuarioRepository, accesoRepository = null) {
         this.usuarioRepository = usuarioRepository;
+        this.accesoRepository = accesoRepository;
+    }
+
+    // Empresas entre las que puede cambiar (la base y sus accesos vigentes). Vacío si solo tiene la suya: el front no muestra selector.
+    async #empresasDisponibles(usuario_id, empresa_base_id, empresa_base_nombre) {
+        const otras = this.accesoRepository
+            ? await this.accesoRepository.opcionesDe(usuario_id)
+            : [];
+        if (!otras.length) return [];
+        return [
+            { id: Number(empresa_base_id), nombre: empresa_base_nombre, base: true },
+            ...otras.map((o) => ({ id: Number(o.id), nombre: o.nombre, base: false })),
+        ];
     }
 
     // Bootstrap del primer usuario: solo permitido si NO existe ningún usuario.
@@ -34,21 +52,42 @@ export default class AuthService {
             is_owner: true,
         });
         const token = signToken({
-            id: creado.id, empresa_id: creado.empresa_id,
-            is_admin: true, is_owner: true, role_id: creado.role_id, tv: 0,
+            id: creado.id,
+            empresa_id: creado.empresa_id,
+            is_admin: true,
+            is_owner: true,
+            role_id: creado.role_id,
+            tv: 0,
         });
         return { token, user: creado };
     }
 
-    // Perfil fresco desde BD (nombre/email/rol pueden cambiar después de emitir el token).
-    async profile(payload) {
-        const u = await this.usuarioRepository.findProfile(payload.empresa_id, payload.id);
+    // Perfil fresco desde BD (nombre/email/rol pueden cambiar después de emitir el token). `user` es req.user ya refrescado por
+    // requireActiveUser: su is_admin/is_owner/permisos son los de la empresa ACTIVA (la base o el acceso compartido), y
+    // `empresa_base` es la de la fila de la persona.
+    async profile(user) {
+        const base = user.empresa_base ?? user.empresa_id;
+        const u = await this.usuarioRepository.findProfile(base, user.id);
         if (!u || u.activo === false) return null;
+        return await this.#perfilEn(u, Number(user.empresa_id), user);
+    }
+
+    // Arma el perfil de `u` (fila base) tal como lo ve en la empresa `empresa_id`. `ctx` = { is_admin, is_owner, permisos } de esa empresa.
+    async #perfilEn(u, empresa_id, ctx) {
+        const empresas = await this.#empresasDisponibles(u.id, u.empresa_id, u.empresa_nombre);
+        const activa = empresas.find((e) => e.id === Number(empresa_id));
         return {
-            id: u.id, nombre: u.nombre, email: u.email,
-            empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
-            is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
-            permisos: permisosEfectivos(u.role_id, u.permisos),
+            id: u.id,
+            nombre: u.nombre,
+            email: u.email,
+            empresa_id: Number(empresa_id),
+            empresa_nombre: activa?.nombre ?? u.empresa_nombre,
+            empresas,
+            is_admin: ctx.is_admin,
+            is_owner: ctx.is_owner,
+            is_platform_admin: u.is_platform_admin,
+            must_change_password: u.must_change_password,
+            permisos: ctx.permisos,
         };
     }
 
@@ -60,8 +99,10 @@ export default class AuthService {
         const ok = await bcrypt.compare(password, u?.password_hash ?? HASH_DUMMY);
         if (!u || !u.password_hash || !ok) throw ApiError.unauthorized("Credenciales inválidas");
         // Solo tras validar la contrasena, para no revelar que correos existen.
-        if (u.activo === false) throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
-        if (u.empresa_activa === false) throw ApiError.forbidden("La empresa fue desactivada. Contacta al administrador.");
+        if (u.activo === false)
+            throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
+        if (u.empresa_activa === false)
+            throw ApiError.forbidden("La empresa fue desactivada. Contacta al administrador.");
 
         const token = signToken({
             id: u.id,
@@ -74,18 +115,50 @@ export default class AuthService {
         });
         return {
             token,
-            user: {
-                id: u.id, nombre: u.nombre, email: u.email,
-                empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
-                is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
+            user: await this.#perfilEn(u, u.empresa_id, {
+                is_admin: u.is_admin,
+                is_owner: u.is_owner,
                 permisos: permisosEfectivos(u.role_id, u.permisos),
-            },
+            }),
         };
+    }
+
+    // Cambia la empresa ACTIVA de la sesión (la base o un acceso compartido vigente) y re-firma el token con ella: la sesión sigue
+    // llevando UNA sola empresa, así que lo que sale de la API sigue siendo de una empresa a la vez. Conserva la caducidad original
+    // y la versión de token (cerrar sesiones sigue cortando todo). Una sesión de PIN no puede cambiar de empresa.
+    async cambiarEmpresa(user, destino_id) {
+        if (user.pin)
+            throw ApiError.forbidden("Esta acción requiere entrar con correo y contraseña");
+        const estado = await perfilActivo(user.id);
+        const ctx = estado.activo ? contextoEmpresa(estado, destino_id) : null;
+        if (!ctx) throw ApiError.forbidden("No tienes acceso a esa empresa");
+        if (!ctx.empresa_activa)
+            throw ApiError.forbidden("Esa empresa está desactivada. Contacta al administrador.");
+        const base = estado.empresa_id;
+        const u = await this.usuarioRepository.findProfile(base, user.id);
+        if (!u) throw ApiError.unauthorized("El usuario ya no existe");
+        // La caducidad es la de la sesión original (exp tal cual): cambiar de empresa no la extiende.
+        const expiresIn = user.exp
+            ? Math.max(1, Math.ceil(user.exp - Date.now() / 1000))
+            : undefined;
+        const token = signToken({
+            id: user.id,
+            empresa_id: Number(destino_id),
+            is_admin: ctx.is_admin,
+            is_owner: ctx.is_owner,
+            is_platform_admin: estado.is_platform_admin,
+            tv: estado.tv,
+            ...(user.exp ? { exp: user.exp } : {}),
+        });
+        return { token, expiresIn, user: await this.#perfilEn(u, destino_id, ctx) };
     }
 
     // Cierra TODAS las sesiones del usuario: sube token_version (revoca los JWT vigentes).
     async logoutAll(user) {
-        await this.usuarioRepository.bumpTokenVersion(user.empresa_id, user.id);
+        await this.usuarioRepository.bumpTokenVersion(
+            user.empresa_base ?? user.empresa_id,
+            user.id,
+        );
         invalidarUsuarioActivo(user.id);
     }
 
@@ -95,14 +168,24 @@ export default class AuthService {
     // contraseña) baste para tomar la cuenta. Revoca las demás sesiones, como cualquier
     // cambio de password.
     async changePassword(user, passwordActual, passwordNueva) {
-        const hashActual = await this.usuarioRepository.findPasswordHash(user.empresa_id, user.id);
+        const hashActual = await this.usuarioRepository.findPasswordHash(
+            user.empresa_base ?? user.empresa_id,
+            user.id,
+        );
         if (!hashActual) throw ApiError.unauthorized("No se pudo validar la cuenta");
         const ok = await bcrypt.compare(passwordActual, hashActual);
         if (!ok) throw ApiError.badRequest("La contraseña actual no es correcta");
 
         const password_hash = await bcrypt.hash(passwordNueva, 12);
-        await this.usuarioRepository.updateOwnPassword(user.empresa_id, user.id, password_hash);
-        await this.usuarioRepository.bumpTokenVersion(user.empresa_id, user.id);
+        await this.usuarioRepository.updateOwnPassword(
+            user.empresa_base ?? user.empresa_id,
+            user.id,
+            password_hash,
+        );
+        await this.usuarioRepository.bumpTokenVersion(
+            user.empresa_base ?? user.empresa_id,
+            user.id,
+        );
         invalidarUsuarioActivo(user.id);
     }
 }

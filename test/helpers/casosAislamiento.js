@@ -53,6 +53,14 @@ export const CASOS = [
         aj: { x: "usuario" },
         params: ({ aj }) => ({ id: aj.x.id }),
     }),
+    // Retirar un acceso compartido: el Owner solo puede hacerlo sobre SU empresa. Aquí el usuario es de la empresa base (no tiene un
+    // acceso compartido), así que el control legítimo responde 404; la semántica real está en acceso-multiempresa.test.js.
+    caso({
+        ruta: "DELETE /api/usuarios/:empresa_id/:id/acceso",
+        aj: { x: "usuario" },
+        params: ({ aj }) => ({ id: aj.x.id }),
+        control: (status) => status === 404,
+    }),
     caso({
         ruta: "POST /api/usuarios/:empresa_id/:id/pin/desbloquear",
         aj: { x: "usuario" },

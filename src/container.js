@@ -44,6 +44,9 @@ import CategoriaController from "./modules/categorias/categoria.controller.js";
 import CategoriaService from "./modules/categorias/categoria.service.js";
 import CategoriaRepository from "./modules/categorias/categoria.repository.js";
 import PlatformController from "./modules/platform/platform.controller.js";
+import AccesoController from "./modules/accesos/acceso.controller.js";
+import AccesoService from "./modules/accesos/acceso.service.js";
+import AccesoRepository from "./modules/accesos/acceso.repository.js";
 import PlatformService from "./modules/platform/platform.service.js";
 import PlatformRepository from "./modules/platform/platform.repository.js";
 import RolController from "./modules/roles/rol.controller.js";
@@ -72,26 +75,61 @@ const recetaRepo = new RecetaRepository();
 // Controllers (lo que consumen las rutas)
 export const empresaController = new EmpresaController(new EmpresaService(empresaRepo));
 const usuarioRepo = new UsuarioRepository();
-export const usuarioController = new UsuarioController(new UsuarioService(usuarioRepo, empresaRepo));
+const accesoRepo = new AccesoRepository();
+export const usuarioController = new UsuarioController(
+    new UsuarioService(usuarioRepo, empresaRepo, accesoRepo),
+);
+export const accesoController = new AccesoController(new AccesoService(accesoRepo));
 const dispositivoRepo = new DispositivoRepository();
-export const pinController = new PinController(new PinService(dispositivoRepo, usuarioRepo), dispositivoRepo);
-export const productoController = new ProductosController(new ProductosService(new ProductosRepository()));
-export const proveedorController = new ProveedorController(new ProveedorService(new ProveedorRepository(), empresaRepo));
+export const pinController = new PinController(
+    new PinService(dispositivoRepo, usuarioRepo),
+    dispositivoRepo,
+);
+export const productoController = new ProductosController(
+    new ProductosService(new ProductosRepository()),
+);
+export const proveedorController = new ProveedorController(
+    new ProveedorService(new ProveedorRepository(), empresaRepo),
+);
 export const recetaController = new RecetaController(new RecetaService(recetaRepo, empresaRepo));
 export const movimientoController = new MovimientoController(new MovimientoService(movimientoRepo));
-export const produccionController = new ProduccionController(new ProduccionService(new ProduccionRepository(movimientoRepo), empresaRepo));
-export const conteoController = new ConteoController(new ConteoService(new ConteoRepository(movimientoRepo), empresaRepo));
-export const compraController = new CompraController(new CompraService(new CompraRepository(movimientoRepo), empresaRepo));
-export const reporteController = new ReporteController(new ReporteService(new ReporteRepository(), empresaRepo));
-export const analisisController = new AnalisisController(new AnalisisService(new AnalisisRepository()));
-export const categoriaController = new CategoriaController(new CategoriaService(new CategoriaRepository(), empresaRepo));
-export const finanzasController = new FinanzasController(new FinanzasService(new FinanzasRepository()));
-export const platformController = new PlatformController(new PlatformService(new PlatformRepository()));
+export const produccionController = new ProduccionController(
+    new ProduccionService(new ProduccionRepository(movimientoRepo), empresaRepo),
+);
+export const conteoController = new ConteoController(
+    new ConteoService(new ConteoRepository(movimientoRepo), empresaRepo),
+);
+export const compraController = new CompraController(
+    new CompraService(new CompraRepository(movimientoRepo), empresaRepo),
+);
+export const reporteController = new ReporteController(
+    new ReporteService(new ReporteRepository(), empresaRepo),
+);
+export const analisisController = new AnalisisController(
+    new AnalisisService(new AnalisisRepository()),
+);
+export const categoriaController = new CategoriaController(
+    new CategoriaService(new CategoriaRepository(), empresaRepo),
+);
+export const finanzasController = new FinanzasController(
+    new FinanzasService(new FinanzasRepository()),
+);
+export const platformController = new PlatformController(
+    new PlatformService(new PlatformRepository()),
+);
 export const rolController = new RolController(new RolService(new RolRepository()));
-export const reservacionController = new ReservacionController(new ReservacionService(new ReservacionRepository()));
+export const reservacionController = new ReservacionController(
+    new ReservacionService(new ReservacionRepository()),
+);
 const posConfigRepo = new PosConfigRepository();
 export const posConfigController = new PosConfigController(new PosConfigService(posConfigRepo));
 export const posOpcionesRepo = new PosOpcionesRepository();
 export const posOpcionesController = new PosOpcionesController(posOpcionesRepo);
 const posCuentasRepo = new PosCuentasRepository(posConfigRepo, movimientoRepo, posOpcionesRepo);
-export const posController = new PosController(posCuentasRepo, new PosImpresionRepository(), new PosTurnosRepository(), new PosAjustesRepository(posCuentasRepo, movimientoRepo), new PosComandasRepository());
+export const posController = new PosController(
+    posCuentasRepo,
+    new PosImpresionRepository(),
+    new PosTurnosRepository(),
+    new PosAjustesRepository(posCuentasRepo, movimientoRepo),
+    new PosComandasRepository(),
+);
