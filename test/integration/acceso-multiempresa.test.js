@@ -17,7 +17,7 @@ if (DB) {
 }
 
 describe("Acceso multiempresa — concesión, empresa activa y aislamiento", { skip: SKIP }, () => {
-    const [A, B, C] = [9901, 9902, 9903];
+    const [A, B, C] = [9911, 9912, 9913];
     const IDS = [A, B, C];
     const sufijo = `${Date.now().toString(36)}${process.pid.toString(36)}`;
     let server, base, pool, alcance, signToken, candado, invalidarUsuarioActivo;

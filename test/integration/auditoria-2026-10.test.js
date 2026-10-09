@@ -13,7 +13,7 @@ if (DB) {
 }
 
 describe("Integración HTTP — auditoría 2026-10", { skip: SKIP }, () => {
-    const A = 9701;
+    const A = 9691;
     const ZONA = "Pacific/Kiritimati"; // UTC+14: casi nunca comparte el día del servidor
     let server, base, pool, signToken, hoyISO;
     let tokAdmin, tokMesero, tokCajero, tokSupervisor;
