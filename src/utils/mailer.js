@@ -24,7 +24,9 @@ function obtenerTransporte() {
             host: process.env.SMTP_HOST,
             port: puerto,
             secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === "true" : puerto === 465,
-            auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+            auth: process.env.SMTP_USER
+                ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+                : undefined,
         });
     } else {
         transporte = null;
@@ -36,7 +38,10 @@ export const correoConfigurado = () => obtenerTransporte() !== null;
 
 // Dirección base del front, para armar los enlaces de los correos.
 export function appUrl() {
-    const base = process.env.APP_URL || process.env.CORS_ORIGINS?.split(",")[0]?.trim() || "http://localhost:5173";
+    const base =
+        process.env.APP_URL ||
+        process.env.CORS_ORIGINS?.split(",")[0]?.trim() ||
+        "http://localhost:5173";
     return base.replace(/\/+$/, "");
 }
 
@@ -51,6 +56,9 @@ export async function enviarCorreo({ to, subject, text, html }) {
         return { enviado: true };
     } catch (error) {
         logger.error("No se pudo enviar el correo", { to, error: error.message });
-        return { enviado: false, motivo: "No se pudo enviar el correo. Revisa la configuración SMTP." };
+        return {
+            enviado: false,
+            motivo: "No se pudo enviar el correo. Revisa la configuración SMTP.",
+        };
     }
 }
