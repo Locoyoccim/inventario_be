@@ -46,6 +46,18 @@ El middleware sigue aceptando `Authorization: Bearer <jwt>` **como mecanismo, no
   2. 7 días es una ventana larga para un POS; la mitigan la revocación por `tv`, la cookie httpOnly y el refresco de rol desde la base. Acortarla es una decisión de producto, no técnica.
   3. HS256 con un secreto compartido: quien conozca `JWT_SECRET` puede forjar sesiones. Por eso la guardia de arranque (Fase 1) rechaza secretos de ejemplo/débiles y el secreto no se reutiliza entre entornos.
 
+## 5 bis. Acceso compartido entre empresas
+
+Una persona tiene **una empresa base** (`usuarios.empresa_id`) y, además, **accesos** a otras empresas (`usuario_empresas`, migración 051). Solo los concede el **usuario maestro de plataforma** (`PUT /api/platform/usuarios/:id/empresas/:destino`, desde Plataforma → Empresas), **solo a Owner/Admin activos**, nunca a su empresa base ni a una empresa desactivada. El maestro puede asignarse empresas a sí mismo (decisión del propietario; es un cambio respecto a «el maestro no ve datos»: queda `otorgado_por` y, desde la Fase 6, la bitácora administrativa).
+
+- **La sesión lleva UNA empresa: la activa.** `POST /api/auth/empresa-activa {empresa_id}` re-firma la cookie con esa empresa (misma caducidad `exp` y mismo `tv`: cerrar todas las sesiones sigue cortándolas todas; cambiar de empresa no extiende la sesión). Así `empresaGuard` sigue exigiendo token = URL y **ninguna respuesta mezcla empresas**.
+- **`requireActiveUser`:** el `empresa_id` del token debe ser la empresa base **o un acceso vigente** (con la empresa activa); si no → `401`. El rol sale del contexto: en la base, de la fila; en un acceso compartido, **del acceso** (`is_admin`, `role_id`), `is_owner` siempre falso. El caché de 60 s guarda el usuario con sus accesos; conceder/retirar lo invalida.
+- **Retiro suave:** `activo = false`, no se borra la fila, para que lo que la persona hizo en esa empresa (`mesero_id`, `usuario_id`, `*_por`) conserve un autor válido en `npm run audit:tenant`. Lo retira el maestro (`DELETE /api/platform/usuarios/:id/empresas/:destino`) o el **Owner de la empresa destino** (`DELETE /api/usuarios/:empresa_id/:id/acceso`, `requireOwner`); el Admin sin ser Owner no puede.
+- **Lo propio de la cuenta sigue en la fila base:** contraseña y «cerrar todas las sesiones» usan `req.user.empresa_base`, no la empresa activa.
+- **PIN y equipos son de la empresa base:** una sesión de PIN no vale en una empresa compartida (`401`) y `empresa-activa` la rechaza; los compartidos no aparecen en la lista de personal del PIN.
+- **Lista de Usuarios de la empresa destino:** muestra a los compartidos marcados `compartido: true`, solo lectura (`PUT /usuarios/:e/:id` no los encuentra) y **sin revelar su empresa base**.
+- **Límites conocidos:** (1) la cookie es una sola para todas las pestañas: el front avisa por `BroadcastChannel` para que las demás relean la sesión; (2) un acceso retirado o una empresa desactivada cae en ≤ 60 s si el cambio no pasó por la API de esta instancia (igual que el resto de la revocación); (3) con la base desactivada el login se rechaza aunque tenga accesos a otras empresas.
+
 ## 6. Ingreso con PIN (equipos de piso)
 
 - Solo en equipos **registrados** por un Admin (código de un solo uso, 15 min, guardado como hash); el equipo se identifica con la cookie `gh_device` (httpOnly, `Path=/api/auth`).
