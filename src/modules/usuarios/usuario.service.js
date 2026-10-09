@@ -32,7 +32,9 @@ export default class UsuarioService {
             throw ApiError.badRequest("No puedes desactivarte ni quitarte el rol Admin a ti mismo");
         }
         if (pierdeAcceso && actual.is_owner) {
-            throw ApiError.badRequest("El dueño de la empresa no se puede desactivar ni perder el rol Admin");
+            throw ApiError.badRequest(
+                "El dueño de la empresa no se puede desactivar ni perder el rol Admin",
+            );
         }
         if (
             actual.is_owner &&

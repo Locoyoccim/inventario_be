@@ -34,8 +34,12 @@ export default class AuthService {
             is_owner: true,
         });
         const token = signToken({
-            id: creado.id, empresa_id: creado.empresa_id,
-            is_admin: true, is_owner: true, role_id: creado.role_id, tv: 0,
+            id: creado.id,
+            empresa_id: creado.empresa_id,
+            is_admin: true,
+            is_owner: true,
+            role_id: creado.role_id,
+            tv: 0,
         });
         return { token, user: creado };
     }
@@ -45,9 +49,14 @@ export default class AuthService {
         const u = await this.usuarioRepository.findProfile(payload.empresa_id, payload.id);
         if (!u || u.activo === false) return null;
         return {
-            id: u.id, nombre: u.nombre, email: u.email,
-            empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
-            is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
+            id: u.id,
+            nombre: u.nombre,
+            email: u.email,
+            empresa_id: u.empresa_id,
+            is_admin: u.is_admin,
+            is_owner: u.is_owner,
+            is_platform_admin: u.is_platform_admin,
+            must_change_password: u.must_change_password,
             permisos: permisosEfectivos(u.role_id, u.permisos),
         };
     }
@@ -60,8 +69,10 @@ export default class AuthService {
         const ok = await bcrypt.compare(password, u?.password_hash ?? HASH_DUMMY);
         if (!u || !u.password_hash || !ok) throw ApiError.unauthorized("Credenciales inválidas");
         // Solo tras validar la contrasena, para no revelar que correos existen.
-        if (u.activo === false) throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
-        if (u.empresa_activa === false) throw ApiError.forbidden("La empresa fue desactivada. Contacta al administrador.");
+        if (u.activo === false)
+            throw ApiError.forbidden("Usuario desactivado. Contacta al administrador.");
+        if (u.empresa_activa === false)
+            throw ApiError.forbidden("La empresa fue desactivada. Contacta al administrador.");
 
         const token = signToken({
             id: u.id,
@@ -75,9 +86,14 @@ export default class AuthService {
         return {
             token,
             user: {
-                id: u.id, nombre: u.nombre, email: u.email,
-                empresa_id: u.empresa_id, is_admin: u.is_admin, is_owner: u.is_owner,
-                is_platform_admin: u.is_platform_admin, must_change_password: u.must_change_password,
+                id: u.id,
+                nombre: u.nombre,
+                email: u.email,
+                empresa_id: u.empresa_id,
+                is_admin: u.is_admin,
+                is_owner: u.is_owner,
+                is_platform_admin: u.is_platform_admin,
+                must_change_password: u.must_change_password,
                 permisos: permisosEfectivos(u.role_id, u.permisos),
             },
         };

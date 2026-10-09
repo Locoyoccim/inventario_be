@@ -88,9 +88,14 @@ export default class UsuarioRepository {
 
     async create(empresa_id, userData) {
         const {
-            nombre, codigo_ingreso, puesto,
-            is_admin = false, is_owner = false, role_id,
-            email = null, password_hash = null,
+            nombre,
+            codigo_ingreso,
+            puesto,
+            is_admin = false,
+            is_owner = false,
+            role_id,
+            email = null,
+            password_hash = null,
         } = userData;
 
         // El acceso lo define is_admin (Admin/Operativo); puesto y role_id son opcionales.
@@ -99,7 +104,15 @@ export default class UsuarioRepository {
         }
 
         const result = await pool.query(QUERIES.INSERT, [
-            nombre, codigo_ingreso, puesto ?? null, is_admin, is_owner, role_id ?? null, empresa_id, email, password_hash,
+            nombre,
+            codigo_ingreso,
+            puesto ?? null,
+            is_admin,
+            is_owner,
+            role_id ?? null,
+            empresa_id,
+            email,
+            password_hash,
         ]);
         return result.rows[0];
     }
@@ -107,11 +120,20 @@ export default class UsuarioRepository {
     async update(empresa_id, id, userData) {
         if (!empresa_id) throw ApiError.badRequest("empresa_id es requerido");
         if (!id) throw ApiError.badRequest("ID es requerido");
-        const { nombre, codigo_ingreso, puesto, is_admin, role_id, email, activo, password_hash } = userData;
+        const { nombre, codigo_ingreso, puesto, is_admin, role_id, email, activo, password_hash } =
+            userData;
         // is_owner no se cambia por API (el dueno se define en el setup).
         const result = await pool.query(QUERIES.UPDATE, [
-            nombre, codigo_ingreso, puesto ?? null, is_admin ?? null, role_id ?? null, empresa_id, id,
-            email ?? null, activo ?? null, password_hash ?? null,
+            nombre,
+            codigo_ingreso,
+            puesto ?? null,
+            is_admin ?? null,
+            role_id ?? null,
+            empresa_id,
+            id,
+            email ?? null,
+            activo ?? null,
+            password_hash ?? null,
         ]);
         return result.rows[0];
     }
@@ -140,7 +162,11 @@ export default class UsuarioRepository {
     // Cambio de la propia contraseña (self-service): no toca otros campos, limpia
     // must_change_password. Distinto del PUT de usuarios (que edita otros usuarios).
     async updateOwnPassword(empresa_id, id, password_hash) {
-        const result = await pool.query(QUERIES.UPDATE_OWN_PASSWORD, [password_hash, id, empresa_id]);
+        const result = await pool.query(QUERIES.UPDATE_OWN_PASSWORD, [
+            password_hash,
+            id,
+            empresa_id,
+        ]);
         return result.rows[0];
     }
 

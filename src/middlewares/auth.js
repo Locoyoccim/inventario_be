@@ -43,7 +43,13 @@ const esAdmin = (user) => Boolean(user && !user.pin && (user.is_owner || user.is
 // Helper opcional para exigir rol elevado (dueño/admin).
 export function requireOwnerOrAdmin(req, _res, next) {
     if (esAdmin(req.user)) return next();
-    next(ApiError.forbidden(req.user?.pin ? "Esta acción requiere entrar con correo y contraseña" : "Requiere permisos de administrador"));
+    next(
+        ApiError.forbidden(
+            req.user?.pin
+                ? "Esta acción requiere entrar con correo y contraseña"
+                : "Requiere permisos de administrador",
+        ),
+    );
 }
 
 // Exige el usuario maestro de plataforma (usuarios.is_platform_admin). A diferencia de

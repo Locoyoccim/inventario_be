@@ -3,7 +3,12 @@ import UsuarioRepository from "../modules/usuarios/usuario.repository.js";
 import AuthService from "../modules/auth/auth.service.js";
 import AuthController from "../modules/auth/auth.controller.js";
 import { validate } from "../middlewares/validate.js";
-import { loginSchema, setupSchema, changePasswordSchema, aceptarInvitacionSchema } from "../modules/auth/auth.schema.js";
+import {
+    loginSchema,
+    setupSchema,
+    changePasswordSchema,
+    aceptarInvitacionSchema,
+} from "../modules/auth/auth.schema.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireActiveUser } from "../middlewares/activeUser.js";
 import { pinController } from "../container.js";
@@ -20,7 +25,12 @@ router.get("/invitacion/:token", authController.verInvitacion);
 router.post("/invitacion", validate(aceptarInvitacionSchema), authController.aceptarInvitacion);
 router.post("/login", validate(loginSchema), authController.login);
 // Ingreso con PIN: público, pero solo desde un equipo que un Admin registró (cookie httpOnly del equipo).
-router.post("/dispositivo/registrar", exigirCabeceraCsrf, validate(registrarDispositivoSchema), pinController.registrarEquipo);
+router.post(
+    "/dispositivo/registrar",
+    exigirCabeceraCsrf,
+    validate(registrarDispositivoSchema),
+    pinController.registrarEquipo,
+);
 router.get("/dispositivo/personal", pinController.personal);
 router.post("/pin", exigirCabeceraCsrf, validate(entrarConPinSchema), pinController.entrar);
 router.post("/logout", authController.logout);
@@ -28,6 +38,12 @@ router.post("/logout-all", requireAuth, requireActiveUser, authController.logout
 router.get("/me", requireAuth, requireActiveUser, authController.me);
 // Fuera del bloqueo de must_change_password (no pasa por requirePasswordCurrent): así el
 // usuario con contraseña temporal puede resolverlo.
-router.put("/password", requireAuth, requireActiveUser, validate(changePasswordSchema), authController.changePassword);
+router.put(
+    "/password",
+    requireAuth,
+    requireActiveUser,
+    validate(changePasswordSchema),
+    authController.changePassword,
+);
 
 export default router;

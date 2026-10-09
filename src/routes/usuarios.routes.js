@@ -5,6 +5,16 @@ import { usuarioCreateSchema, usuarioUpdateSchema } from "../modules/usuarios/us
 
 export default function registerUsuarios(router) {
     router.get("/usuarios/:empresa_id", usuarioController.listar);
-    router.post("/usuarios/:empresa_id", requireAdmin, validate(usuarioCreateSchema), usuarioController.crear);
-    router.put("/usuarios/:empresa_id/:id", requireAdmin, validate(usuarioUpdateSchema), usuarioController.actualizar);
+    router.post(
+        "/usuarios/:empresa_id",
+        requireAdmin,
+        validate(usuarioCreateSchema),
+        usuarioController.crear,
+    );
+    router.put(
+        "/usuarios/:empresa_id/:id",
+        requireAdmin,
+        validate(usuarioUpdateSchema),
+        usuarioController.actualizar,
+    );
 }
