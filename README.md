@@ -71,7 +71,7 @@ PORT=4000
 # CORS_ORIGINS=https://app.tu-dominio.mx
 # SETUP_TOKEN=...          # exige header x-setup-token en /setup (24+ caracteres)
 # PIN_PEPPER=...           # pimienta del hash de los PIN (32+), distinta de JWT_SECRET
-# TRUST_PROXY_HOPS=2       # cuántos proxies hay delante de la API (por defecto 1; con el front de Railway delante, 2)
+# TRUST_PROXY_HOPS=3       # cuántos proxies hay delante de la API (por defecto 1; con el front de Railway delante, 3)
 # NODE_ENV=production      # literal: otros valores (p. ej. staging) se tratan como producción en unas partes y no en otras
 ```
 

@@ -46,7 +46,7 @@ MCP devuelve los valores en claro y **no debe usarse**.
 | `SETUP_TOKEN` | sí | no | 24+ |
 | `CORS_ORIGINS` | sí | no | la URL pública de `web` (`https://….up.railway.app`) |
 | `APP_URL` | sí | no | la misma URL |
-| `TRUST_PROXY_HOPS` | sí | no | `2` (Railway → Caddy → API) |
+| `TRUST_PROXY_HOPS` | sí | no | `3` (medido en producción el 2026-10-09: el borde de Railway pone dos saltos y Caddy el tercero) |
 | `TZ_NEGOCIO` | opcional | no | `America/Mexico_City` |
 | `BOOTSTRAP_EMAIL`, `BOOTSTRAP_PASSWORD` | no | **solo `provision`** | correo del maestro y contraseña temporal (12+); los escribe quien administra |
 | `BACKUP_UPLOAD_CMD` | no | `respaldo` | `rclone copy {file} r2:<bucket>/ && rclone delete r2:<bucket> --min-age 15d` |
@@ -86,7 +86,7 @@ Cada fila se marca con fecha y qué se vio. Nada se da por hecho por haber confi
 | CORS | Una petición con `Origin` ajeno no recibe `Access-Control-Allow-Origin` | AUD-007 |
 | Migraciones | `npm run migrate:status` (servicio de una sola vez) → todas `[x]`, última 054 | AUD-007 |
 | Variables presentes | Por nombre, en el panel: las de §2 y ninguna `PERMITIR_DB_SUPERUSUARIO` | AUD-007 |
-| `req.ip` correcto | Un login fallido deja en el log `ip` = la IP de quien probó, no la de Railway. Si sale la de Railway: probar `TRUST_PROXY_HOPS=1` o 3; si el borde no pone la IP en `X-Forwarded-For`, en el Caddyfile del front añadir `header_up X-Forwarded-For {header.X-Real-IP}` (Railway documenta `X-Real-IP`) y dejar `TRUST_PROXY_HOPS=1` | AUD-007 / AUD-011 |
+| `req.ip` correcto | Un login fallido deja en el log `ip` = la IP de quien probó, no la de Railway. Medido el 2026-10-09: con `2` el log traía una IP del borde (`169.150…`) y con `3` la del cliente, también con `X-Forwarded-For`/`X-Real-IP` falsos en la petición. Si algún día vuelve a salir la de Railway: ajustar `TRUST_PROXY_HOPS`; si el borde no pone la IP en `X-Forwarded-For`, en el Caddyfile del front añadir `header_up X-Forwarded-For {header.X-Real-IP}` (Railway documenta `X-Real-IP`) y dejar `TRUST_PROXY_HOPS=1` | AUD-007 / AUD-011 |
 | Tiempo real | Con el front, el SSE de cocina recibe un evento | AUD-007 |
 | El monitor alerta | Pausar `api` unos minutos con aviso previo; llega el correo | AUD-007 |
 | Sin contaminación | `npm run audit:tenant` y `npm run audit:correos` limpios (servicio de una sola vez) | AUD-003 |
