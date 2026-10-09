@@ -112,16 +112,20 @@ describe("línea de log por petición", () => {
         assert.equal(nivel(503), "error");
     });
 
-    it("las consultas de salud correctas no se registran (los monitores las repiten cada minuto); las que fallan, sí", () => {
-        assert.equal(correr(peticion({ url: "/health" }), 200).lineas.length, 0);
-        mock.restoreAll();
-        assert.equal(correr(peticion({ url: "/health/ready?x=1" }), 200).lineas.length, 0);
-        mock.restoreAll();
-        const caida = correr(peticion({ url: "/health/ready" }), 503).lineas;
-        assert.equal(caida.length, 1);
-        assert.equal(caida[0].level, "error");
+    it("las consultas de salud no se registran, ni bien ni mal (la caída la cuenta readiness_caida); una ruta que solo se parece, sí", () => {
+        for (const [url, status] of [
+            ["/health", 200],
+            ["/health/ready?x=1", 200],
+            ["/health/ready", 503],
+            ["/health", 500],
+        ]) {
+            mock.restoreAll();
+            assert.equal(correr(peticion({ url }), status).lineas.length, 0, `${url} ${status}`);
+        }
         mock.restoreAll();
         assert.equal(correr(peticion({ url: "/api/healthcheck-falso" }), 200).lineas.length, 1);
+        mock.restoreAll();
+        assert.equal(correr(peticion({ url: "/healthy" }), 200).lineas.length, 1);
     });
 });
 

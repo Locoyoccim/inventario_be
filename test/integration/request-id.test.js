@@ -107,7 +107,7 @@ describe("X-Request-Id y log de petición (API real)", { skip: SKIP }, () => {
         assert.equal(l.usuario_id, null);
     });
 
-    it("las comprobaciones de salud correctas no llenan el log", async () => {
+    it("las comprobaciones de salud no llenan el log", async () => {
         const { lineas } = await conLog("/health/ready");
         assert.equal(lineas.filter((x) => x.message === "request").length, 0);
     });

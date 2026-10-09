@@ -10,6 +10,7 @@ import { requestLogger } from "./middlewares/requestLogger.js";
 import { crearLimite } from "./middlewares/limites.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import pool from "./config/db.js";
+import { manejadorReadiness } from "./utils/readiness.js";
 
 const app = express();
 
@@ -53,16 +54,9 @@ app.get("/health", (_req, res) =>
     res.json({ status: "ok", uptime: process.uptime(), ts: new Date().toISOString() }),
 );
 
-// Readiness: verifica la BD (SELECT 1). 503 si no responde. Separado de /health (liveness)
-// para que un parpadeo de la base no provoque reinicios del contenedor.
-app.get("/health/ready", async (_req, res) => {
-    try {
-        await pool.query("SELECT 1");
-        res.json({ status: "ready", ts: new Date().toISOString() });
-    } catch {
-        res.status(503).json({ status: "unavailable" });
-    }
-});
+// Readiness: verifica la BD (SELECT 1). 503 si no responde (o tarda más de 5 s). Separado de /health (liveness)
+// para que un parpadeo de la base no provoque reinicios del contenedor. Solo se registran las transiciones (ver utils/readiness.js).
+app.get("/health/ready", manejadorReadiness({ consulta: () => pool.query("SELECT 1") }));
 
 // Rate limiting. Login/setup estrictos (anti fuerza bruta); resto de la API con tope amplio. Al excederse dejan el evento
 // `limite_excedido` en el log (ver middlewares/limites.js).

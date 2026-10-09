@@ -12,7 +12,8 @@ export function idDePeticion(entrante) {
 
 const nivelPorStatus = (status) => (status >= 500 ? "error" : status >= 400 ? "warn" : "info");
 
-// Los monitores consultan /health y /health/ready cada minuto: si responden bien no aportan nada al log. Si fallan, sí se registran.
+// Los monitores consultan /health y /health/ready cada minuto: no se registran aquí, ni bien ni mal. La caída de la base la cuenta
+// readiness_caida (una vez por caída, ver utils/readiness.js), no una línea por consulta.
 const ES_SALUD = /^\/health(\/|$)/;
 
 // Asigna un id a cada petición (también en la cabecera de respuesta) y registra método, ruta, status, duración, quién y desde dónde.
@@ -21,7 +22,7 @@ export function requestLogger(req, res, next) {
     res.setHeader("X-Request-Id", req.id);
     const start = Date.now();
     res.on("finish", () => {
-        if (res.statusCode < 400 && ES_SALUD.test(req.originalUrl.split("?")[0])) return;
+        if (ES_SALUD.test(req.originalUrl.split("?")[0])) return;
         // La ruta se registra sin la query y con los tokens enmascarados (p. ej. el de una invitación): el log no guarda secretos.
         logger[nivelPorStatus(res.statusCode)]("request", {
             requestId: req.id,
