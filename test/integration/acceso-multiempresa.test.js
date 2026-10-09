@@ -20,7 +20,14 @@ describe("Acceso multiempresa — concesión, empresa activa y aislamiento", { s
     const [A, B, C] = [9911, 9912, 9913];
     const IDS = [A, B, C];
     const sufijo = `${Date.now().toString(36)}${process.pid.toString(36)}`;
-    let server, base, pool, alcance, signToken, candado, invalidarUsuarioActivo;
+    let server,
+        base,
+        pool,
+        alcance,
+        signToken,
+        candado,
+        invalidarUsuarioActivo,
+        invalidarDispositivo;
     let ownerA, ownerB, adminB, operativoA, maestro;
 
     const email = (p) => `${p}-${sufijo}@acceso.test`;
@@ -74,7 +81,8 @@ describe("Acceso multiempresa — concesión, empresa activa y aislamiento", { s
         const { default: app } = await import("../../src/app.js");
         ({ default: pool } = await import("../../src/config/db.js"));
         ({ signToken } = await import("../../src/utils/jwt.js"));
-        ({ invalidarUsuarioActivo } = await import("../../src/middlewares/activeUser.js"));
+        ({ invalidarUsuarioActivo, invalidarDispositivo } =
+            await import("../../src/middlewares/activeUser.js"));
         ({ server, base } = await iniciarServidor(app));
         alcance = await descubrirAlcance(pool);
         await limpiarEmpresas(pool, IDS, alcance);
@@ -249,7 +257,7 @@ describe("Acceso multiempresa — concesión, empresa activa y aislamiento", { s
             });
             assert.equal(sinAcceso.status, 403);
             const pin = await http("POST", "/api/auth/empresa-activa", {
-                token: tok(operativoA, A, { pin: true, disp: 1 }),
+                token: tok(operativoA, A, { pin: true, disp: 8999999 }),
                 body: { empresa_id: B },
             });
             assert.ok([401, 403].includes(pin.status), `PIN: ${pin.status}`);
@@ -315,12 +323,17 @@ describe("Acceso multiempresa — concesión, empresa activa y aislamiento", { s
                 [operativoA, B],
             );
             invalidarUsuarioActivo(operativoA);
+            invalidarDispositivo(equipo); // la caché de equipos es por id y otra prueba pudo dejar «inactivo» ese mismo id
             try {
                 const pin = { pin: true, disp: equipo, is_admin: false, is_owner: false };
                 const enBase = await http("GET", `/api/productos/${A}`, {
                     token: tok(operativoA, A, pin),
                 });
-                assert.equal(enBase.status, 200, "control: el PIN vale en su empresa base");
+                assert.equal(
+                    enBase.status,
+                    200,
+                    `control: el PIN vale en su empresa base (${enBase.texto})`,
+                );
                 const enB = await http("GET", `/api/productos/${B}`, {
                     token: tok(operativoA, B, pin),
                 });
