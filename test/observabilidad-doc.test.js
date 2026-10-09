@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { EVENTOS } from "../src/utils/seguridad.js";
+import { ACCIONES } from "../src/modules/actividad/actividad.js";
 
 // docs/OBSERVABILIDAD.md es lo que alguien lee a las 3 de la mañana: sus tablas no pueden separarse del código. Sin base de datos.
 
@@ -66,6 +67,33 @@ describe("docs/OBSERVABILIDAD.md y el código", () => {
             [],
             `el código emite eventos que el documento no explica: ${sinDocumentar}`,
         );
+    });
+
+    it("la tabla de acciones de la bitácora tiene exactamente las del catálogo, y cada una se registra en algún sitio del código", () => {
+        const enDoc = filas(seccion("### Acciones de la bitácora"));
+        // Los nombres de acción llevan un punto (usuario.crear): filas() solo lee letras y guion bajo, así que se leen aparte.
+        const conPunto = [
+            ...seccion("### Acciones de la bitácora").matchAll(/^\|\s*`([a-z_]+\.[a-z_]+)`/gm),
+        ].map((m) => m[1]);
+        const enCodigo = Object.keys(ACCIONES);
+        assert.equal(enDoc.length, 0, "las acciones llevan punto");
+        assert.deepEqual(
+            enCodigo.filter((a) => !conPunto.includes(a)),
+            [],
+            "acciones del catálogo que el documento no explica",
+        );
+        assert.deepEqual(
+            conPunto.filter((a) => !enCodigo.includes(a)),
+            [],
+            "acciones que el documento menciona y ya no existen",
+        );
+        const sinUso = enCodigo.filter(
+            (a) => !new RegExp(`accion:\\s*"${a.replace(".", "\\.")}"`).test(FUENTE),
+        );
+        assert.deepEqual(sinUso, [], `acciones del catálogo que ningún código registra: ${sinUso}`);
+        const usadas = [...FUENTE.matchAll(/accion:\s*"([a-z_]+\.[a-z_]+)"/g)].map((m) => m[1]);
+        const desconocidas = [...new Set(usadas)].filter((a) => !enCodigo.includes(a));
+        assert.deepEqual(desconocidas, [], `acciones usadas y no declaradas: ${desconocidas}`);
     });
 
     it("las alertas de la tabla de umbrales solo nombran eventos que existen", () => {

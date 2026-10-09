@@ -14,13 +14,14 @@ export default class PlatformService {
 
     // Sin `owner.password` el owner nace sin contraseña (no puede entrar) y recibe un enlace de un solo uso por
     // correo para definirla: quien da de alta la empresa nunca conoce ni transmite una contraseña.
-    async crearEmpresa({ empresa, owner }) {
+    async crearEmpresa({ empresa, owner }, actividad = null) {
         const invitar = !owner.password;
         const password_hash = invitar ? null : await bcrypt.hash(owner.password, 10);
-        const creado = await this.platformRepository.crearEmpresaConOwner(empresa, {
-            ...owner,
-            password_hash,
-        });
+        const creado = await this.platformRepository.crearEmpresaConOwner(
+            empresa,
+            { ...owner, password_hash },
+            actividad,
+        );
         if (!invitar) return creado;
         const invitacion = await invitarUsuario({
             usuario_id: creado.owner.id,

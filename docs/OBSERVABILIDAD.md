@@ -96,9 +96,61 @@ prueba exige que esta tabla y el código estén de acuerdo.
 | `readiness_caida` | error | `/health/ready` empezó a fallar: la base no responde (o tarda más de 5 s). |
 | `readiness_sigue_caida` | error | Recordatorio cada 5 min mientras siga caída, con cuánto lleva. |
 | `readiness_recuperada` | info | La base volvió; incluye la duración de la caída. |
+| `admin_actividad_fallida` | error | No se pudo escribir una fila de la bitácora de acciones (sección 3 bis) DESPUÉS de que la acción ya se hizo. La acción no se deshace; la fila falta y este evento dice cuál (`accion`, `empresa_id`, `requestId`). |
 | `sentry_activo` | info | Sentry se encendió (hay `SENTRY_DSN`). |
 | `sentry_no_inicia` | error | Hay `SENTRY_DSN` pero Sentry no quedó activo (DSN mal escrito, paquete ausente). El servidor arranca igual. |
 | `sentry_captura_fallida` | warn | Sentry falló al recibir un error; se ignora. |
+
+## 3 bis. Bitácora de acciones administrativas
+
+Además del log, las acciones **administrativas** quedan en la tabla `admin_actividad` de la base (migración 052): quién cambió qué, sobre qué, cuándo y
+desde dónde. A diferencia del log, no caduca con la retención de Railway y se puede consultar con SQL.
+
+- **Solo se inserta y se lee.** La aplicación (`gh_app`) no tiene UPDATE, DELETE ni TRUNCATE sobre esa tabla: ni un fallo de la aplicación ni una
+  persona con acceso a ella puede reescribir lo registrado. Lo comprueba una prueba contra la base real.
+- **Sin claves foráneas, a propósito**: sobrevive a que se borre una empresa o un usuario.
+- **Columnas**: `creado_at`, `empresa_id` (la empresa **afectada**), `actor_id`, `actor_empresa_id` (la empresa activa de quien actuó; distinta cuando
+  actúa el maestro o alguien con acceso compartido), `accion`, `objeto_tipo`, `objeto_id`, `detalle` (json), `ip`, `request_id`.
+- **El `detalle` nunca lleva secretos**: ni contraseñas, ni PIN, ni tokens, ni códigos; solo ids, nombres de campos y banderas (p. ej.
+  `contrasena_cambiada: true`). Además pasa por el saneador del log.
+- **Cuándo se escribe**: la creación de una empresa entra en **la misma transacción** que la crea (si no se puede registrar, no se crea). Las demás
+  acciones se registran justo **después** de tener éxito; si la bitácora falla, la acción no se deshace y queda `admin_actividad_fallida` en el log.
+- Con el `request_id` de una fila se encuentran en el log todas las líneas de esa petición, y al revés.
+
+Consulta de ejemplo (con un usuario que pueda leer la tabla; hoy no hay pantalla ni endpoint, ver la sección 8):
+
+```sql
+SELECT creado_at, accion, actor_id, objeto_tipo, objeto_id, detalle, ip
+FROM admin_actividad WHERE empresa_id = 12 ORDER BY creado_at DESC LIMIT 50;
+```
+
+### Acciones de la bitácora
+
+Nombres estables: se pueden añadir, **no renombrar**. El catálogo vive en `src/modules/actividad/actividad.js`.
+
+| Acción | Qué significa |
+|---|---|
+| `usuario.crear` | Se dio de alta a un usuario |
+| `usuario.actualizar` | Se cambió un usuario (rol, estado, correo, contraseña, cierre de sesiones…) |
+| `pin.definir` | Se definió o cambió el PIN de un usuario |
+| `pin.quitar` | Se quitó el PIN de un usuario |
+| `pin.desbloquear` | Se desbloqueó el PIN de un usuario |
+| `equipo.crear` | Se registró un equipo nuevo (con su código de un solo uso) |
+| `equipo.actualizar` | Se renombró un equipo |
+| `equipo.codigo_nuevo` | Se generó un código nuevo para un equipo |
+| `equipo.revocar` | Se revocó un equipo |
+| `agente.crear` | Se creó un agente de impresión |
+| `agente.actualizar` | Se cambió un agente de impresión (nombre o estado) |
+| `agente.eliminar` | Se eliminó un agente de impresión |
+| `agente.rotar_token` | Se renovó el token de un agente |
+| `agente.codigo` | Se generó un código de emparejamiento para un agente |
+| `acceso.conceder` | El maestro dio a una persona acceso a otra empresa |
+| `acceso.retirar` | Se retiró a una persona el acceso a una empresa (`por`: maestro u owner) |
+| `plataforma.empresa_crear` | El maestro creó una empresa con su Owner (en la misma transacción) |
+| `plataforma.empresa_estado` | El maestro activó o desactivó una empresa |
+| `plataforma.invitacion_reenviar` | El maestro reenvió la invitación de un Owner |
+| `plataforma.owner_password_resetear` | El maestro restableció la contraseña de un Owner |
+| `empresa.configuracion_actualizar` | Se cambió la configuración de la empresa |
 
 ## 4. Qué debe alertar
 
@@ -187,8 +239,10 @@ una prueba contra el SDK real comprueba el envelope que sale.
   problema; con varias, cada una avisa su propia caída y no se suman.
 - Revocar un acceso o desactivar una empresa puede tardar hasta 60 s en verse en las demás instancias (caché); durante ese lapso aparecerán
   menos eventos `sesion_*` de los que cabría esperar.
-- No hay aún bitácora de acciones administrativas en base de datos (`admin_actividad`, paso 7 de la Fase 6): hoy solo hay
-  `acceso_compartido_*` en el log, que caduca con la retención del plan.
+- La bitácora `admin_actividad` se escribe pero **aún no se puede ver desde la aplicación** (ni endpoint ni pantalla): se consulta con SQL. Un
+  endpoint de lectura para el Owner y una pantalla quedan para después de ver cómo se llena.
+- La bitácora cubre las acciones listadas en la sección 3 bis. Los cambios de datos de negocio (productos, compras, ventas…) tienen su propio historial
+  en sus tablas y no pasan por aquí.
 - Las alertas por contenido de log dependen de reenviar los logs a un agregador (4.2) o de que el panel de Railway ofrezca alguna; mientras no exista, se revisa a mano.
 
 ## 9. Mantener este documento

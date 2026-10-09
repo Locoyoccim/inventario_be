@@ -1,6 +1,7 @@
 import { asyncHandler } from "../../middlewares/asyncHandler.js";
 import ApiError from "../../utils/ApiError.js";
 import { puedeAutorizarUsuario, resolverAutorizador } from "./pos.autorizacion.js";
+import { registrarActividadSegura } from "../actividad/actividad.js";
 
 const puedeAutorizar = (req) => puedeAutorizarUsuario(req.user);
 const exigir = (a) => {
@@ -304,24 +305,65 @@ export default class PosController {
     agentes = asyncHandler(async (req, res) =>
         ok(res, await this.impresion.listarAgentes(req.params.empresa_id)),
     );
-    crearAgente = asyncHandler(async (req, res) =>
-        ok(res, await this.impresion.crearAgente(req.params.empresa_id, req.body.nombre), 201),
-    );
-    actualizarAgente = asyncHandler(async (req, res) =>
-        ok(
-            res,
-            await this.impresion.actualizarAgente(req.params.empresa_id, req.params.id, req.body),
-        ),
-    );
-    eliminarAgente = asyncHandler(async (req, res) =>
-        ok(res, await this.impresion.eliminarAgente(req.params.empresa_id, req.params.id)),
-    );
-    rotarToken = asyncHandler(async (req, res) =>
-        ok(res, await this.impresion.rotarToken(req.params.empresa_id, req.params.id)),
-    );
-    codigoAgente = asyncHandler(async (req, res) =>
-        ok(res, await this.impresion.nuevoCodigo(req.params.empresa_id, req.params.id)),
-    );
+    crearAgente = asyncHandler(async (req, res) => {
+        const r = await this.impresion.crearAgente(req.params.empresa_id, req.body.nombre);
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "agente.crear",
+            objeto_tipo: "agente",
+            objeto_id: r.agente?.id,
+            detalle: { nombre: req.body.nombre },
+        });
+        ok(res, r, 201);
+    });
+    actualizarAgente = asyncHandler(async (req, res) => {
+        const r = await this.impresion.actualizarAgente(
+            req.params.empresa_id,
+            req.params.id,
+            req.body,
+        );
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "agente.actualizar",
+            objeto_tipo: "agente",
+            objeto_id: req.params.id,
+            detalle: {
+                campos: Object.keys(req.body),
+                ...(req.body.activo !== undefined ? { activo: Boolean(req.body.activo) } : {}),
+            },
+        });
+        ok(res, r);
+    });
+    eliminarAgente = asyncHandler(async (req, res) => {
+        const r = await this.impresion.eliminarAgente(req.params.empresa_id, req.params.id);
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "agente.eliminar",
+            objeto_tipo: "agente",
+            objeto_id: req.params.id,
+        });
+        ok(res, r);
+    });
+    rotarToken = asyncHandler(async (req, res) => {
+        const r = await this.impresion.rotarToken(req.params.empresa_id, req.params.id);
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "agente.rotar_token",
+            objeto_tipo: "agente",
+            objeto_id: req.params.id,
+        });
+        ok(res, r);
+    });
+    codigoAgente = asyncHandler(async (req, res) => {
+        const r = await this.impresion.nuevoCodigo(req.params.empresa_id, req.params.id);
+        await registrarActividadSegura(req, {
+            empresa_id: req.params.empresa_id,
+            accion: "agente.codigo",
+            objeto_tipo: "agente",
+            objeto_id: req.params.id,
+        });
+        ok(res, r);
+    });
     // Versión publicada del agente y dónde bajar el instalador, más el último fallo de impresión (diagnóstico).
     agentesInfo = asyncHandler(async (req, res) =>
         ok(res, {

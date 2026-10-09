@@ -1,4 +1,5 @@
 import pool from "../../config/db.js";
+import { registrarActividad } from "../actividad/actividad.js";
 
 // Rol "owner" sembrado en la migración base (db/migrations/001_baseline.sql).
 const ROLE_ID_OWNER = 1;
@@ -54,7 +55,7 @@ export default class PlatformRepository {
 
     // Crea la empresa y su primer Owner en una sola transacción: si el usuario falla
     // (p. ej. email ya usado en otra empresa), la empresa tampoco queda creada.
-    async crearEmpresaConOwner(empresaData, ownerData) {
+    async crearEmpresaConOwner(empresaData, ownerData, actividad = null) {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -82,6 +83,17 @@ export default class PlatformRepository {
                 password_hash,
             ]);
             const owner = ownerRes.rows[0];
+
+            // La bitácora entra en la MISMA transacción: si no se puede escribir, la empresa no se crea (nada queda sin registrar).
+            if (actividad) {
+                await registrarActividad(client, actividad, {
+                    empresa_id: empresa.id,
+                    accion: "plataforma.empresa_crear",
+                    objeto_tipo: "empresa",
+                    objeto_id: empresa.id,
+                    detalle: { owner_id: owner.id, invitacion: !password_hash },
+                });
+            }
 
             await client.query("COMMIT");
             return { empresa, owner };

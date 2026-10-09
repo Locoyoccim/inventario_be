@@ -20,6 +20,10 @@ import pg from "pg";
 
 const IDENT = /^[a-z_][a-z0-9_]{0,62}$/;
 
+// Tablas de solo inserción: la app las lee y escribe filas nuevas, pero NO las actualiza ni las borra (registros que no deben poder
+// reescribirse). La concesión general de abajo les daría UPDATE y DELETE; después se les quitan. Añadir aquí una tabla nueva de este tipo.
+export const TABLAS_SOLO_INSERCION = ["admin_actividad"];
+
 /** Identificador entre comillas, solo si es seguro (minúsculas, números y guion bajo). Lanza si no. */
 export function ident(nombre) {
     if (!IDENT.test(nombre))
@@ -122,6 +126,20 @@ $adoptar$`,
         paso: "app: leer y escribir datos de las tablas existentes (nada de DDL, TRUNCATE ni REFERENCES)",
         sql: `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${A}`,
     });
+    // Solo si la tabla existe (esta función corre también contra bases anteriores a la migración que la crea).
+    out.push({
+        paso: `app: tablas de solo inserción (${TABLAS_SOLO_INSERCION.join(", ")}) sin UPDATE ni DELETE`,
+        sql: `DO $solo$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[${TABLAS_SOLO_INSERCION.map((x) => escapeLiteral(x)).join(", ")}] LOOP
+    IF to_regclass('public.' || t) IS NOT NULL THEN
+      EXECUTE format('REVOKE UPDATE, DELETE, TRUNCATE ON public.%I FROM ${A}', t);
+    END IF;
+  END LOOP;
+END
+$solo$`,
+    });
     out.push({
         paso: "app: usar las secuencias existentes",
         sql: `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${A}`,
@@ -146,6 +164,8 @@ SELECT
      WHERE n.nspname = 'public' AND c.relkind IN ('r','p','S','v','m') AND pg_get_userbyid(c.relowner) <> $1) AS objetos_de_otro_dueno,
   (SELECT count(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+       -- las tablas de solo inserción no tienen UPDATE ni DELETE a propósito
+       AND c.relname <> ALL($3::text[])
        -- has_table_privilege con varios privilegios en una lista es verdadero si tiene ALGUNO: se exigen los cuatro.
        AND NOT (has_table_privilege($2, c.oid, 'SELECT') AND has_table_privilege($2, c.oid, 'INSERT')
                 AND has_table_privilege($2, c.oid, 'UPDATE') AND has_table_privilege($2, c.oid, 'DELETE'))) AS tablas_sin_permiso_para_app`;
@@ -221,7 +241,8 @@ async function main() {
                 cause: e,
             });
         }
-        const d = (await cliente.query(SQL_DIAGNOSTICO, [migrador, app])).rows[0];
+        const d = (await cliente.query(SQL_DIAGNOSTICO, [migrador, app, TABLAS_SOLO_INSERCION]))
+            .rows[0];
         console.log(
             `\nBase «${base}»: ${d.tablas} tablas · ${d.objetos_de_otro_dueno} objetos que no son del migrador · ${d.tablas_sin_permiso_para_app} tablas sin permisos para la app.`,
         );

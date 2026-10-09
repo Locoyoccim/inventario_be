@@ -10,7 +10,12 @@
  * intente tocarlos) y la LIMPIEZA de los fixtures.
  */
 
+import { TABLAS_SOLO_INSERCION } from "../../scripts/db_roles.js";
+
 const GLOBALES = new Set(["roles", "schema_migrations"]);
+// Tablas de solo inserción (la app no puede borrarlas): entran en la huella, pero la limpieza no las toca. No tienen claves foráneas,
+// así que sus filas no impiden borrar la empresa ni los usuarios a los que se refieren.
+const SOLO_INSERCION = new Set(TABLAS_SOLO_INSERCION);
 const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
 
 /** @returns {Promise<Array<{tabla: string, predicado: string}>>} el predicado usa $1 = int[] de empresas */
@@ -98,7 +103,7 @@ export function diferencias(antes, despues) {
  */
 export async function limpiarEmpresas(pool, ids, alcance) {
     const lista = alcance ?? (await descubrirAlcance(pool));
-    let pendientes = lista.filter((l) => l.tabla !== "empresas");
+    let pendientes = lista.filter((l) => l.tabla !== "empresas" && !SOLO_INSERCION.has(l.tabla));
     let ultimoError = null;
     for (let pasada = 0; pasada < 12 && pendientes.length; pasada++) {
         const siguientes = [];
