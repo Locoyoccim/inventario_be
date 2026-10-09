@@ -60,6 +60,9 @@ export function errorHandler(err, req, res, _next) {
         message: err && err.message,
         stack: err && err.stack,
     });
-    return res.status(500).json({ success: false, error: "Error interno del servidor" });
+    // El id permite buscar este fallo en los logs cuando alguien lo reporta.
+    return res
+        .status(500)
+        .json({ success: false, error: "Error interno del servidor", requestId: req.id });
 }
 export default errorHandler;

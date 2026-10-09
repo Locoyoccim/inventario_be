@@ -31,7 +31,14 @@ if (isProduction && !corsOrigins?.length) {
         "[cors] CORS_ORIGINS vacío en producción: solo se aceptan peticiones del mismo origen.",
     );
 }
-app.use(cors({ origin: corsOrigins?.length ? corsOrigins : !isProduction, credentials: true }));
+app.use(
+    cors({
+        origin: corsOrigins?.length ? corsOrigins : !isProduction,
+        credentials: true,
+        // El front puede leer el id de la petición para mostrarlo al reportar un fallo.
+        exposedHeaders: ["X-Request-Id"],
+    }),
+);
 
 // Límite de tamaño del body (evita payloads abusivos)
 app.use(express.json({ limit: "100kb" }));
