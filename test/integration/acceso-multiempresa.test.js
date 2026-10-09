@@ -30,7 +30,7 @@ describe("Acceso multiempresa — concesión, empresa activa y aislamiento", { s
         invalidarDispositivo;
     let ownerA, ownerB, adminB, operativoA, maestro;
 
-    const email = (p) => `${p}-${sufijo}@acceso.test`;
+    const email = (p) => `${p}-${sufijo}@acceso.test`.toLowerCase();
     const mkUsuario = async (
         empresa,
         codigo,

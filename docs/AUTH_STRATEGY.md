@@ -71,6 +71,8 @@ Una persona tiene **una empresa base** (`usuarios.empresa_id`) y, además, **acc
 - `POST /api/auth/setup` solo funciona si **no existe ningún usuario**; en producción exige el header `x-setup-token` (`SETUP_TOKEN`, 24+ caracteres).
 - El servidor no arranca en producción con secretos de ejemplo, repetitivos, cortos o repetidos entre sí (`src/config/env.js`).
 
+**Correo.** Es la identidad en toda la plataforma: se guarda normalizado (minúsculas, sin espacios) y es único global, exigido por la base (`usuarios_email_normalizado_chk`, migración 053; ADR-011). Antes de migrar una base con datos reales: `npm run audit:correos`.
+
 ## 8. Cómo probarlo (Postman / terminal)
 
 - **Postman:** ejecutar *Auth → Login*. El script guarda el JWT leído de `Set-Cookie` en la variable `token`; la colección usa Bearer con ella. Si la cookie no llega, la prueba del script falla con un mensaje claro.

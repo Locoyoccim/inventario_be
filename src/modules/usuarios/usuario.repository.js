@@ -35,9 +35,7 @@ const QUERIES = {
         FROM usuarios u
         JOIN empresas e ON e.id = u.empresa_id
         LEFT JOIN roles r ON r.id = u.role_id
-        WHERE lower(trim(u.email)) = lower(trim($1))
-        ORDER BY u.id
-        LIMIT 1
+        WHERE u.email = lower(btrim($1))
     `,
     SELECT_PASSWORD_HASH: `SELECT password_hash FROM usuarios WHERE id = $1 AND empresa_id = $2`,
     UPDATE_OWN_PASSWORD: `

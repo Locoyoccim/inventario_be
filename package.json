@@ -16,6 +16,7 @@
         "dev": "NODE_ENV=development nodemon server.js",
         "db:roles": "node scripts/db_roles.js",
         "audit:tenant": "node scripts/audit_tenant.js",
+        "audit:correos": "node scripts/audit_correos.js",
         "migrate": "node db/migrate.js",
         "migrate:status": "node db/migrate.js status",
         "migrate:mark": "node db/migrate.js mark",

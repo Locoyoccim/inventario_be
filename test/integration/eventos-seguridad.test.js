@@ -25,7 +25,7 @@ describe("eventos de seguridad (API real)", { skip: SKIP }, () => {
     let server, base, pool, alcance, signToken, candado, invalidarUsuarioActivo;
     let ownerA, ownerB, operativoA, meseroA, maestro, hashClave;
 
-    const correo = (p) => `${p}-${sufijo}@eventos.test`;
+    const correo = (p) => `${p}-${sufijo}@eventos.test`.toLowerCase();
     const mkUsuario = async (empresa, codigo, o = {}) => {
         const {
             owner = false,

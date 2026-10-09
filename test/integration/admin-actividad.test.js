@@ -25,7 +25,7 @@ describe("bitácora de acciones administrativas (API real)", { skip: SKIP }, () 
     let ownerA, ownerB, adminB, meseroA, maestro;
     const creadas = []; // empresas que crean las pruebas de plataforma
 
-    const correo = (p) => `${p}-${sufijo}@bitacora.test`;
+    const correo = (p) => `${p}-${sufijo}@bitacora.test`.toLowerCase();
     const mkUsuario = async (empresa, codigo, o = {}) => {
         const { owner = false, admin = owner, plataforma = false, rol = null } = o;
         const rolId = rol
