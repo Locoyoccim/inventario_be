@@ -175,5 +175,5 @@ el registro de abajo.
 ### Registro de la primera migración real (2026-10-10)
 
 - Origen: Café Aroma, empresa 4 de la base local. Destino: la empresa **«Aroma», id 2**, de producción, con un Owner con correo distinto al del maestro.
-- Aplicada por el titular con `--aplicar` (stock inicial 0; sin inactivos ni elaborados). La simulación previa había dado 12 proveedores, 18 categorías y 138 productos, sin problemas de validación.
-- Los conteos finales en producción **no están verificados por este registro**: el titular confirmó que terminó, pero no se contrastaron las cifras. Cuando se revisen, anotarlas aquí.
+- Aplicada por el titular con `--aplicar` (stock inicial 0). Informe del propio script, con sesión iniciada en la empresa activa 2: a llevar 12 proveedores, 18 categorías y 138 productos; omitidos 27 (25 inactivos y 2 elaborados, que nacen de una receta); **creados 12 proveedores, 18 categorías y 138 productos**; ya existían 0 de cada uno (primera corrida, nada duplicado). Coincide con la simulación previa.
+- Es el informe de la herramienta, no un recuento independiente de la base. Para repetirla sin duplicar basta volver a correr el comando: omite lo que ya existe por nombre.
