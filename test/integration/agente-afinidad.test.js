@@ -19,15 +19,27 @@ describe("Integración HTTP — afinidad impresora/agente", { skip: SKIP }, () =
     const req = async (method, path, { token, body } = {}) => {
         const res = await fetch(base + path, {
             method,
-            headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+            headers: {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+            },
             body: body !== undefined ? JSON.stringify(body) : undefined,
         });
         let json = null;
-        try { json = await res.json(); } catch { /* vacío */ }
+        try {
+            json = await res.json();
+        } catch {
+            /* vacío */
+        }
         return { status: res.status, json };
     };
     const mkAgente = async (empresa, nombre) => {
-        const id = (await pool.query("INSERT INTO agentes_impresion (empresa_id, nombre, token_hash) VALUES ($1,$2,$3) RETURNING id", [empresa, nombre, `${nombre}-${empresa}`.padEnd(64, "0")])).rows[0].id;
+        const id = (
+            await pool.query(
+                "INSERT INTO agentes_impresion (empresa_id, nombre, token_hash) VALUES ($1,$2,$3) RETURNING id",
+                [empresa, nombre, `${nombre}-${empresa}`.padEnd(64, "0")],
+            )
+        ).rows[0].id;
         return id;
     };
     const limpiar = async () => {
@@ -38,12 +50,25 @@ describe("Integración HTTP — afinidad impresora/agente", { skip: SKIP }, () =
         await pool.query("DELETE FROM empresas WHERE id = ANY($1)", [[A, B]]);
     };
     const mkImpresora = async (nombre, agente_id) =>
-        (await pool.query("INSERT INTO impresoras (empresa_id,nombre,conexion,ip,es_ticket,agente_id) VALUES ($1,$2,'RED','10.0.0.9',true,$3) RETURNING id", [A, nombre, agente_id])).rows[0].id;
+        (
+            await pool.query(
+                "INSERT INTO impresoras (empresa_id,nombre,conexion,ip,es_ticket,agente_id) VALUES ($1,$2,'RED','10.0.0.9',true,$3) RETURNING id",
+                [A, nombre, agente_id],
+            )
+        ).rows[0].id;
     const trabajo = async (impresora_id) =>
-        (await pool.query("INSERT INTO pos_impresiones (empresa_id, tipo, referencia_id, impresora_id, estado, payload) VALUES ($1,'PRUEBA',$2,$2,'PENDIENTE','{}') RETURNING id", [A, impresora_id])).rows[0].id;
+        (
+            await pool.query(
+                "INSERT INTO pos_impresiones (empresa_id, tipo, referencia_id, impresora_id, estado, payload) VALUES ($1,'PRUEBA',$2,$2,'PENDIENTE','{}') RETURNING id",
+                [A, impresora_id],
+            )
+        ).rows[0].id;
     const reclamar = async (agente_id) => {
-        const { default: PosImpresionRepository } = await import("../../src/modules/pos/pos.impresion.repository.js");
-        return (await new PosImpresionRepository().reclamarPendientes(A, agente_id)).map((j) => j.id).sort((a, b) => a - b);
+        const { default: PosImpresionRepository } =
+            await import("../../src/modules/pos/pos.impresion.repository.js");
+        return (await new PosImpresionRepository().reclamarPendientes(A, agente_id))
+            .map((j) => j.id)
+            .sort((a, b) => a - b);
     };
 
     before(async () => {
@@ -52,9 +77,23 @@ describe("Integración HTTP — afinidad impresora/agente", { skip: SKIP }, () =
         ({ signToken } = await import("../../src/utils/jwt.js"));
         ({ server, base } = await iniciarServidor(appMod.default));
         await limpiar();
-        await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Dos PCs'), ($2,'Otra')", [A, B]);
-        const uid = (await pool.query("INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ('AF-adm','AF-adm',true,true,$1) RETURNING id", [A])).rows[0].id;
-        tokAdmin = await signToken({ id: uid, empresa_id: A, is_admin: true, is_owner: true, tv: 0 });
+        await pool.query("INSERT INTO empresas (id,nombre) VALUES ($1,'Dos PCs'), ($2,'Otra')", [
+            A,
+            B,
+        ]);
+        const uid = (
+            await pool.query(
+                "INSERT INTO usuarios (nombre,codigo_ingreso,is_admin,is_owner,empresa_id) VALUES ('AF-adm','AF-adm',true,true,$1) RETURNING id",
+                [A],
+            )
+        ).rows[0].id;
+        tokAdmin = await signToken({
+            id: uid,
+            empresa_id: A,
+            is_admin: true,
+            is_owner: true,
+            tv: 0,
+        });
         caja = await mkAgente(A, "Caja");
         barra = await mkAgente(A, "Barra");
         ajeno = await mkAgente(B, "Ajeno");
@@ -74,7 +113,11 @@ describe("Integración HTTP — afinidad impresora/agente", { skip: SKIP }, () =
         const tBarra = await trabajo(impBarra);
         const tLibre = await trabajo(impLibre);
         assert.deepEqual(await reclamar(caja), [tCaja, tLibre]);
-        assert.deepEqual(await reclamar(barra), [tBarra], "lo de Caja ya está tomado y lo suyo sigue pendiente");
+        assert.deepEqual(
+            await reclamar(barra),
+            [tBarra],
+            "lo de Caja ya está tomado y lo suyo sigue pendiente",
+        );
     });
 
     it("las impresoras sin agente asignado siguen sirviendo a cualquiera (compatibilidad)", async () => {
@@ -84,14 +127,31 @@ describe("Integración HTTP — afinidad impresora/agente", { skip: SKIP }, () =
 
     it("crear y editar una impresora valida que el agente sea de la empresa", async () => {
         const base_ = { nombre: "Nueva", conexion: "RED", ip: "10.0.0.20", es_ticket: true };
-        const mala = await req("POST", `/api/pos/${A}/impresoras`, { token: tokAdmin, body: { ...base_, agente_id: ajeno } });
+        const mala = await req("POST", `/api/pos/${A}/impresoras`, {
+            token: tokAdmin,
+            body: { ...base_, agente_id: ajeno },
+        });
         assert.equal(mala.status, 400, JSON.stringify(mala.json));
-        const ok = await req("POST", `/api/pos/${A}/impresoras`, { token: tokAdmin, body: { ...base_, agente_id: barra } });
+        const ok = await req("POST", `/api/pos/${A}/impresoras`, {
+            token: tokAdmin,
+            body: { ...base_, agente_id: barra },
+        });
         assert.equal(ok.status, 201, JSON.stringify(ok.json));
         assert.equal(ok.json.data.agente_id, barra);
-        const edit = await req("PUT", `/api/pos/${A}/impresoras/${ok.json.data.id}`, { token: tokAdmin, body: { agente_id: null } });
+        const edit = await req("PUT", `/api/pos/${A}/impresoras/${ok.json.data.id}`, {
+            token: tokAdmin,
+            body: { agente_id: null },
+        });
         assert.equal(edit.status, 200, JSON.stringify(edit.json));
         assert.equal(edit.json.data.agente_id, null);
-        assert.equal((await req("PUT", `/api/pos/${A}/impresoras/${ok.json.data.id}`, { token: tokAdmin, body: { agente_id: ajeno } })).status, 400);
+        assert.equal(
+            (
+                await req("PUT", `/api/pos/${A}/impresoras/${ok.json.data.id}`, {
+                    token: tokAdmin,
+                    body: { agente_id: ajeno },
+                })
+            ).status,
+            400,
+        );
     });
 });
