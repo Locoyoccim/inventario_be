@@ -125,7 +125,7 @@ el 2026-10-09). Un push a `main` los redespliega.
 
 - Cookie del login (`HttpOnly; Secure; SameSite=Lax`) y SSE de cocina por los dos proxies: exigen iniciar sesión y las comprueba quien tenga la contraseña del maestro (comando en §4).
 - Dominio propio y correo transaccional (§7).
-- Aviso de privacidad: PR #21 del front con los proveedores reales; **no fusionar** hasta la revisión del abogado (la app lo publica en `/legal/privacidad`).
+- Aviso de privacidad: PR #21 del front (proveedores reales) fusionado. Revisión del abogado hecha (confirmada por el titular el 2026-10-10); el PR #22 del front quita los avisos de borrador y renombra los documentos a NexoMesa (la app los publica en `/legal/privacidad`). Pendiente solo: agregar el proveedor de correo al Aviso y al Acuerdo cuando se contrate.
 - Un código de salida distinto de 0 no marca el servicio de una sola vez como fallido en Railway (`provision` salió con `SUCCESS` aunque `db:roles` falló): leer su log, no su estado.
 
 ## 5. Monitor externo
