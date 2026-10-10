@@ -451,7 +451,7 @@ export default class PosController {
             req.agente.id,
             String(req.headers["x-agent-version"] ?? "").slice(0, 20) || null,
         );
-        ok(res, await this.impresion.reclamarPendientes(req.agente.empresa_id));
+        ok(res, await this.impresion.reclamarPendientes(req.agente.empresa_id, req.agente.id));
     });
     agenteResultado = asyncHandler(async (req, res) =>
         ok(
