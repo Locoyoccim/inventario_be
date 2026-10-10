@@ -170,4 +170,10 @@ Qué hace y qué no: el stock inicial es **0** (se conservan el mínimo y el má
 (`--incluir-inactivos` los lleva y los deja inactivos) y los **elaborados**, que nacen de recetas; lleva solo los proveedores que algún producto necesita; no
 lleva recetas, mesas, usuarios, ventas, compras ni movimientos. Es **repetible**: antes de crear consulta lo que ya hay y omite lo que existe con el mismo
 nombre. Al terminar imprime cuántos creó, cuántos ya existían y los errores, sin datos sensibles. Primera migración real (Café Aroma, empresa 4 → producción):
-ver el registro de abajo cuando se haga.
+el registro de abajo.
+
+### Registro de la primera migración real (2026-10-10)
+
+- Origen: Café Aroma, empresa 4 de la base local. Destino: la empresa **«Aroma», id 2**, de producción, con un Owner con correo distinto al del maestro.
+- Aplicada por el titular con `--aplicar` (stock inicial 0; sin inactivos ni elaborados). La simulación previa había dado 12 proveedores, 18 categorías y 138 productos, sin problemas de validación.
+- Los conteos finales en producción **no están verificados por este registro**: el titular confirmó que terminó, pero no se contrastaron las cifras. Cuando se revisen, anotarlas aquí.
