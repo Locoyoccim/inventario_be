@@ -7,7 +7,7 @@ import { generarCodigo, hashCodigo } from "../auth/pin.logic.js";
 import { estaDesactualizado, leerManifiesto } from "./agente.manifiesto.js";
 
 const IMPRESORA_COLS =
-    "id, empresa_id, nombre, conexion, ip, puerto, nombre_usb, ancho, area_id, es_ticket, activo";
+    "id, empresa_id, nombre, conexion, ip, puerto, nombre_usb, ancho, area_id, es_ticket, activo, agente_id";
 const CONECTADO_SEG = 30;
 const MAX_INTENTOS = 5;
 const VIGENCIA_CODIGO_MIN = 15;
@@ -36,12 +36,22 @@ export default class PosImpresionRepository {
         if (r.rowCount === 0) throw ApiError.badRequest("El área no existe en la empresa");
     }
 
+    async #validarAgente(empresa_id, agente_id) {
+        if (agente_id == null) return;
+        const r = await pool.query(
+            "SELECT 1 FROM agentes_impresion WHERE id = $1 AND empresa_id = $2",
+            [agente_id, empresa_id],
+        );
+        if (r.rowCount === 0) throw ApiError.badRequest("El agente no existe en la empresa");
+    }
+
     async crearImpresora(empresa_id, d) {
         await this.#validarArea(empresa_id, d.area_id);
+        await this.#validarAgente(empresa_id, d.agente_id);
         try {
             const r = await pool.query(
-                `INSERT INTO impresoras (empresa_id, nombre, conexion, ip, puerto, nombre_usb, ancho, area_id, es_ticket)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${IMPRESORA_COLS}`,
+                `INSERT INTO impresoras (empresa_id, nombre, conexion, ip, puerto, nombre_usb, ancho, area_id, es_ticket, agente_id)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING ${IMPRESORA_COLS}`,
                 [
                     empresa_id,
                     d.nombre,
@@ -52,6 +62,7 @@ export default class PosImpresionRepository {
                     d.ancho ?? 80,
                     d.area_id ?? null,
                     d.es_ticket ?? false,
+                    d.agente_id ?? null,
                 ],
             );
             return r.rows[0];
@@ -72,9 +83,10 @@ export default class PosImpresionRepository {
         if (!actual) throw ApiError.notFound("Impresora no encontrada");
         const m = { ...actual, ...d };
         await this.#validarArea(empresa_id, m.area_id);
+        await this.#validarAgente(empresa_id, m.agente_id);
         try {
             const r = await pool.query(
-                `UPDATE impresoras SET nombre=$3, conexion=$4, ip=$5, puerto=$6, nombre_usb=$7, ancho=$8, area_id=$9, es_ticket=$10, activo=$11
+                `UPDATE impresoras SET nombre=$3, conexion=$4, ip=$5, puerto=$6, nombre_usb=$7, ancho=$8, area_id=$9, es_ticket=$10, activo=$11, agente_id=$12
                  WHERE id=$1 AND empresa_id=$2 RETURNING ${IMPRESORA_COLS}`,
                 [
                     id,
@@ -88,6 +100,7 @@ export default class PosImpresionRepository {
                     m.area_id,
                     m.es_ticket,
                     m.activo,
+                    m.agente_id ?? null,
                 ],
             );
             return r.rows[0];
@@ -398,7 +411,7 @@ export default class PosImpresionRepository {
 
     // Toma trabajos pendientes de forma atómica. Uno tomado y no confirmado en 30 s se reintenta;
     // tras MAX_INTENTOS queda en ERROR para que el POS lo avise.
-    async reclamarPendientes(empresa_id, limite = 20) {
+    async reclamarPendientes(empresa_id, agente_id, limite = 20) {
         await pool.query(
             `UPDATE pos_impresiones SET estado = 'ERROR', error = COALESCE(error, 'El agente no confirmó la impresión')
              WHERE empresa_id = $1 AND estado = 'IMPRIMIENDO' AND bloqueado_hasta < now() AND intentos >= $2`,
@@ -407,7 +420,8 @@ export default class PosImpresionRepository {
         const r = await pool.query(
             `WITH cand AS (
                 SELECT id FROM pos_impresiones
-                WHERE empresa_id = $1 AND impresora_id IS NOT NULL
+                WHERE empresa_id = $1 AND impresora_id IN (
+                        SELECT id FROM impresoras WHERE empresa_id = $1 AND (agente_id IS NULL OR agente_id = $3))
                   AND ((estado = 'PENDIENTE' AND (bloqueado_hasta IS NULL OR bloqueado_hasta < now()))
                     OR (estado = 'IMPRIMIENDO' AND bloqueado_hasta < now()))
                 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)
@@ -416,7 +430,7 @@ export default class PosImpresionRepository {
                  intentos = p.intentos + CASE WHEN p.estado = 'IMPRIMIENDO' THEN 1 ELSE 0 END
              FROM cand WHERE p.id = cand.id
              RETURNING p.id, p.tipo, p.payload, p.intentos, p.impresora_id, p.reimpresiones`,
-            [empresa_id, limite],
+            [empresa_id, limite, agente_id],
         );
         if (r.rowCount === 0) return [];
         const impresoras = (

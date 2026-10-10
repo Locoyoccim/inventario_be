@@ -135,6 +135,7 @@ const impresoraBase = z.object({
     ancho: z.union([z.literal(58), z.literal(80)]).optional(),
     area_id: id.nullable().optional(),
     es_ticket: z.boolean().optional(),
+    agente_id: id.nullable().optional(),
 });
 
 export const impresoraCreateSchema = impresoraBase
