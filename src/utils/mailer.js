@@ -5,7 +5,7 @@ import { enmascararCorreo } from "./redactar.js";
 // Envío de correo por SMTP (cualquier proveedor: Resend, SendGrid, Postmark, Gmail, el del hosting...).
 //   SMTP_URL=smtps://usuario:clave@smtp.proveedor.com        (o bien)
 //   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE=true|false
-//   MAIL_FROM="Gastronomy Hub <no-reply@tudominio.com>"
+//   MAIL_FROM="NexoMesa <no-reply@tudominio.com>"
 // Sin configuración el sistema sigue funcionando: `enviarCorreo` devuelve { enviado: false } y quien lo llama
 // muestra el enlace al administrador para que lo entregue a mano.
 
@@ -51,7 +51,7 @@ export async function enviarCorreo({ to, subject, text, html }) {
     const t = obtenerTransporte();
     if (!t) return { enviado: false, motivo: "El envío de correo no está configurado (SMTP)." };
     try {
-        const from = process.env.MAIL_FROM || "Gastronomy Hub <no-reply@localhost>";
+        const from = process.env.MAIL_FROM || "NexoMesa <no-reply@localhost>";
         const info = await t.sendMail({ from, to, subject, text, html });
         if (process.env.NODE_ENV === "test") correosDePrueba.push(info.message);
         return { enviado: true };
