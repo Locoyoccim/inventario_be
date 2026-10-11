@@ -82,12 +82,12 @@ Cada fila se marca con fecha y qué se vio. Nada se da por hecho por haber confi
 |---|---|---|
 | Arranque limpio | El log del primer arranque no trae «AVISO» ni «Configuración insegura» | AUD-007 |
 | API sana por la URL pública | `GET https://<web>/health/ready` → 200 `ready`; `/health` → 200 | AUD-007 |
-| Cookie correcta | `read -rs P; curl -si https://<web>/api/auth/login -H 'Content-Type: application/json' -d "{\"email\":\"<correo>\",\"password\":\"$P\"}" \| grep -i '^set-cookie' \| sed -E 's/(gh_session=)[^;]+/\1<oculto>/'; unset P` → `HttpOnly; Secure; SameSite=Lax` (pendiente de comprobar) | AUD-007 |
+| Cookie correcta | `read -rs P; curl -si https://<web>/api/auth/login -H 'Content-Type: application/json' -d "{\"email\":\"<correo>\",\"password\":\"$P\"}" \| grep -i '^set-cookie' \| sed -E 's/(gh_session=)[^;]+/\1<oculto>/'; unset P` → `HttpOnly; Secure; SameSite=Lax`. **Comprobado el 2026-10-11:** `Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax` (la cookie dura 7 días). Además, con la sesión del maestro: JavaScript no la ve (`document.cookie` vacío) y `/api/auth/me` responde 200; no hay JWT en `localStorage`, `sessionStorage` ni en el cuerpo del login | AUD-007 |
 | CORS | Una petición con `Origin` ajeno no recibe `Access-Control-Allow-Origin` | AUD-007 |
 | Migraciones | `npm run migrate:status` (servicio de una sola vez) → todas `[x]`, última 054 | AUD-007 |
 | Variables presentes | Por nombre, en el panel: las de §2 y ninguna `PERMITIR_DB_SUPERUSUARIO` | AUD-007 |
 | `req.ip` correcto | Un login fallido deja en el log `ip` = la IP de quien probó, no la de Railway. Medido el 2026-10-09: con `2` el log traía una IP del borde (`169.150…`) y con `3` la del cliente, también con `X-Forwarded-For`/`X-Real-IP` falsos en la petición. Si algún día vuelve a salir la de Railway: ajustar `TRUST_PROXY_HOPS`; si el borde no pone la IP en `X-Forwarded-For`, en el Caddyfile del front añadir `header_up X-Forwarded-For {header.X-Real-IP}` (Railway documenta `X-Real-IP`) y dejar `TRUST_PROXY_HOPS=1` | AUD-007 / AUD-011 |
-| Tiempo real | Con el front, el SSE de cocina recibe un evento | AUD-007 |
+| Tiempo real | Con el front, el SSE de cocina recibe un evento. **Comprobado el 2026-10-11** (65 s por Railway y Caddy, con la sesión del maestro): `GET /api/pos/1/eventos` → 200 `text/event-stream`, el aviso de conexión a los 0.3 s y un latido cada 20 s (20.2, 40.2 y 60.3 s), sin acumulación ni corte. No se probó con una comanda real ni más allá de 65 s | AUD-007 |
 | El monitor alerta | Pausar `api` unos minutos con aviso previo; llega el correo | AUD-007 |
 | Sin contaminación | `npm run audit:tenant` y `npm run audit:correos` limpios (servicio de una sola vez) | AUD-003 |
 | Respaldo sube | El primer `npm run backup` de producción aparece en R2 | AUD-004 |
@@ -123,7 +123,6 @@ el 2026-10-09). Un push a `main` los redespliega.
 
 **Pendiente de esta puesta:**
 
-- Cookie del login (`HttpOnly; Secure; SameSite=Lax`) y SSE de cocina por los dos proxies: exigen iniciar sesión y las comprueba quien tenga la contraseña del maestro (comando en §4).
 - Dominio propio y correo transaccional (§7).
 - Aviso de privacidad: PR #21 del front (proveedores reales) fusionado. Revisión del abogado hecha (confirmada por el titular el 2026-10-10); el PR #22 del front quita los avisos de borrador y renombra los documentos a NexoMesa (la app los publica en `/legal/privacidad`). Pendiente solo: agregar el proveedor de correo al Aviso y al Acuerdo cuando se contrate.
 - Un código de salida distinto de 0 no marca el servicio de una sola vez como fallido en Railway (`provision` salió con `SUCCESS` aunque `db:roles` falló): leer su log, no su estado.

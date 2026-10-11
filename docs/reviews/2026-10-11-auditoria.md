@@ -8,7 +8,7 @@ Método: lectura del código y de la base, ejecución de las pruebas y de los sc
 **Veredicto: listo para el piloto de pruebas de un mes, con riesgos aceptados y documentados (sección 6).** No se encontró corrupción de datos ni fuga entre empresas.
 
 - La auditoría pidió verificar cuatro cosas «antes de producción» (identidad del correo, aviso de privacidad, respaldo restaurable, monitoreo) y cuatro fases adicionales (aislamiento, integridad de operaciones, CI, recuperación). Las pruebas nuevas **demostraron tres defectos reales de integridad** (AUD-F1, F2 y F3), con arreglo propuesto y verificado, dejaron a la vista una exposición de lecturas que el titular aceptó (AUD-F4) y confirmaron que una de las premisas de la auditoría era incorrecta (AUD-003).
-- Los tres riesgos principales que quedan abiertos son: (1) lecturas sensibles abiertas a cualquier miembro de una empresa (aceptado por el titular), (2) no hay runbook de recuperación ni RTO medido, y el RPO es de 24 horas (aceptado durante el mes de pruebas), (3) dos comprobaciones de producción que exigen sesión (atributos de la cookie y tiempo real) siguen sin hacerse.
+- Los tres riesgos principales que quedan abiertos son: (1) lecturas sensibles abiertas a cualquier miembro de una empresa (aceptado por el titular), (2) no hay runbook de recuperación ni RTO medido, y el RPO es de 24 horas (aceptado durante el mes de pruebas), (3) `audit:tenant` aún no se ha corrido sobre datos de producción. Los atributos de la cookie y el tiempo real se comprobaron en producción el 2026-10-11 (AUD-007).
 - **Estado de los arreglos:** los PRs #21 (documentación) y #22 a #26 se fusionaron el 2026-10-11. El CI de `main` con todos juntos (run #92) terminó en verde, los tres servicios del backend en Railway se redesplegaron con ese commit (`d13f607`, `SUCCESS`) y la API responde (`/health` y `/health/ready` 200; `/api/auth/me` sin sesión, 401). Este reporte (PR #27) es lo único que falta por fusionar.
 
 ## 2. Alcance
@@ -100,9 +100,10 @@ Nota: los conteos por rama se midieron localmente por separado; la suma de todas
 - El cron `respaldo` hizo `pg_dump` 18 de producción y subió el archivo a Cloudflare R2; se descargó y se restauró en una base temporal separada: 54 migraciones y los mismos conteos (1 empresa, 1 usuario). Las llaves de R2 se rotaron tras un pegado accidental en un chat.
 - Brecha asociada: ver AUD-F7.
 
-### AUD-007 — Monitoreo, variables y secuencia de migraciones · **Cerrado, con dos comprobaciones pendientes**
+### AUD-007 — Monitoreo, variables y secuencia de migraciones · **Cerrado**
 - Evidencia (2026-10-09): `/health` y `/health/ready` 200 por la URL pública; sin «AVISO» ni «Configuración insegura» al arrancar; CORS sin `Access-Control-Allow-Origin` para un origen ajeno; `/api/auth/me` sin sesión da 401; la IP real aparece en los logs con `TRUST_PROXY_HOPS=3` (con 2 aparecía la IP del borde) y un `X-Forwarded-For` falso no la altera; migraciones 001–054 aplicadas; un monitor de prueba contra una URL 404 cayó en ~5 minutos y UptimeRobot envió el correo.
-- **Pendiente:** los atributos de la cookie de sesión (`HttpOnly; Secure; SameSite=Lax`) y que el tiempo real (SSE) de cocina no se corte pasando por dos proxies. Exigen iniciar sesión; el comando está en `docs/DESPLIEGUE.md` §4.
+- **Cookie de sesión (2026-10-11):** el login responde `Set-Cookie: gh_session=…; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax`. Con la sesión del maestro, JavaScript no ve la cookie y `/api/auth/me` responde 200; no hay JWT en `localStorage`, `sessionStorage` ni en el cuerpo del login.
+- **Tiempo real de cocina (2026-10-11):** `GET /api/pos/1/eventos` por la URL pública durante 65 s: 200 `text/event-stream`, aviso de conexión a los 0.3 s y un latido cada 20 s (20.2, 40.2 y 60.3 s), sin acumulación ni corte por Railway ni Caddy. No se probó con una comanda real ni más allá de 65 s.
 
 ### AUD-F7 — Recuperación: sin runbook ni RTO medido · **Aceptado y pospuesto**
 - Fase: Datos/Operación · Estado: **Verificado** · Severidad: **Media**
@@ -139,7 +140,7 @@ Nota: los conteos por rama se midieron localmente por separado; la suma de todas
 ## 7. Plan de acción
 
 1. ~~Fusionar los PRs #21 a #26 y confirmar el CI de `main`~~ **Hecho el 2026-10-11:** CI en verde y arreglos de AUD-F1, F2 y F3 desplegados en producción. Pendiente solo fusionar este reporte (#27).
-2. **Comprobar en producción** la cookie de sesión y el tiempo real de cocina (necesita la sesión de quien tenga la contraseña del maestro).
+2. ~~Comprobar en producción la cookie de sesión y el tiempo real de cocina~~ **Hecho el 2026-10-11** (AUD-007).
 3. **Correr `audit:tenant`** contra una copia de la base de producción, ahora que hay datos de la empresa Aroma.
 4. **~2026-11-10:** escribir el runbook de recuperación (rollback de aplicación, migraciones destructivas, pasos y tiempos) y cronometrar una restauración para fijar el RTO.
 5. **Con el dominio:** conectar el dominio, configurar el correo transaccional y agregar su proveedor al Aviso y al Acuerdo.
