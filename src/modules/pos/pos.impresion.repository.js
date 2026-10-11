@@ -452,36 +452,51 @@ export default class PosImpresionRepository {
     }
 
     async resultado(empresa_id, id, { ok, error }) {
-        const job = (
-            await pool.query(
-                "SELECT id, intentos FROM pos_impresiones WHERE id = $1 AND empresa_id = $2 AND estado = 'IMPRIMIENDO' FOR UPDATE",
-                [id, empresa_id],
-            )
-        ).rows[0];
-        if (!job) throw ApiError.notFound("El trabajo ya no está en impresión");
-        if (ok) {
-            await pool.query(
-                "UPDATE pos_impresiones SET estado = 'IMPRESO', impreso_at = now(), error = NULL, bloqueado_hasta = NULL WHERE id = $1",
-                [id],
-            );
-            return { id, estado: "IMPRESO" };
+        // En una transacción: el bloqueo de la fila (FOR UPDATE) se mantiene hasta el COMMIT. Fuera de una transacción se soltaba al
+        // terminar el SELECT y dos reportes contradictorios del mismo trabajo (ok y fallo) se pisaban: lo impreso volvía a PENDIENTE.
+        const client = await pool.connect();
+        let resultado;
+        try {
+            await client.query("BEGIN");
+            const job = (
+                await client.query(
+                    "SELECT id, intentos FROM pos_impresiones WHERE id = $1 AND empresa_id = $2 AND estado = 'IMPRIMIENDO' FOR UPDATE",
+                    [id, empresa_id],
+                )
+            ).rows[0];
+            if (!job) throw ApiError.notFound("El trabajo ya no está en impresión");
+            if (ok) {
+                await client.query(
+                    "UPDATE pos_impresiones SET estado = 'IMPRESO', impreso_at = now(), error = NULL, bloqueado_hasta = NULL WHERE id = $1",
+                    [id],
+                );
+                resultado = { id, estado: "IMPRESO" };
+            } else {
+                const intentos = job.intentos + 1;
+                const agotado = intentos >= MAX_INTENTOS;
+                await client.query(
+                    `UPDATE pos_impresiones SET estado = $2::varchar, intentos = $3, error = $4,
+                            bloqueado_hasta = CASE WHEN $2::varchar = 'PENDIENTE' THEN now() + make_interval(secs => $5) END WHERE id = $1`,
+                    [
+                        id,
+                        agotado ? "ERROR" : "PENDIENTE",
+                        intentos,
+                        String(error ?? "Error de impresión").slice(0, 300),
+                        intentos * 10,
+                    ],
+                );
+                resultado = { id, estado: agotado ? "ERROR" : "PENDIENTE" };
+            }
+            await client.query("COMMIT");
+        } catch (e) {
+            await client.query("ROLLBACK");
+            throw e;
+        } finally {
+            client.release();
         }
-        const intentos = job.intentos + 1;
-        const agotado = intentos >= MAX_INTENTOS;
-        await pool.query(
-            `UPDATE pos_impresiones SET estado = $2::varchar, intentos = $3, error = $4,
-                    bloqueado_hasta = CASE WHEN $2::varchar = 'PENDIENTE' THEN now() + make_interval(secs => $5) END WHERE id = $1`,
-            [
-                id,
-                agotado ? "ERROR" : "PENDIENTE",
-                intentos,
-                String(error ?? "Error de impresión").slice(0, 300),
-                intentos * 10,
-            ],
-        );
         // Cuando una comanda se rinde (agotó los reintentos) nadie la va a ver sola: se avisa para que el mesero la reimprima o la lleve.
-        if (agotado)
+        if (resultado.estado === "ERROR")
             await notificar(pool, { tipo: "impresion.error", empresa_id, impresion_id: id });
-        return { id, estado: agotado ? "ERROR" : "PENDIENTE" };
+        return resultado;
     }
 }
