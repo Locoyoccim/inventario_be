@@ -24,7 +24,8 @@ if (DB) {
 const CONSULTA =
     "Consulta operativa: el personal ve el catálogo y los documentos para trabajar; sin guardia de permiso por decisión de producto.";
 const REVISAR =
-    "ABIERTA HOY A CUALQUIER MIEMBRO — decisión de producto pendiente (dato sensible dentro de la empresa).";
+    "Abierta a cualquier miembro de la empresa por decisión del titular (2026-10-11), pese a ser un dato sensible dentro de la empresa; revisar si se abre el piloto a más personal.";
+("ABIERTA HOY A CUALQUIER MIEMBRO — decisión de producto pendiente (dato sensible dentro de la empresa).");
 
 /** Rutas de empresa que un Operativo sin permisos SÍ alcanza (todas son lecturas salvo el cálculo de la receta). */
 const ABIERTAS = {
