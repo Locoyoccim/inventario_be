@@ -1,8 +1,18 @@
 import pool from "../../config/db.js";
 import ApiError from "../../utils/ApiError.js";
-import { normalizarLotes, validarPreparacion, cantidadProducida, cantidadInsumo, calcularSugerencia } from "./produccion.logic.js";
+import {
+    normalizarLotes,
+    validarPreparacion,
+    cantidadProducida,
+    cantidadInsumo,
+    calcularSugerencia,
+} from "./produccion.logic.js";
 import { netoABruto } from "../../utils/costeo.js";
-import { resolverPreparaciones, armarPreparaciones, ordenarPorDependencia } from "../../utils/preparaciones.js";
+import {
+    resolverPreparaciones,
+    armarPreparaciones,
+    ordenarPorDependencia,
+} from "../../utils/preparaciones.js";
 
 const QUERIES = {
     // Preparaciones (productos elaborados) con su receta e inventario
@@ -91,6 +101,18 @@ const QUERIES = {
         WHERE m.referencia_tipo = 'PRODUCCION' AND m.referencia_id = $1 AND p.empresa_id = $2
         ORDER BY producido DESC, m.id ASC;`,
     LOCK_INV: `SELECT stock_actual FROM inventario WHERE producto_id = $1 FOR UPDATE`,
+    // Todos los inventarios que toca una confirmación (insumos de cada receta y su elaborado), bloqueados de una vez y en orden de id.
+    LOCK_INVENTARIOS_DE_RECETAS: `
+        SELECT i.producto_id
+        FROM inventario i
+        WHERE i.producto_id IN (
+            SELECT rd.producto_id FROM receta_detalle rd JOIN recetas r ON r.id = rd.receta_id
+             WHERE r.id = ANY($1::int[]) AND r.empresa_id = $2
+            UNION
+            SELECT r.producto_elaborado_id FROM recetas r WHERE r.id = ANY($1::int[]) AND r.empresa_id = $2
+        )
+        ORDER BY i.producto_id
+        FOR UPDATE OF i;`,
 };
 
 export default class ProduccionRepository {
@@ -103,9 +125,7 @@ export default class ProduccionRepository {
     // consumiría cada lote sugerido.
     async sugerencias(empresa_id) {
         const elab = await pool.query(QUERIES.SELECT_ELABORADOS, [empresa_id]);
-        const candidatos = elab.rows.filter(
-            (r) => Number(r.stock_actual) < Number(r.stock_minimo)
-        );
+        const candidatos = elab.rows.filter((r) => Number(r.stock_actual) < Number(r.stock_minimo));
         if (candidatos.length === 0) return [];
 
         const recetaIds = candidatos.map((r) => Number(r.receta_id));
@@ -118,8 +138,11 @@ export default class ProduccionRepository {
         }
 
         return candidatos.map((r) => {
-            const { rendimiento, faltante, lotes, cantidad_a_producir } =
-                calcularSugerencia(r.stock_actual, r.stock_minimo, r.rendimiento);
+            const { rendimiento, faltante, lotes, cantidad_a_producir } = calcularSugerencia(
+                r.stock_actual,
+                r.stock_minimo,
+                r.rendimiento,
+            );
             const detalleInsumos = detalleByReceta.get(Number(r.receta_id)) || [];
             const insumos_requeridos = detalleInsumos.map((d) => ({
                 producto_id: d.producto_id,
@@ -189,11 +212,20 @@ export default class ProduccionRepository {
         }
 
         const preparaciones = armarPreparaciones(prepRes.rows, detalleEmpresaRes.rows);
-        const mermaPorId = new Map(prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]));
-        const stockActual = new Map(stockRes.rows.map((s) => [Number(s.producto_id), Number(s.stock_actual)]));
+        const mermaPorId = new Map(
+            prodRes.rows.map((p) => [Number(p.id), Number(p.merma_pct) || 0]),
+        );
+        const stockActual = new Map(
+            stockRes.rows.map((s) => [Number(s.producto_id), Number(s.stock_actual)]),
+        );
         const prodInfoById = new Map(prodRes.rows.map((p) => [Number(p.id), p]));
 
-        const { consumoFinal, autoProduccion } = resolverPreparaciones(consumo, stockActual, preparaciones, mermaPorId);
+        const { consumoFinal, autoProduccion } = resolverPreparaciones(
+            consumo,
+            stockActual,
+            preparaciones,
+            mermaPorId,
+        );
 
         const pasos_previos = ordenarPorDependencia(autoProduccion).map((a) => ({
             receta_id: a.receta_id,
@@ -242,13 +274,23 @@ export default class ProduccionRepository {
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
-            const cab = (await client.query(QUERIES.INSERT_PRODUCCION, [empresa_id, usuario_id])).rows[0];
+            // Bloquea de entrada, en orden de id, todo el inventario que tocará la petición. Bloquear receta por receta (cada una en su
+            // orden) hacía que dos peticiones con las mismas recetas en orden opuesto se esperaran entre sí: deadlock → 500.
+            await client.query(QUERIES.LOCK_INVENTARIOS_DE_RECETAS, [
+                [...new Set(producciones.map((p) => Number(p.receta_id)))],
+                empresa_id,
+            ]);
+            const cab = (await client.query(QUERIES.INSERT_PRODUCCION, [empresa_id, usuario_id]))
+                .rows[0];
             const resultados = [];
 
             for (const { receta_id, lotes, cantidad_real } of producciones) {
                 const nLotes = normalizarLotes(lotes, receta_id);
 
-                const recRes = await client.query(QUERIES.SELECT_RECETA_PREP, [receta_id, empresa_id]);
+                const recRes = await client.query(QUERIES.SELECT_RECETA_PREP, [
+                    receta_id,
+                    empresa_id,
+                ]);
                 const receta = recRes.rows[0];
                 if (!receta) throw ApiError.notFound(`Receta ${receta_id} no encontrada`);
                 validarPreparacion(receta, receta_id);
@@ -259,7 +301,9 @@ export default class ProduccionRepository {
                 const detRes = await client.query(QUERIES.SELECT_DETALLE_RECETA, [receta_id]);
                 const insumosConsumidos = [];
                 // Bloqueo en orden por producto_id: evita deadlocks entre producciones concurrentes.
-                const detOrden = [...detRes.rows].sort((a, b) => Number(a.producto_id) - Number(b.producto_id));
+                const detOrden = [...detRes.rows].sort(
+                    (a, b) => Number(a.producto_id) - Number(b.producto_id),
+                );
                 for (const d of detOrden) {
                     // Descuento en BRUTO (aplica merma de limpieza); validación estricta de existencia.
                     const cantidad = netoABruto(cantidadInsumo(d.cantidad, nLotes), d.merma_pct);
@@ -274,7 +318,7 @@ export default class ProduccionRepository {
                             motivo: `Producción de ${receta.nombre} (${nLotes} lote/s)`,
                             referencia_tipo: "PRODUCCION",
                             referencia_id: cab.id,
-                        }
+                        },
                     );
                     if (!mov) throw ApiError.notFound(`Insumo ${d.producto_id} sin inventario`);
                     insumosConsumidos.push({
@@ -297,9 +341,12 @@ export default class ProduccionRepository {
                         referencia_tipo: "PRODUCCION",
                         referencia_id: cab.id,
                     },
-                    { direccion: 1 }
+                    { direccion: 1 },
                 );
-                if (!recepcion) throw ApiError.notFound(`Producto elaborado ${receta.producto_elaborado_id} sin inventario`);
+                if (!recepcion)
+                    throw ApiError.notFound(
+                        `Producto elaborado ${receta.producto_elaborado_id} sin inventario`,
+                    );
 
                 // 3) Rendimiento real vs. teorico: si se peso/conto el lote terminado y difiere de
                 // lo que la receta predice, se ajusta la existencia a lo real en el mismo lote (mismo
@@ -319,13 +366,18 @@ export default class ProduccionRepository {
                             referencia_tipo: "PRODUCCION",
                             referencia_id: cab.id,
                         },
-                        { direccion: diferencia > 0 ? 1 : -1 }
+                        { direccion: diferencia > 0 ? 1 : -1 },
                     );
-                    if (!ajuste) throw ApiError.notFound(`Producto elaborado ${receta.producto_elaborado_id} sin inventario`);
+                    if (!ajuste)
+                        throw ApiError.notFound(
+                            `Producto elaborado ${receta.producto_elaborado_id} sin inventario`,
+                        );
                     stockFinal = Number(ajuste.stock_nuevo);
                 }
 
-                const infoProd = await client.query(QUERIES.SELECT_PRODUCTO_ELAB, [receta.producto_elaborado_id]);
+                const infoProd = await client.query(QUERIES.SELECT_PRODUCTO_ELAB, [
+                    receta.producto_elaborado_id,
+                ]);
                 resultados.push({
                     produccion_id: cab.id,
                     receta_id,
@@ -397,7 +449,9 @@ export default class ProduccionRepository {
                 const inv = (await client.query(QUERIES.LOCK_INV, [pid])).rows[0];
                 const actual = Number(inv?.stock_actual ?? 0);
                 if (actual - neto < 0) {
-                    throw ApiError.conflict(`Anular dejaría stock negativo en el producto ${pid} (actual ${actual}, a revertir ${neto})`);
+                    throw ApiError.conflict(
+                        `Anular dejaría stock negativo en el producto ${pid} (actual ${actual}, a revertir ${neto})`,
+                    );
                 }
             }
 
@@ -416,7 +470,9 @@ export default class ProduccionRepository {
             }
 
             // 3) Marcar la producción como anulada.
-            const upd = (await client.query(QUERIES.MARK_ANULADA, [id, empresa_id, usuario_id, motivo])).rows[0];
+            const upd = (
+                await client.query(QUERIES.MARK_ANULADA, [id, empresa_id, usuario_id, motivo])
+            ).rows[0];
             await client.query("COMMIT");
             return { ...upd, productos_reajustados: ids.length };
         } catch (error) {
