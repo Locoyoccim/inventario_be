@@ -9,7 +9,7 @@ Método: lectura del código y de la base, ejecución de las pruebas y de los sc
 
 - La auditoría pidió verificar cuatro cosas «antes de producción» (identidad del correo, aviso de privacidad, respaldo restaurable, monitoreo) y cuatro fases adicionales (aislamiento, integridad de operaciones, CI, recuperación). Las pruebas nuevas **demostraron tres defectos reales de integridad** (AUD-F1, F2 y F3), con arreglo propuesto y verificado, dejaron a la vista una exposición de lecturas que el titular aceptó (AUD-F4) y confirmaron que una de las premisas de la auditoría era incorrecta (AUD-003).
 - Los tres riesgos principales que quedan abiertos son: (1) lecturas sensibles abiertas a cualquier miembro de una empresa (aceptado por el titular), (2) no hay runbook de recuperación ni RTO medido, y el RPO es de 24 horas (aceptado durante el mes de pruebas), (3) dos comprobaciones de producción que exigen sesión (atributos de la cookie y tiempo real) siguen sin hacerse.
-- **Estado de los arreglos:** seis PRs del backend abiertos y sin fusionar al momento de escribir esto (#21, de documentación, y #22 a #26). Hasta que se fusionen, `main` no contiene los arreglos.
+- **Estado de los arreglos:** los PRs #21 (documentación) y #22 a #26 se fusionaron el 2026-10-11. El CI de `main` con todos juntos (run #92) terminó en verde, los tres servicios del backend en Railway se redesplegaron con ese commit (`d13f607`, `SUCCESS`) y la API responde (`/health` y `/health/ready` 200; `/api/auth/me` sin sesión, 401). Este reporte (PR #27) es lo único que falta por fusionar.
 
 ## 2. Alcance
 
@@ -35,9 +35,12 @@ Método: lectura del código y de la base, ejecución de las pruebas y de los sc
 | Front `npm run build` | OK con `VITE_API_SAME_ORIGIN=true`; sin esa variable falla a propósito |
 | Front `npm audit` | 0 vulnerabilidades |
 | CI del front en el PR #22 (documentos legales) | 4 de 4 checks en verde (auditoría de dependencias, formato, front y e2e, según el workflow) |
-| CI del backend en el PR #23 | 3 de 3 checks en verde (verificado en GitHub) |
+| CI del backend en los PRs #21 a #26 | 3 de 3 checks en verde en cada uno (verificado en GitHub antes de fusionar) |
+| CI de `main` tras fusionar #21 a #26 (runs #87 a #92; el #92 con todo junto) | Todos en verde |
+| Despliegue en Railway del commit `d13f607` (servicios `api`, `purga` y `respaldo`) | `SUCCESS` en los tres |
+| Producción tras el redespliegue: `/health`, `/health/ready`, `/api/auth/me` sin sesión | 200, 200, 401 |
 
-Nota de honestidad: las ramas se midieron por separado; **la suma de todas no se ha corrido junta** hasta que se fusionen. El CI de `main` lo hará. En #22, #24, #25 y #26 no confirmé aún el estado de CI en GitHub.
+Nota: los conteos por rama se midieron localmente por separado; la suma de todas se corrió después en el CI de `main` (run #92), en verde. El número exacto de pruebas de ese run no se contó aquí.
 
 ## 4. Hallazgos
 
@@ -49,7 +52,7 @@ Nota de honestidad: las ramas se midieron por separado; **la suma de todas no se
 - Pruebas añadidas (PR #22): el índice se lee del catálogo (debe ser uno solo, global y parcial); 8 altas simultáneas con el mismo correo y distinta capitalización dan una sola 201, el resto 409, sin 500 ni cuentas a medias. Mutaciones (sin índice, índice por empresa): ambas se detectan.
 - Riesgo del cambio: bajo (solo pruebas).
 
-### AUD-F1 — Interbloqueo al confirmar producciones · **Corregido en PR #23 (sin fusionar)**
+### AUD-F1 — Interbloqueo al confirmar producciones · **Corregido y fusionado (PR #23)**
 - Fase: Dominio/Datos · Estado: **Verificado** · Severidad: **Media**
 - Ubicación: `src/modules/produccion/produccion.repository.js` (`confirmar`).
 - Evidencia: dos peticiones con las mismas recetas en orden opuesto y sin insumos en común → `deadlock detected` y respuesta 500 (3 de 3 corridas; ~16–21 s en la prueba por la espera). La transacción se revierte: no hay datos corruptos.
@@ -57,14 +60,14 @@ Nota de honestidad: las ramas se midieron por separado; **la suma de todas no se
 - Arreglo: bloquear al inicio, ordenados por id, los inventarios de todas las recetas de la petición. La prueba pasa 3 de 3 y baja a ~0.2 s.
 - Riesgo del cambio: bajo-medio (cambia el orden de bloqueos de una operación de inventario; cubierto por 8 pruebas nuevas y la suite).
 
-### AUD-F2 — Doble anulación de un gasto o ingreso · **Corregido en PR #25 (sin fusionar)**
+### AUD-F2 — Doble anulación de un gasto o ingreso · **Corregido y fusionado (PR #25)**
 - Fase: Datos · Estado: **Verificado** · Severidad: **Baja**
 - Ubicación: `src/modules/finanzas/finanzas.repository.js` (`anularGasto`, `anularIngreso`).
 - Evidencia: 6 anulaciones simultáneas del mismo registro se confirmaron las 6, y cada una pisó el motivo y el autor de la anterior. Los totales no se corrompen (el indicador es idempotente), pero se pierde la trazabilidad de quién anuló y por qué.
 - Arreglo: `UPDATE … WHERE anulado = false` y 409 para la perdedora.
 - Riesgo del cambio: bajo.
 
-### AUD-F3 — Resultado de impresión pisado → ticket duplicado · **Corregido en PR #26 (sin fusionar)**
+### AUD-F3 — Resultado de impresión pisado → ticket duplicado · **Corregido y fusionado (PR #26)**
 - Fase: Datos/Dominio · Estado: **Verificado** · Severidad: **Media**
 - Ubicación: `src/modules/pos/pos.impresion.repository.js` (`resultado`).
 - Evidencia: `SELECT … FOR UPDATE` fuera de una transacción: el bloqueo se soltaba al instante. En una sonda de 300 corridas, 77 veces un reporte de fallo posterior devolvió a `PENDIENTE` un trabajo ya impreso, y se reimprimiría el ticket o la comanda. La prueba lo reproduce de forma determinista.
@@ -114,7 +117,7 @@ Nota de honestidad: las ramas se midieron por separado; **la suma de todas no se
 
 | Criterio de la auditoría | Estado |
 |---|---|
-| AUD-003: mismo correo en dos empresas, altas simultáneas, cambio de correo, normalización, acceso compartido, producción coherente | **Cumplido** (PR #22 por fusionar; producción verificada) |
+| AUD-003: mismo correo en dos empresas, altas simultáneas, cambio de correo, normalización, acceso compartido, producción coherente | **Cumplido** (PR #22 fusionado; producción verificada) |
 | Fase 2.1 Un usuario de A no lee ni modifica datos de B cambiando ids | **Cumplido** (177 rutas más los 2 endpoints de salud clasificados; 403 en cada una de las de empresa; control positivo) |
 | Fase 2.2 Ninguna ruta crítica opera sin sus permisos | **Cumplido para escrituras**; lecturas abiertas aceptadas (AUD-F4) |
 | Fase 2.3 La contaminación entre empresas se detecta en las pruebas | **Cumplido** (`audit-tenant`, `aislamiento-*`) |
@@ -135,7 +138,7 @@ Nota de honestidad: las ramas se midieron por separado; **la suma de todas no se
 
 ## 7. Plan de acción
 
-1. **Fusionar** los PRs #21 (registro de la migración del catálogo) y #22 a #26 (cada uno parte de `main` y no depende de los demás) y confirmar que el CI de `main` queda en verde con todo junto. Hasta entonces, los arreglos de AUD-F1, F2 y F3 no están en producción.
+1. ~~Fusionar los PRs #21 a #26 y confirmar el CI de `main`~~ **Hecho el 2026-10-11:** CI en verde y arreglos de AUD-F1, F2 y F3 desplegados en producción. Pendiente solo fusionar este reporte (#27).
 2. **Comprobar en producción** la cookie de sesión y el tiempo real de cocina (necesita la sesión de quien tenga la contraseña del maestro).
 3. **Correr `audit:tenant`** contra una copia de la base de producción, ahora que hay datos de la empresa Aroma.
 4. **~2026-11-10:** escribir el runbook de recuperación (rollback de aplicación, migraciones destructivas, pasos y tiempos) y cronometrar una restauración para fijar el RTO.
