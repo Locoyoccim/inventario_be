@@ -166,4 +166,76 @@ describe("Integración — correo normalizado y único global (AUD-003)", { skip
         assert.equal((await repo.findByEmail("  ANA@Correo-Unico.TEST ")).id, esperado);
         assert.equal(await repo.findByEmail("nadie@correo-unico.test"), undefined);
     });
+
+    it("la regla vive en el esquema: un índice único global sobre email y ninguno por empresa", async () => {
+        // Lee el catálogo real de la base migrada: si una migración futura quita el índice (o lo vuelve a poner por empresa), falla aquí
+        // y no hay que esperar a que alguien intente un alta duplicada.
+        const { rows } = await pool.query(`
+            SELECT i.relname AS indice,
+                   array_agg(a.attname::text ORDER BY k.ord) AS columnas,
+                   ix.indpred IS NOT NULL AS parcial
+              FROM pg_index ix
+              JOIN pg_class i ON i.oid = ix.indexrelid
+              JOIN LATERAL unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord) ON true
+              JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+             WHERE ix.indrelid = 'public.usuarios'::regclass AND ix.indisunique
+             GROUP BY i.relname, ix.indpred
+            HAVING 'email' = ANY(array_agg(a.attname::text))`);
+        assert.equal(rows.length, 1, `índices únicos que incluyen email: ${JSON.stringify(rows)}`);
+        assert.deepEqual(
+            rows[0].columnas,
+            ["email"],
+            "debe ser global: solo email, sin empresa_id",
+        );
+        assert.equal(rows[0].parcial, true, "parcial: los correos NULL no chocan entre sí");
+        const { rows: dos } = await pool.query(
+            "SELECT count(*)::int n FROM usuarios WHERE email IS NULL AND empresa_id = ANY($1)",
+            [[A, B]],
+        );
+        assert.ok(
+            dos[0].n >= 2,
+            "hay varias personas sin correo y la base las acepta (NULL no choca)",
+        );
+    });
+
+    it("altas simultáneas con el mismo correo (con otra capitalización cada una): solo una se confirma, el resto es 409, ninguna 500", async () => {
+        const correo = "carrera@correo-unico.test";
+        const variantes = [
+            correo,
+            correo.toUpperCase(),
+            ` ${correo}`,
+            `${correo} `,
+            "Carrera@Correo-Unico.test",
+            correo,
+            correo.toUpperCase(),
+            "CARRERA@correo-unico.TEST",
+        ];
+        const respuestas = await Promise.all(
+            variantes.map((email, i) =>
+                req("POST", `/api/usuarios/${i % 2 ? B : A}`, {
+                    token: i % 2 ? tokB : tokA,
+                    body: {
+                        nombre: `Carrera ${i}`,
+                        codigo_ingreso: `CU-carrera${i}`,
+                        email,
+                        password: CLAVE,
+                    },
+                }),
+            ),
+        );
+        const estados = respuestas.map((r) => r.status).sort();
+        assert.deepEqual(
+            estados,
+            [201, 409, 409, 409, 409, 409, 409, 409],
+            respuestas.map((r) => `${r.status}: ${r.texto}`).join("\n"),
+        );
+        const { rows } = await pool.query("SELECT empresa_id FROM usuarios WHERE email = $1", [
+            correo,
+        ]);
+        assert.equal(rows.length, 1, "en la base queda exactamente una cuenta con ese correo");
+        const huerfanas = await pool.query(
+            "SELECT count(*)::int n FROM usuarios WHERE codigo_ingreso LIKE 'CU-carrera%' AND email IS NULL",
+        );
+        assert.equal(huerfanas.rows[0].n, 0, "las altas rechazadas no dejaron una cuenta a medias");
+    });
 });
